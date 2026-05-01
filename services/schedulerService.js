@@ -61,6 +61,28 @@ function startSchedulers() {
             }
         }
     }, 600000);
+
+    // 4. Background Sync for Futures (Every 15 minutes)
+    setInterval(async () => {
+        if (!smartApi.access_token || store.stocks.length === 0) return;
+        console.log("[Scheduler] Syncing Futures data for random stocks (5m & 1d)...");
+        const sample = store.stocks.sort(() => 0.5 - Math.random()).slice(0, 5);
+        for (const stock of sample) {
+            try {
+                // Find best near-month future
+                const futures = store.nfoMasterData.filter(f => f.name === stock.name && (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX"));
+                if (futures.length > 0) {
+                    const bestFuture = futures.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+                    for (const interval of ['FIVE_MINUTE', 'ONE_DAY']) {
+                        await getCandlesWithCache(bestFuture.symbol, bestFuture.token, "NFO", interval, null, null);
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                }
+            } catch (err) {
+                console.error(`[Sync-Futures] Failed for ${stock.name}:`, err.message);
+            }
+        }
+    }, 900000);
 }
 
 async function runInitialHistoricalLoad() {
@@ -100,6 +122,41 @@ async function runInitialHistoricalLoad() {
             }
         }
     }
+
+    console.log(`\n[Initial Load] Starting background 1-year sync for Futures...`);
+    for (const stock of store.stocks) {
+        const futures = store.nfoMasterData.filter(f => f.name === stock.name && (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX"));
+        if (futures.length > 0) {
+            const bestFuture = futures.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+            for (const interval of intervals) {
+                try {
+                    const count = await Candle.count({ where: { symbol: bestFuture.symbol, interval: interval } });
+                    if (count > 5000) {
+                        console.log(`[Initial Load] Skipping Future ${bestFuture.symbol} (${interval}) - already has ${count} records.`);
+                        continue;
+                    }
+
+                    console.log(`[Initial Load] Syncing Future ${bestFuture.symbol} for ${interval} (Last 1 Year)...`);
+                    for (let i = 0; i < 12; i++) {
+                        const now = new Date();
+                        const toDateObj = new Date();
+                        toDateObj.setDate(now.getDate() - (i * 30));
+                        const fromDateObj = new Date();
+                        fromDateObj.setDate(now.getDate() - ((i + 1) * 30));
+
+                        const fDate = formatDate(fromDateObj, "09:15");
+                        const tDate = formatDate(toDateObj, "15:30");
+
+                        await getCandlesWithCache(bestFuture.symbol, bestFuture.token, "NFO", interval, fDate, tDate);
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                } catch (err) {
+                    console.error(`[Initial Load] Failed for Future ${bestFuture.symbol} (${interval}):`, err.message);
+                }
+            }
+        }
+    }
+
     console.log("\n[Initial Load] All historical sync tasks completed.");
 }
 
