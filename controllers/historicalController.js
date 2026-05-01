@@ -80,7 +80,10 @@ const getOptionsHistoricalData = async (req, res) => {
 
     const options = store.nfoMasterData.filter(o => {
         const uName = symbol.toUpperCase().trim();
-        return (o.name === uName || o.name.startsWith(uName)) && parseFloat(o.strike) === parseFloat(strike) && o.symbol.endsWith(type.toUpperCase());
+        // Angel One stores strike in paise (e.g. 48000 is stored as 4800000.000000)
+        return (o.name === uName || o.name.startsWith(uName)) && 
+               (parseFloat(o.strike) / 100) === parseFloat(strike) && 
+               o.symbol.endsWith(type.toUpperCase());
     });
 
     if (options.length === 0) return res.status(404).json({ success: false, message: "Not found" });
