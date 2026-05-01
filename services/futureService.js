@@ -10,8 +10,17 @@ const { formatDate } = require('./dbService');
  * @param {string} interval - e.g. "5minute" or "5m"
  */
 async function syncFuturesHistory(stockList, expiryDays, interval = "5m") {
-    const intervalMap = { "1m": "ONE_MINUTE", "5m": "FIVE_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY" };
-    const apiInterval = intervalMap[interval.toLowerCase()] || interval;
+    const intervalMap = {
+        "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+        "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+        "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+        "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+        "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+        "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+        "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+        "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+    };
+    const apiInterval = intervalMap[String(interval).toLowerCase()] || interval;
 
     console.log(`[FuturesSync] Starting sync for ${stockList.length} stocks and ${expiryDays.length} periods...`);
 

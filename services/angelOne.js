@@ -50,11 +50,16 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
 
         // 3. Map shorthand intervals if needed
         const intervalMap = {
-            "1m": "ONE_MINUTE", "3m": "THREE_MINUTE", "5m": "FIVE_MINUTE",
-            "10m": "TEN_MINUTE", "15m": "FIFTEEN_MINUTE", "30m": "THIRTY_MINUTE",
-            "1h": "ONE_HOUR", "1d": "ONE_DAY"
+            "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+            "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+            "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+            "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+            "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+            "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+            "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+            "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
         };
-        const apiInterval = intervalMap[interval.toLowerCase()] || interval;
+        const apiInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
         // 4. Define Chunk Limits
         const maxDaysMap = {

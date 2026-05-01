@@ -9,11 +9,16 @@ const getHistoricalData = async (req, res) => {
     let { symbol, interval, fromDate, toDate, days } = req.query;
 
     const intervalMap = {
-        "1": "ONE_MINUTE", "3": "THREE_MINUTE", "5": "FIVE_MINUTE", 
-        "10": "TEN_MINUTE", "15": "FIFTEEN_MINUTE", "30": "THIRTY_MINUTE", 
-        "60": "ONE_HOUR", "1h": "ONE_HOUR", "day": "ONE_DAY", "1d": "ONE_DAY"
+        "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+        "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+        "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+        "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+        "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+        "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+        "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+        "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
     };
-    const finalInterval = intervalMap[interval] || interval || "ONE_MINUTE";
+    const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
     
     if (!smartApi.access_token) return res.status(503).json({ success: false, message: "Still authenticating..." });
     if (!symbol) return res.status(400).json({ success: false, message: "Symbol required" });
@@ -61,8 +66,17 @@ const getOptionsHistoricalData = async (req, res) => {
     if (!symbol || !strike || !type) return res.status(400).json({ success: false, message: "Missing params" });
     if (!smartApi.access_token) return res.status(503).json({ success: false, message: "Still authenticating..." });
 
-    const intervalMap = { "1": "ONE_MINUTE", "3": "THREE_MINUTE", "5": "FIVE_MINUTE", "10": "TEN_MINUTE", "15": "FIFTEEN_MINUTE", "30": "THIRTY_MINUTE", "60": "ONE_HOUR", "1h": "ONE_HOUR", "day": "ONE_DAY", "1d": "ONE_DAY" };
-    const finalInterval = intervalMap[interval] || interval || "ONE_MINUTE";
+    const intervalMap = {
+        "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+        "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+        "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+        "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+        "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+        "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+        "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+        "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+    };
+    const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
     const options = store.nfoMasterData.filter(o => {
         const uName = symbol.toUpperCase().trim();
@@ -109,15 +123,15 @@ const getFuturesHistoricalData = async (req, res) => {
     if (!symbol) return res.status(400).json({ success: false, message: "Symbol required" });
     if (!smartApi.access_token) return res.status(503).json({ success: false, message: "Still authenticating..." });
 
-    const intervalMap = { 
-        "1": "ONE_MINUTE", "1m": "ONE_MINUTE",
-        "3": "THREE_MINUTE", "3m": "THREE_MINUTE",
-        "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE",
-        "10": "TEN_MINUTE", "10m": "TEN_MINUTE",
-        "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE",
-        "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE",
-        "60": "ONE_HOUR", "1h": "ONE_HOUR", 
-        "day": "ONE_DAY", "1d": "ONE_DAY" 
+    const intervalMap = {
+        "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+        "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+        "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+        "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+        "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+        "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+        "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+        "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
     };
     const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 

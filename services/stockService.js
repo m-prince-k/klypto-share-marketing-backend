@@ -41,7 +41,8 @@ async function fetchTop200Stocks() {
             "IDFBAN": "IDFCFIRSTB", "UNIBAN": "UNIONBANK", "LICHF": "LICHSGFIN", "PNBHOU": "PNBHOUSING",
             "POWFIN": "PFC", "RURELE": "REC", "RAIVIK": "RVNL", "IRFCON": "IRCON", "CONCOR": "CONCOR",
             "GAIL": "GAIL", "SAIL": "SAIL", "OILIND": "OIL", "COALIN": "COALINDIA", "NHPC": "NHPC",
-            "NBCC": "NBCC", "HUDCO": "HUDCO"
+            "NBCC": "NBCC", "HUDCO": "HUDCO",
+            "CNXBAN": "BANKNIFTY", "NIFFIN": "FINNIFTY", "NIFNEX": "NIFTYNXT50"
         };
 
         const matchedStocks = [];
@@ -201,19 +202,18 @@ async function syncLivePrices() {
 }
 
 async function syncCandleData(interval = "FIVE_MINUTE", isLive = false, targetSymbol = null) {
-    // Map shorthand intervals to API names
     const intervalMap = {
-        "1m": "ONE_MINUTE",
-        "3m": "THREE_MINUTE",
-        "5m": "FIVE_MINUTE",
-        "10m": "TEN_MINUTE",
-        "15m": "FIFTEEN_MINUTE",
-        "30m": "THIRTY_MINUTE",
-        "1h": "ONE_HOUR",
-        "1d": "ONE_DAY"
+        "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+        "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+        "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+        "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+        "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+        "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+        "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+        "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
     };
     
-    const apiInterval = intervalMap[interval.toLowerCase()] || interval;
+    const apiInterval = intervalMap[String(interval).toLowerCase()] || interval;
     
     // Filter stocks if targetSymbol is provided
     let stocksToSync = store.stocks;
