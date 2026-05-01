@@ -83,6 +83,45 @@ function startSchedulers() {
             }
         }
     }, 900000);
+
+    // 5. Background Sync for Options ATM (Every 20 minutes)
+    setInterval(async () => {
+        if (!smartApi.access_token || store.nfoMasterData.length === 0) return;
+        console.log("[Scheduler] Syncing ATM Options data for Indices...");
+        const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY"];
+        
+        for (const index of indices) {
+            try {
+                const ltpData = store.latestMarketData[index];
+                if (!ltpData || !ltpData.ltp || ltpData.ltp === "0.00") continue;
+
+                const ltp = parseFloat(ltpData.ltp);
+                const strikeGap = (index === "BANKNIFTY" || index === "BANKEX") ? 100 : 50;
+                const atmStrike = Math.round(ltp / strikeGap) * strikeGap;
+
+                // Find nearest expiry ATM CE and PE
+                const options = store.nfoMasterData.filter(o => 
+                    o.name === index && 
+                    (parseFloat(o.strike) / 100) === atmStrike &&
+                    (o.instrumenttype === "OPTIDX")
+                );
+
+                if (options.length > 0) {
+                    const nearestExpiry = [...new Set(options.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b))[0];
+                    const atmOptions = options.filter(o => o.expiry === nearestExpiry);
+
+                    for (const opt of atmOptions) {
+                        for (const interval of ['FIVE_MINUTE', 'ONE_DAY']) {
+                            await getCandlesWithCache(opt.symbol, opt.token, "NFO", interval, null, null);
+                            await new Promise(r => setTimeout(r, 1000));
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error(`[Sync-Options] Failed for ${index}:`, err.message);
+            }
+        }
+    }, 1200000);
 }
 
 async function runInitialHistoricalLoad() {

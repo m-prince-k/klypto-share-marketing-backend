@@ -54,19 +54,9 @@ async function fetchTop200Stocks() {
 
             let found = nseEquity.find(s => s.symbol === `${searchSym}-EQ` || s.symbol === searchSym);
 
+            // If not found, try exact name match
             if (!found) {
-                found = nseEquity.find(s => s.symbol.replace("-EQ", "").startsWith(searchSym.substring(0, 4)));
-            }
-
-            if (!found) {
-                found = nseEquity.find(s => {
-                    const cleanName = s.name.toUpperCase().replace(/\s/g, "");
-                    return cleanName.includes(searchSym.substring(0, 4));
-                });
-            }
-            
-            if (!found) {
-                found = nseEquity.find(s => s.symbol.startsWith(searchSym.substring(0, 3)));
+                found = nseEquity.find(s => s.name.toUpperCase().replace(/\s/g, "") === searchSym);
             }
 
             if (found) {
@@ -125,7 +115,7 @@ async function fetchTop200Stocks() {
         store.nfoMasterData = nfoResponse.data.filter(s => 
             s.exch_seg === "NFO" && 
             (s.instrumenttype === "OPTSTK" || s.instrumenttype === "OPTIDX" || s.instrumenttype === "FUTSTK" || s.instrumenttype === "FUTIDX") &&
-            allTargetNames.some(name => s.name.startsWith(name))
+            allTargetNames.includes(s.name)
         );
         console.log(`Successfully indexed ${store.nfoMasterData.length} F&O contracts.`);
 
