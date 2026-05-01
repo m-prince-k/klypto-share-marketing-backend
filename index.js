@@ -14,6 +14,7 @@ const cors = require('cors');
 const stockRoutes = require('./routes/stockRoutes');
 const optionsRoutes = require('./routes/optionsRoutes');
 const futuresRoutes = require('./routes/futuresRoutes');
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -28,6 +29,7 @@ app.use(express.json());
 
 app.use(cors());
 // Routes
+app.use('/auth', authRoutes);
 app.use('/equity', stockRoutes);
 app.use('/options', optionsRoutes);
 app.use('/futures', futuresRoutes);
