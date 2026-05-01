@@ -17,7 +17,7 @@ const angelAuthMiddleware = async (req, res, next) => {
         const refreshToken = loginData.data.refreshToken;
 
         // 📡 Feed Token
-        const feedToken = await smartApi.getfeedToken();
+        const feedToken = loginData.data.feedToken;
 
         // 👤 Profile
         const profile = await smartApi.getProfile(refreshToken);
@@ -36,7 +36,7 @@ const angelAuthMiddleware = async (req, res, next) => {
         return res.status(500).json({
             success: false,
             message: "Angel authentication failed",
-            error: error.message
+            error: err.message
         });
     }
 }
