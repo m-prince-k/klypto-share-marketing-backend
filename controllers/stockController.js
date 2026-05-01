@@ -2,7 +2,7 @@ const { prepareCandlesWithIndicators, dispatchOrder, indicatorEngine } = require
 const { getHistoricalCandle } = require('../services/angelOne');
 const store = require('../services/marketStore');
 const { syncLivePrices, syncCandleData } = require('../services/stockService');
-const { Timeframe, Indicator } = require('../models');
+const { Timeframe, Indicator, Order } = require('../models');
 const { response } = require('express');
 
 const getStocks = (req, res) => {
@@ -672,10 +672,62 @@ const orderDispatch = async (req, res) => {
             };
 
             const dispatchResult = await dispatchOrder(smartApi, payload);
+
+            // ⚠️ Safety check (API fail case)
+            if (!dispatchResult || !dispatchResult.data || !dispatchResult.data.orderid) {
+                return res.status(500).json({
+                    statusCode: 500,
+                    message: 'Order dispatch failed',
+                    data: dispatchResult
+                });
+            }
+
+
+            // 🔹 2. Save in DB
+            const savedOrder = await Order.create({
+                order_id: dispatchResult.data.orderid,
+                user_id: req.user.id,
+                client_id: req.user.client_id,
+
+                tradingsymbol,
+                symboltoken,
+                transactiontype,
+                ordertype,
+                price,
+                quantity,
+
+                exchange: dispatchResult.data.exchange || null,
+                product_type: dispatchResult.data.producttype || null,
+                duration: dispatchResult.data.duration || 'DAY',
+
+                status: 'OPEN',
+                status_message: dispatchResult.message || null,
+
+                order_time: new Date(),
+
+                raw_response: dispatchResult
+            });
+
+            // 🔹 3. Response
+            return res.json({
+                statusCode: 200,
+                message: 'Order dispatched & saved successfully',
+                data: {
+                    order: savedOrder,
+                    broker: dispatchResult
+                }
+            });
+
             return await res.json({ statusCode: 200, message: 'Order dispatched successfully', data: dispatchResult });
         }
     } catch (error) {
-        console.log(error, "---------------------------06578987546789")
+        console.error("Order Dispatch Error:", error);
+
+        return res.status(500).json({
+            statusCode: 500,
+            message: 'Internal Server Error',
+            error: error.message
+        });
     }
 }
 
