@@ -803,7 +803,7 @@ const fetchOrders = async (req, res) => {
 
 const getOptionsChain = async (req, res) => {
     try {
-        const { symbol, expiry } = req.query;
+        const { symbol } = req.query;
         if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
 
         const uSym = symbol.toUpperCase().trim();
@@ -817,35 +817,18 @@ const getOptionsChain = async (req, res) => {
             return res.status(404).json({ success: false, message: "No options found for symbol" });
         }
 
+        // All unique expiry dates sorted
         const expiries = [...new Set(options.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
         
-        const targetExpiry = expiry || expiries[0];
-        const currentOptions = options.filter(o => o.expiry === targetExpiry);
-        const strikes = [...new Set(currentOptions.map(o => parseFloat(o.strike) / 100))].sort((a, b) => a - b);
+        // All unique strikes (converted from paise to rupees) sorted
+        const strikes = [...new Set(options.map(o => parseFloat(o.strike) / 100))].sort((a, b) => a - b);
         
-        const lotSize = parseInt(currentOptions[0]?.lotsize) || 0;
+        // Lot size from first contract
+        const lotSize = parseInt(options[0]?.lotsize) || 0;
+
+        // Strike gap
         let strikeGap = 0;
         if (strikes.length > 1) strikeGap = strikes[1] - strikes[0];
-
-        const data = strikes.map(strike => {
-            const strikeOps = currentOptions.filter(o => (parseFloat(o.strike) / 100) === strike);
-            const ce = strikeOps.find(o => o.symbol.endsWith("CE"));
-            const pe = strikeOps.find(o => o.symbol.endsWith("PE"));
-
-            return {
-                strike: strike,
-                CE: ce ? {
-                    token: ce.token,
-                    ltp: store.latestMarketData[ce.symbol]?.ltp || 0,
-                    oi: 0
-                } : null,
-                PE: pe ? {
-                    token: pe.token,
-                    ltp: store.latestMarketData[pe.symbol]?.ltp || 0,
-                    oi: 0
-                } : null
-            };
-        });
 
         res.json({
             success: true,
@@ -853,9 +836,7 @@ const getOptionsChain = async (req, res) => {
             lotSize,
             strikeGap,
             expiries,
-            targetExpiry,
-            strikes,
-            data
+            strikes
         });
 
     } catch (error) {
