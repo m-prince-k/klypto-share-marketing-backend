@@ -3,6 +3,7 @@ const router = express.Router();
 const stockController = require('../controllers/stockController');
 const historicalController = require('../controllers/historicalController');
 const angelAuthMiddleware = require('../middleware/angelAuthMiddleware');
+const { verifyToken } = require('../middleware/verifyToken');
 
 router.get('/stocks', stockController.getStocks);
 router.get('/live', stockController.getLiveEquity);
@@ -23,6 +24,6 @@ router.post("/getIndicators", stockController.getIndicators);
 
 
 router.post("/dispatchOrder",angelAuthMiddleware, stockController.orderDispatch); // New route for order dispatching  
-router.get("/orders", angelAuthMiddleware, stockController.fetchOrders); // Fetch all orders for a user
+router.get("/orders",verifyToken, stockController.fetchOrders); // Fetch all orders for a user
 
 module.exports = router;
