@@ -712,8 +712,11 @@ const orderDispatch = async (req, res) => {
 
             const dispatchResult = await dispatchOrder(smartApi, payload);
 
+            // Extract the actual Angel One API response
+            const angelResponse = dispatchResult.data;
+
             // ⚠️ Safety check (API fail case)
-            if (!dispatchResult || !dispatchResult.data || !dispatchResult.data.orderid) {
+            if (!dispatchResult.success || !angelResponse || !angelResponse.status || !angelResponse.data || !angelResponse.data.orderid) {
                 return res.status(500).json({
                     statusCode: 500,
                     message: 'Order dispatch failed',
@@ -724,7 +727,7 @@ const orderDispatch = async (req, res) => {
 
             // 🔹 2. Save in DB
             const savedOrder = await Order.create({
-                order_id: dispatchResult.data.orderid,
+                order_id: angelResponse.data.orderid,
                 user_id: req.user.id,
                 client_id: req.user.client_id,
 
