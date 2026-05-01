@@ -39,6 +39,7 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate}) {
         console.log(`[AngelOne Service] Fetching ${symbol} (${apiInterval}) from ${fromDate} to ${toDate}`);
 
         // 3. Call Angel One API
+        console.log(`[AngelOne API Request] Params: exchange=NSE, token=${stock.token}, interval=${apiInterval}, from=${fromDate}, to=${toDate}`);
         const response = await smartApi.getCandleData({
             exchange: "NSE",
             symboltoken: stock.token,

@@ -84,10 +84,26 @@ const getLiveFutures = (req, res) => {
 const indicatorDetails = async (req, res) => {
 
     try {
-        const { type, symbol, interval, period, fromdate, todate } = req.query;
+        const { type, symbol, interval, period, fromdate, todate, fromDate, toDate } = req.query;
+        
+        // Normalize parameter names
+        const finalFromDate = fromdate || fromDate;
+        const finalToDate = todate || toDate;
+
+        // Format dates if they are just YYYY-MM-DD
+        let formattedFromDate = finalFromDate;
+        let formattedToDate = finalToDate;
+
+        if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
+            formattedFromDate = formatDate(new Date(finalFromDate), "09:15");
+        }
+        if (typeof finalToDate === 'string' && finalToDate.length === 10) {
+            formattedToDate = formatDate(new Date(finalToDate), "15:30");
+        }
+
         let data = {
             symbol: symbol, interval: interval,
-            fromDate: fromdate, toDate: todate
+            fromDate: formattedFromDate, toDate: formattedToDate
         }
 
         const candles = await getHistoricalCandle(data);
@@ -109,10 +125,26 @@ const updateIndicator = async (req, res) => {
         if (!req.body && req.body.indicatorType) {
             return await res.json({ statusCode: 403, message: "Type must be defined" });
         } else {
-            const { symbol, interval, period, fromdate, todate } = req.query;
+            const { symbol, interval, period, fromdate, todate, fromDate, toDate } = req.query;
+            
+            // Normalize parameter names
+            const finalFromDate = fromdate || fromDate;
+            const finalToDate = todate || toDate;
+
+            // Format dates if they are just YYYY-MM-DD
+            let formattedFromDate = finalFromDate;
+            let formattedToDate = finalToDate;
+
+            if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
+                formattedFromDate = formatDate(new Date(finalFromDate), "09:15");
+            }
+            if (typeof finalToDate === 'string' && finalToDate.length === 10) {
+                formattedToDate = formatDate(new Date(finalToDate), "15:30");
+            }
+
             let params = {
                 symbol: symbol, interval: interval,
-                fromDate: fromdate, toDate: todate
+                fromDate: formattedFromDate, toDate: formattedToDate
             }
 
             const candles = await getHistoricalCandle(params);
