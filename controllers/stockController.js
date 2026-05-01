@@ -694,14 +694,20 @@ const orderDispatch = async (req, res) => {
         } else {
             const { smartApi } = req.angel;
           
-            const { tradingsymbol, symboltoken, transactiontype, ordertype, price, quantity } = req.body;
+            const { tradingsymbol, symboltoken, transactiontype, ordertype, price, quantity, exchange, producttype, duration, variety, squareoff, stoploss } = req.body;
             let payload = {
                 tradingsymbol: tradingsymbol || "SBIN-EQ",
                 symboltoken: symboltoken || "3045",
                 transactiontype: transactiontype || "BUY",
+                exchange: exchange || "NSE",
                 ordertype: ordertype || "LIMIT",
+                producttype: producttype || "INTRADAY",
+                duration: duration || "DAY",
                 price: price || "600",
-                quantity: quantity || 1
+                quantity: quantity || 1,
+                variety: variety || "NORMAL",
+                squareoff: squareoff || "0",
+                stoploss: stoploss || "0"
             };
 
             const dispatchResult = await dispatchOrder(smartApi, payload);
