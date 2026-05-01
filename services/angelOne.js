@@ -27,7 +27,7 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         if (!finalExchange) {
             // Auto-detect exchange
             const uSym = symbol.toUpperCase();
-            const isNfo = store.nfoMasterData.some(f => f.symbol === uSym || f.name === uSym);
+            const isNfo = store.nfoMasterData.some(f => f.symbol === uSym);
             finalExchange = isNfo ? "NFO" : "NSE";
         }
 
@@ -36,7 +36,7 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         if (finalExchange === "NSE") {
             token = store.symbolToTokenMaster[symbol.toUpperCase()];
         } else {
-            const nfoStock = store.nfoMasterData.find(f => f.symbol === symbol.toUpperCase() || f.name === symbol.toUpperCase());
+            const nfoStock = store.nfoMasterData.find(f => f.symbol === symbol.toUpperCase());
             token = nfoStock ? nfoStock.token : null;
         }
 
