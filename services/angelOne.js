@@ -32,7 +32,7 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         }
 
         // 2. Find token for the symbol
-        let token;
+        let token;  
         if (finalExchange === "NSE") {
             token = store.symbolToTokenMaster[symbol.toUpperCase()];
         } else {

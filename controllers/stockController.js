@@ -773,7 +773,96 @@ const orderDispatch = async (req, res) => {
     }
 }
 
+const fetchOrders = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const orders = await Order.findAll({
+            where: { user_id: userId },
+            order: [['order_time', 'DESC']],
+            limit: 100
+        });
+
+        res.json({
+            statusCode: 200,
+            message: "Orders fetched successfully",
+            data: orders
+        });
+    } catch (error) {
+        console.error("Error fetching orders:", error);
+        res.status(500).json({
+            statusCode: 500,
+            message: "Failed to fetch orders",
+            error: error.message
+        });
+    }
+};
+
+const getOptionsChain = async (req, res) => {
+    try {
+        const { symbol, expiry } = req.query;
+        if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
+
+        const uSym = symbol.toUpperCase().trim();
+        
+        const options = store.nfoMasterData.filter(o => {
+            return (o.name === uSym || o.name.startsWith(uSym)) && 
+                   (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK");
+        });
+
+        if (options.length === 0) {
+            return res.status(404).json({ success: false, message: "No options found for symbol" });
+        }
+
+        const expiries = [...new Set(options.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
+        
+        const targetExpiry = expiry || expiries[0];
+        const currentOptions = options.filter(o => o.expiry === targetExpiry);
+        const strikes = [...new Set(currentOptions.map(o => parseFloat(o.strike) / 100))].sort((a, b) => a - b);
+        
+        const lotSize = parseInt(currentOptions[0]?.lotsize) || 0;
+        let strikeGap = 0;
+        if (strikes.length > 1) strikeGap = strikes[1] - strikes[0];
+
+        const data = strikes.map(strike => {
+            const strikeOps = currentOptions.filter(o => (parseFloat(o.strike) / 100) === strike);
+            const ce = strikeOps.find(o => o.symbol.endsWith("CE"));
+            const pe = strikeOps.find(o => o.symbol.endsWith("PE"));
+
+            return {
+                strike: strike,
+                CE: ce ? {
+                    token: ce.token,
+                    ltp: store.latestMarketData[ce.symbol]?.ltp || 0,
+                    oi: 0
+                } : null,
+                PE: pe ? {
+                    token: pe.token,
+                    ltp: store.latestMarketData[pe.symbol]?.ltp || 0,
+                    oi: 0
+                } : null
+            };
+        });
+
+        res.json({
+            success: true,
+            symbol: uSym,
+            lotSize,
+            strikeGap,
+            expiries,
+            targetExpiry,
+            strikes,
+            data
+        });
+
+    } catch (error) {
+        console.error("Error in getOptionsChain:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 module.exports = {
+    fetchOrders,
+    getOptionsChain,
     orderDispatch,
     getIndicators,
     getTimeFrames,
