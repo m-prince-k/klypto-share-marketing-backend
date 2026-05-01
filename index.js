@@ -1,94 +1,73 @@
-const {
-  subscribeStock,
-  getAllTicks,
-  getTickByStock
-} = require("./services/breeze-connect");
-
 const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+require('dotenv').config();
+
+const { sequelize } = require('./models');
+const store = require('./services/marketStore');
+const { login } = require('./services/authService');
+const { fetchTop200Stocks } = require('./services/stockService');
+const { startWebSocketConnection } = require('./services/webSocketService');
+const { startSchedulers, runInitialHistoricalLoad } = require('./services/schedulerService');
+
+const cors = require('cors');
+const stockRoutes = require('./routes/stockRoutes');
+const optionsRoutes = require('./routes/optionsRoutes');
+const futuresRoutes = require('./routes/futuresRoutes');
+
 const app = express();
-const bodyParser = require("body-parser");
-const { getData, getAllStocks } = require("./historicalData");
+const server = http.createServer(app);
+const io = new Server(server, { 
+    cors: { origin: "*" } 
+});
 
-const cors=require("cors");
+const PORT = process.env.PORT || 3000;
 
-
-const PORT = 8000;
+// Middleware
+app.use(express.json());
 
 app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// Routes
+app.use('/equity', stockRoutes);
+app.use('/options', optionsRoutes);
+app.use('/futures', futuresRoutes);
 
-// app.use("/api");
-
-app.get("/testing", async (req, res) => {
-    return await res.send("safasf")
+// Socket.io Connection
+io.on("connection", (socket) => {
+    console.log("Frontend client connected via Socket.io");
+    socket.emit("marketSnapshot", Object.values(store.latestMarketData));
 });
 
-app.post("/subscribe", async (req, res) => {
-  try {
-    const result = await subscribeStock(req.body);
-   return await res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message || String(error)
-    });
-  }
-});
+async function bootstrap() {
+    try {
+        console.log("Synchronizing Database...");
+        await sequelize.sync();
+        
+        await fetchTop200Stocks();
+        
+        const loginData = await login();
+        if (!loginData || !loginData.status) {
+            console.error("Critical Error: Angel One login failed.");
+            return;
+        }
 
-
-app.get("/ticks", async (req, res) => {
-  return await res.json(getAllTicks());
-});
-
-app.get("/ticks/:stockCode", async (req, res) => {
-  return await res.json(getTickByStock(req.params.stockCode));
-});
-
-function formatOHLCV(response) {
-  // ✅ Step 1: extract Success
-  const data = response?.Success || [];
-
-  // ✅ Step 2: map to OHLCV
-  return data.map(item => ({
-    time: Math.floor(new Date(item.datetime).getTime() / 1000), // ⚠️ IMPORTANT
-    datetime: item.datetime,
-    expiry_date:item.expiry_date,
-    count:item.count,
-    stockCode:item.stock_code,
-    open: Number(item.open),
-    high: Number(item.high),
-    low: Number(item.low),
-    close: Number(item.close),
-    volume: Number(item.volume),
-    openInterest: Number(item.open_interest)
-  }));
+        server.listen(PORT, () => {
+            console.log(`\n=================================================`);
+            console.log(`🚀 SERVER RUNNING AT: http://localhost:${PORT}`);
+            console.log(`-------------------------------------------------`);
+            console.log(`📈 EQUITY:   http://localhost:${PORT}/equity/stocks`);
+            console.log(`📊 EQUITY LIVE:      http://localhost:${PORT}/equity/live`);
+            console.log(`📉 OPTIONS LIVE:     http://localhost:${PORT}/options/live`);
+            console.log(`🔮 FUTURES LIVE:     http://localhost:${PORT}/futures/live`);
+            console.log(`=================================================\n`);
+            
+            startWebSocketConnection(loginData, io);
+            startSchedulers();
+            runInitialHistoricalLoad();
+        });
+    } catch (err) {
+        console.error("Bootstrap error:", err);
+    }
 }
 
-
-app.get("/getBreezeHistoricalData",async (req,res) => {
-    try {
-        const {interval,symbol,from_date,to_date}=req.query;
-        let object={
-            interval:interval,
-            symbol:symbol,
-            from_date:from_date,
-            to_date:to_date
-        }
-        const data = await getData(object);
-        console.log(data,"________---8978643")
-        return await res.json({data:formatOHLCV(data)});
-    } catch (error) {
-        console.log(error);
-    }
-})
-
-app.get("/getAllStockss",async (req,res) => {
-    const output = await getAllStocks();
-    return output;
-});
-
-
-app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}/`);
-});
+bootstrap();
