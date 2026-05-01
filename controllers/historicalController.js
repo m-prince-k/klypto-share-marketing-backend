@@ -234,24 +234,48 @@ const getFuturesHistoricalData = async (req, res) => {
 
 const getManualHistoricalData = async (req, res) => {
     try {
-        const { type, symbol, interval, period, fromdate,todate } = req.query;
-        let params = { symbol: symbol, interval: interval ,
-            fromDate: fromdate, toDate: todate}
+        let { type, symbol, interval, period, fromdate, todate, fromDate, toDate } = req.query;
+        
+        // Normalize parameter names (handle both fromdate and fromDate)
+        const finalFromDate = fromdate || fromDate;
+        const finalToDate = todate || toDate;
 
-        if (!symbol || !interval || !fromdate || !todate) {
+        if (!symbol || !interval || !finalFromDate || !finalToDate) {
             return res.status(400).json({ 
                 success: false, 
-                message: "Missing parameters: symbol, interval, fromdate, and todate are required." 
+                message: "Missing parameters: symbol, interval, fromDate/fromdate, and toDate/todate are required." 
             });
         }
 
+        // Format dates to YYYY-MM-DD HH:mm if they are just YYYY-MM-DD
+        let formattedFromDate = finalFromDate;
+        let formattedToDate = finalToDate;
+
+        // If it's just a date (YYYY-MM-DD), add the default market times
+        if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
+            formattedFromDate = formatDate(new Date(finalFromDate), "09:15");
+        }
+        if (typeof finalToDate === 'string' && finalToDate.length === 10) {
+            formattedToDate = formatDate(new Date(finalToDate), "15:30");
+        }
+
+        console.log(`[Historical-V2] Request: ${symbol}, Interval: ${interval}, Range: ${formattedFromDate} to ${formattedToDate}`);
+
+        let params = { 
+            symbol: symbol, 
+            interval: interval,
+            fromDate: formattedFromDate, 
+            toDate: formattedToDate
+        }
+
         const data = await getHistoricalCandle(params);
-        return await res.json({
+        return res.json({
             success: true,
             count: data.length,
             data: data
         });
     } catch (err) {
+        console.error("[Historical-V2] Error:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 };
