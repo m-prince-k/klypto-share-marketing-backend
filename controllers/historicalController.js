@@ -101,7 +101,13 @@ const getOptionsHistoricalData = async (req, res) => {
     }
 
     try {
-        const result = await getCandlesWithCache(bestOption.symbol, bestOption.token, "NFO", finalInterval, fromDate, toDate);
+        const data = await getHistoricalCandle({
+            symbol: bestOption.symbol,
+            interval: finalInterval,
+            fromDate,
+            toDate,
+            exchange: "NFO"
+        });
         
         // Auto-Add Live
         if (store.wsClient) {
@@ -112,7 +118,7 @@ const getOptionsHistoricalData = async (req, res) => {
             }
         }
 
-        res.json({ success: true, symbol: bestOption.symbol, source: result.source, data: result.data });
+        res.json({ success: true, symbol: bestOption.symbol, source: "api_chunked", count: data.length, data: data });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -154,41 +160,13 @@ const getFuturesHistoricalData = async (req, res) => {
     }
 
     try {
-        // Case-insensitive check for noStore
-        const noStore = req.query.noStore === 'true' || req.query.nostore === 'true';
-        let result;
-
-        console.log(`[Historical] Request: ${symbol}, Interval: ${finalInterval}, noStore: ${noStore}`);
-        console.log(`[Historical] Best Contract Found: ${bestFuture.symbol} (Expiry: ${bestFuture.expiry})`);
-        console.log(`[Historical] Range: ${fromDate} to ${toDate}`);
-
-        if (noStore) {
-            console.log(`[Historical] Fetching DIRECTLY from Angel One API...`);
-            const response = await smartApi.getCandleData({
-                exchange: "NFO",
-                symboltoken: bestFuture.token,
-                interval: finalInterval,
-                fromdate: fromDate,
-                todate: toDate
-            });
-            
-            // Format data if coming directly from API
-            let formattedData = [];
-            if (response && response.data && Array.isArray(response.data)) {
-                formattedData = response.data.map(c => ({
-                    timestamp: c[0],
-                    open: c[1],
-                    high: c[2],
-                    low: c[3],
-                    close: c[4],
-                    volume: c[5]
-                }));
-            }
-
-            result = { source: "api_direct", data: formattedData, raw_response: response };
-        } else {
-            result = await getCandlesWithCache(bestFuture.symbol, bestFuture.token, "NFO", finalInterval, fromDate, toDate);
-        }
+        const data = await getHistoricalCandle({
+            symbol: bestFuture.symbol,
+            interval: finalInterval,
+            fromDate,
+            toDate,
+            exchange: "NFO"
+        });
         
         // Auto-Add Live
         if (store.wsClient) {
@@ -199,7 +177,7 @@ const getFuturesHistoricalData = async (req, res) => {
             }
         }
 
-        res.json({ success: true, symbol: bestFuture.symbol, source: result.source, data: result.data });
+        res.json({ success: true, symbol: bestFuture.symbol, source: "api_chunked", count: data.length, data: data });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
