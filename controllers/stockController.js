@@ -107,6 +107,7 @@ const indicatorDetails = async (req, res) => {
         }
 
         const candles = await getHistoricalCandle(data);
+    
 
         let values = await prepareCandlesWithIndicators(type, candles, res);
         // return res.send(values);
@@ -693,6 +694,7 @@ const orderDispatch = async (req, res) => {
             return await res.status(400).json({ statusCode: 400, message: 'Missing required fields in the request body' });
         } else {
             const { smartApi } = req.angel;
+       
           
             const { tradingsymbol, symboltoken, transactiontype, ordertype, price, quantity, exchange, producttype, duration, variety, squareoff, stoploss } = req.body;
             let payload = {
@@ -711,23 +713,25 @@ const orderDispatch = async (req, res) => {
             };
 
             const dispatchResult = await dispatchOrder(smartApi, payload);
+            // return res.send(dispatchResult);
 
             // ⚠️ Safety check (API fail case)
-            if (!dispatchResult || !dispatchResult.data || !dispatchResult.data.orderid) {
-                return res.status(500).json({
-                    statusCode: 500,
-                    message: 'Order dispatch failed',
-                    data: dispatchResult
-                });
-            }
+            // if (!dispatchResult || !dispatchResult.data || !dispatchResult.data.orderid) {
+            //     return res.status(500).json({
+            //         statusCode: 500,
+            //         message: 'Order dispatch failed',
+            //         data: dispatchResult
+            //     });
+            // }
 
+           
+            // return res.sen/d(dispatchResult);
 
             // 🔹 2. Save in DB
             const savedOrder = await Order.create({
-                order_id: dispatchResult.data.orderid,
-                user_id: req.user.id,
-                client_id: req.user.client_id,
-
+                order_id: dispatchResult?.data?.data?.orderid,
+                user_id: "eb8690b8-7657-4578-bb81-31abd3af42f3", //PENDING
+                client_id: "eb8690b8-7657-4578-bb81-31abd3af42f3",
                 tradingsymbol,
                 symboltoken,
                 transactiontype,
