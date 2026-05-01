@@ -23,6 +23,6 @@ router.post("/getIndicators", stockController.getIndicators);
 
 
 router.post("/dispatchOrder",angelAuthMiddleware, stockController.orderDispatch); // New route for order dispatching  
- 
+router.get("/orders", angelAuthMiddleware, stockController.fetchOrders); // Fetch all orders for a user
 
 module.exports = router;

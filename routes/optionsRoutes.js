@@ -5,5 +5,6 @@ const historicalController = require('../controllers/historicalController');
 
 router.get('/live', stockController.getLiveOptions);
 router.get('/historical', historicalController.getOptionsHistoricalData);
+router.get('/chain', stockController.getOptionsChain);
 
 module.exports = router;
