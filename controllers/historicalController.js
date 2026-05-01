@@ -96,12 +96,23 @@ const getOptionsHistoricalData = async (req, res) => {
         pastDate.setDate(now.getDate() - parseInt(days));
         fromDate = formatDate(pastDate, "09:15");
         toDate = formatDate(now, "15:30");
-    } else if (!fromDate || !toDate) {
+    } else if (fromDate && toDate) {
+        // User provided both dates - format them properly if needed
+        if (typeof fromDate === 'string' && fromDate.length === 10) {
+            fromDate = formatDate(new Date(fromDate), "09:15");
+        }
+        if (typeof toDate === 'string' && toDate.length === 10) {
+            toDate = formatDate(new Date(toDate), "15:30");
+        }
+    } else {
         const oneMonthAgo = new Date();
         oneMonthAgo.setDate(now.getDate() - 30);
         fromDate = formatDate(oneMonthAgo, "09:15");
         toDate = formatDate(now, "15:30");
     }
+
+    console.log(`[Options Historical] Matched Contract: ${bestOption.symbol}, Token: ${bestOption.token}, Strike: ${bestOption.strike}, Expiry: ${bestOption.expiry}`);
+    console.log(`[Options Historical] Date Range: ${fromDate} to ${toDate}, Interval: ${finalInterval}`);
 
     try {
         const data = await getHistoricalCandle({
