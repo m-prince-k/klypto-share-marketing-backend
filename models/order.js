@@ -21,7 +21,7 @@ module.exports = (sequelize, DataTypes) => {
     },
 
     // 🔹 Angel Client Code
-    client_id: {
+    uniqueorderid: {
       type: DataTypes.STRING,
       allowNull: false
     },

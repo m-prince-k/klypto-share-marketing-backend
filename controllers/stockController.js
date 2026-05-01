@@ -733,8 +733,8 @@ const orderDispatch = async (req, res) => {
             // 🔹 2. Save in DB
             const savedOrder = await Order.create({
                 order_id: dispatchResult?.data?.data?.orderid,
-                user_id: "eb8690b8-7657-4578-bb81-31abd3af42f3", //PENDING
-                client_id: "eb8690b8-7657-4578-bb81-31abd3af42f3",
+                user_id: req.user.id, 
+                uniqueorderid: dispatchResult?.data?.data?.uniqueorderid,
                 tradingsymbol,
                 symboltoken,
                 transactiontype,
