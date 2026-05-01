@@ -17,19 +17,19 @@ const register = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Email and password are required' });
         }
 
-        const existingUser = await User.findOne({ where: { email: email.toLowerCase() } });
+        const existingUser = await User.findOne({ where: { email: email.toLowerCase(),mobile:mobile } });
         if (existingUser) {
-            return res.status(409).json({ success: false, message: 'User with this email already exists' });
+            return res.status(409).json({ success: false, message: 'User and mobile with this email already exists' });
         }
 
         const hashedPassword = await bcrypt.hash(password, 12);
 
         const user = await User.create({
-            firstName,
-            lastName,
+            firstName:firstName,
+            lastName:lastName,
             email: email.toLowerCase(),
             password: hashedPassword,
-            mobile,
+            mobile:mobile,
             verified: false,
         });
 

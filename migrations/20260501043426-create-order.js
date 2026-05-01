@@ -24,7 +24,7 @@ module.exports = {
       },
 
       // 🔹 Client Code
-      client_id: {
+      uniqueorderid: {
         type: Sequelize.STRING,
         allowNull: false
       },
