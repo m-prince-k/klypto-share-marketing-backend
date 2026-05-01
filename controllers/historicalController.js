@@ -62,7 +62,7 @@ const getHistoricalData = async (req, res) => {
 };
 
 const getOptionsHistoricalData = async (req, res) => {
-    let { symbol, strike, type, interval, fromDate, toDate, days } = req.query;
+    let { symbol, strike, type, interval, fromDate, toDate, days, expiry } = req.query;
     if (!symbol || !strike || !type) return res.status(400).json({ success: false, message: "Missing params" });
     if (!smartApi.access_token) return res.status(503).json({ success: false, message: "Still authenticating..." });
 
@@ -81,12 +81,22 @@ const getOptionsHistoricalData = async (req, res) => {
     const options = store.nfoMasterData.filter(o => {
         const uName = symbol.toUpperCase().trim();
         // Angel One stores strike in paise (e.g. 48000 is stored as 4800000.000000)
-        return (o.name === uName || o.name.startsWith(uName)) && 
-               (parseFloat(o.strike) / 100) === parseFloat(strike) && 
-               o.symbol.endsWith(type.toUpperCase());
+        const nameMatch = o.name === uName; 
+        const strikeMatch = (parseFloat(o.strike) / 100) === parseFloat(strike);
+        const typeMatch = o.symbol.endsWith(type.toUpperCase());
+        const expiryMatch = expiry ? o.expiry === expiry : true;
+
+        return nameMatch && strikeMatch && typeMatch && expiryMatch;
     });
 
-    if (options.length === 0) return res.status(404).json({ success: false, message: "Not found" });
+    if (options.length === 0) {
+        return res.status(404).json({ 
+            success: false, 
+            message: `Contract not found for ${symbol} ${strike} ${type}${expiry ? ' with expiry ' + expiry : ''}.` 
+        });
+    }
+
+    // Sort by expiry to pick the nearest one if multiple exist (and no expiry was provided)
     const bestOption = options.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
 
     const now = new Date();
@@ -115,13 +125,8 @@ const getOptionsHistoricalData = async (req, res) => {
     console.log(`[Options Historical] Date Range: ${fromDate} to ${toDate}, Interval: ${finalInterval}`);
 
     try {
-        const data = await getHistoricalCandle({
-            symbol: bestOption.symbol,
-            interval: finalInterval,
-            fromDate,
-            toDate,
-            exchange: "NFO"
-        });
+        const result = await getCandlesWithCache(bestOption.symbol, bestOption.token, "NFO", finalInterval, fromDate, toDate);
+        const data = result.data;
         
         // Auto-Add Live
         if (store.wsClient) {
@@ -174,13 +179,8 @@ const getFuturesHistoricalData = async (req, res) => {
     }
 
     try {
-        const data = await getHistoricalCandle({
-            symbol: bestFuture.symbol,
-            interval: finalInterval,
-            fromDate,
-            toDate,
-            exchange: "NFO"
-        });
+        const result = await getCandlesWithCache(bestFuture.symbol, bestFuture.token, "NFO", finalInterval, fromDate, toDate);
+        const data = result.data;
         
         // Auto-Add Live
         if (store.wsClient) {

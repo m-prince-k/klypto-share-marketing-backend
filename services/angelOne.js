@@ -106,8 +106,7 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
                 allCandles.push(...response.data);
             }
 
-            currentStartDate = new Date(currentChunkEndDate);
-            currentStartDate.setMinutes(currentStartDate.getMinutes() + 1);
+            currentStartDate = new Date(currentChunkEndDate.getTime() + 60000);
 
             if (currentStartDate < finalEndDate) {
                 await new Promise(resolve => setTimeout(resolve, 350));
