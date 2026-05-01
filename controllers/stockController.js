@@ -693,6 +693,7 @@ const orderDispatch = async (req, res) => {
             return await res.status(400).json({ statusCode: 400, message: 'Missing required fields in the request body' });
         } else {
             const { smartApi } = req.angel;
+          
             const { tradingsymbol, symboltoken, transactiontype, ordertype, price, quantity } = req.body;
             let payload = {
                 tradingsymbol: tradingsymbol || "SBIN-EQ",
