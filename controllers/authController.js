@@ -8,6 +8,9 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1d';
 // ✅ REGISTER
 const register = async (req, res) => {
     try {
+        if(!req.body || req.body.email =="" || req.body.password =="" || req.body.firstName =="" || req.body.lastName ==""){
+            return res.status(400).json({ success: false, message: 'All fields are required' });
+        }
         const { firstName, lastName, email, password, mobile } = req.body;
 
         if (!email || !password) {
@@ -60,6 +63,10 @@ const register = async (req, res) => {
 // ✅ LOGIN
 const login = async (req, res) => {
     try {
+
+        if(!req.body || req.body.email =="" || req.body.password ==""){
+            return res.status(400).json({ success: false, message: 'Email and password are required' });
+        }
         const { email, password } = req.body;
 
         if (!email || !password) {

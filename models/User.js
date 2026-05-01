@@ -30,8 +30,8 @@ module.exports = (sequelize, DataTypes) => {
     paranoid: true,
   });
   User.associate = models => {
-    User.hasMany(models.CustomIndicator, { foreignKey: 'userId', onDelete: 'CASCADE' });
-    User.hasMany(models.CreateAlert, { foreignKey: 'userId', onDelete: 'CASCADE' });
+    // User.hasMany(models.CustomIndicator, { foreignKey: 'userId', onDelete: 'CASCADE' });
+    // User.hasMany(models.CreateAlert, { foreignKey: 'userId', onDelete: 'CASCADE' });
   };
   return User;
 };
