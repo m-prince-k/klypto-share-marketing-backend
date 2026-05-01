@@ -118,10 +118,14 @@ async function fetchTop200Stocks() {
         const nfoResponse = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
         
         const stockNames = store.stocks.map(s => s.name);
+        // Explicitly add Index names since their equity symbols often don't match their F&O names
+        const indexNames = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+        const allTargetNames = [...new Set([...stockNames, ...indexNames])];
+
         store.nfoMasterData = nfoResponse.data.filter(s => 
             s.exch_seg === "NFO" && 
             (s.instrumenttype === "OPTSTK" || s.instrumenttype === "OPTIDX" || s.instrumenttype === "FUTSTK" || s.instrumenttype === "FUTIDX") &&
-            stockNames.some(name => s.name.startsWith(name))
+            allTargetNames.some(name => s.name.startsWith(name))
         );
         console.log(`Successfully indexed ${store.nfoMasterData.length} F&O contracts.`);
 
