@@ -17,7 +17,7 @@ const { Candle } = require('../models');
  * @param {string} toDate - YYYY-MM-DD HH:mm
  * @param {string} exchange - NSE or NFO
  */
-async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange}) {
+async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange, symboltoken}) {
     try {
         if (!symbol || typeof symbol !== 'string') throw new Error("Invalid or missing symbol parameter.");
         if (!interval || typeof interval !== 'string') throw new Error("Invalid or missing interval parameter.");
@@ -31,19 +31,21 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
             finalExchange = isNfo ? "NFO" : "NSE";
         }
 
-        // 2. Find token for the symbol
-        let token;  
-        if (finalExchange === "NSE") {
-            token = store.symbolToTokenMaster[symbol.toUpperCase()];
-        } else {
-            const nfoStock = store.nfoMasterData.find(f => f.symbol === symbol.toUpperCase());
-            token = nfoStock ? nfoStock.token : null;
-        }
-
+        // 2. Find token for the symbol (skip if already provided)
+        let token = symboltoken || null;
         if (!token) {
-            // Fallback: look in store.stocks
-            const stock = store.stocks.find(s => s.name && s.name.toUpperCase() === symbol.toUpperCase());
-            token = stock ? stock.token : null;
+            if (finalExchange === "NSE") {
+                token = store.symbolToTokenMaster[symbol.toUpperCase()];
+            } else {
+                const nfoStock = store.nfoMasterData.find(f => f.symbol === symbol.toUpperCase());
+                token = nfoStock ? nfoStock.token : null;
+            }
+
+            if (!token) {
+                // Fallback: look in store.stocks
+                const stock = store.stocks.find(s => s.name && s.name.toUpperCase() === symbol.toUpperCase());
+                token = stock ? stock.token : null;
+            }
         }
 
         if (!token) throw new Error(`Symbol ${symbol} not found in master list for ${finalExchange}.`);
