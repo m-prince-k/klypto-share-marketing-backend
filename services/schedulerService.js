@@ -12,11 +12,11 @@ function startSchedulers() {
         const candleData = tokens.map(token => {
             const c = store.liveCandles[token];
             const symbol = store.tokenToName[token] || token;
-            const isNfo = store.nfoMasterData.some(n => n.symbol === symbol) || symbol.length > 10; 
+            const exchange = store.tokenToExchange[token] || "NSE";
             return {
                 symbol: symbol,
                 token: token,
-                exchange: isNfo ? "NFO" : "NSE",
+                exchange: exchange,
                 interval: "ONE_MINUTE",
                 timestamp: new Date(c.minute),
                 open: c.open,
@@ -40,7 +40,7 @@ function startSchedulers() {
         const sample = store.stocks.sort(() => 0.5 - Math.random()).slice(0, 5);
         for (const stock of sample) {
             try {
-                await getCandlesWithCache(stock.name, stock.token, "NSE", "ONE_MINUTE", null, null);
+                await getCandlesWithCache(stock.name, stock.token, stock.segment || "NSE", "ONE_MINUTE", null, null);
                 await new Promise(r => setTimeout(r, 1000));
             } catch (err) {
                 console.error(`[Sync-1m] Failed for ${stock.name}:`, err.message);
@@ -55,7 +55,7 @@ function startSchedulers() {
         const sample = store.stocks.sort(() => 0.5 - Math.random()).slice(0, 10);
         for (const stock of sample) {
             try {
-                await getCandlesWithCache(stock.name, stock.token, "NSE", "FIVE_MINUTE", null, null);
+                await getCandlesWithCache(stock.name, stock.token, stock.segment || "NSE", "FIVE_MINUTE", null, null);
                 await new Promise(r => setTimeout(r, 1000));
             } catch (err) {
                 console.error(`[Sync-5m] Failed for ${stock.name}:`, err.message);
@@ -93,7 +93,7 @@ function startSchedulers() {
         
         for (const index of indices) {
             try {
-                const ltpData = store.latestMarketData[index];
+                const ltpData = store.latestMarketData[`${index}:NSE`];
                 if (!ltpData || !ltpData.ltp || ltpData.ltp === "0.00") continue;
 
                 const ltp = parseFloat(ltpData.ltp);
@@ -152,7 +152,7 @@ async function runInitialHistoricalLoad() {
                     const fDate = formatDate(fromDateObj, "09:15", interval);
                     const tDate = formatDate(toDateObj, "15:30", interval);
 
-                    await getCandlesWithCache(stock.name, stock.token, "NSE", interval, fDate, tDate);
+                    await getCandlesWithCache(stock.name, stock.token, stock.segment || "NSE", interval, fDate, tDate);
                     
                     // Small delay to respect rate limits
                     await new Promise(r => setTimeout(r, 1000));

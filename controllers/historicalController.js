@@ -6,7 +6,7 @@ const { getHistoricalCandle } = require('../services/angelOne');
 // const { EXPIRY_DAYS, NIFTY_200 } = require('../services/futuresConstants');
 
 const getHistoricalData = async (req, res) => {
-    let { symbol, interval, fromDate, toDate, days } = req.query;
+    let { symbol, interval, fromDate, toDate, days, exchange } = req.query;
 
     const intervalMap = {
         "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
@@ -23,8 +23,11 @@ const getHistoricalData = async (req, res) => {
     if (!smartApi.access_token) return res.status(503).json({ success: false, message: "Still authenticating..." });
     if (!symbol) return res.status(400).json({ success: false, message: "Symbol required" });
 
-    const token = store.symbolToTokenMaster[symbol.toUpperCase()];
-    if (!token) return res.status(400).json({ success: false, message: "Invalid symbol" });
+    const finalExchange = (exchange || "NSE").toUpperCase();
+    const tokenKey = finalExchange === "NSE" ? symbol.toUpperCase() : `${symbol.toUpperCase()}_${finalExchange}`;
+    const token = store.symbolToTokenMaster[tokenKey];
+    
+    if (!token) return res.status(400).json({ success: false, message: `Invalid symbol or exchange: ${symbol} on ${finalExchange}` });
 
     // Auto-Add Tracking
     if (store.wsClient && !store.stocks.some(s => s.token === token)) {
@@ -47,7 +50,7 @@ const getHistoricalData = async (req, res) => {
     }
 
     try {
-        const result = await getCandlesWithCache(symbol, token, "NSE", finalInterval, fromDate, toDate);
+        const result = await getCandlesWithCache(symbol, token, finalExchange, finalInterval, fromDate, toDate);
         res.json({
             success: true,
             symbol: symbol.toUpperCase(),
@@ -62,7 +65,7 @@ const getHistoricalData = async (req, res) => {
 };
 
 const getOptionsHistoricalData = async (req, res) => {
-    let { symbol, strike, type, interval, fromDate, toDate, days, expiry } = req.query;
+    let { symbol, strike, type, interval, fromDate, toDate, days, expiry, exchange } = req.query;
     if (!symbol || !strike || !type) return res.status(400).json({ success: false, message: "Missing params" });
     if (!smartApi.access_token) return res.status(503).json({ success: false, message: "Still authenticating..." });
 
@@ -78,9 +81,10 @@ const getOptionsHistoricalData = async (req, res) => {
     };
     const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
+    const finalExchange = (exchange || "NFO").toUpperCase();
     const options = store.nfoMasterData.filter(o => {
         const uName = symbol.toUpperCase().trim();
-        // Standardize expiry comparison (handle both DDMMMYYYY and YYYY-MM-DD)
+        // ... (standardize expiry and other checks)
         const parseExpiry = (exp) => {
             if (!exp) return null;
             const d = new Date(exp);
@@ -95,19 +99,18 @@ const getOptionsHistoricalData = async (req, res) => {
         const currentExpiry = parseExpiry(o.expiry);
 
         const nameMatch = o.name === uName; 
-        // Angel One stores strike in paise (x100) or sometimes in rupees. Handle both.
+        const exchMatch = o.exch_seg === finalExchange;
         const strikeVal = parseFloat(o.strike);
         const targetStrike = parseFloat(strike);
         const strikeMatch = (strikeVal === targetStrike) || (strikeVal / 100 === targetStrike);
         
-        // Exact type match: symbol should contain type (CE/PE) and be an option
         const typeUpper = type.toUpperCase();
         const typeMatch = o.symbol.endsWith(typeUpper) || o.symbol.includes(typeUpper + " ");
         const isOption = o.instrumenttype.startsWith("OPT");
         
         const expiryMatch = targetExpiry ? currentExpiry === targetExpiry : true;
 
-        return nameMatch && strikeMatch && typeMatch && expiryMatch && isOption;
+        return nameMatch && exchMatch && strikeMatch && typeMatch && expiryMatch && isOption;
     });
 
     if (options.length === 0) {
@@ -158,15 +161,18 @@ const getOptionsHistoricalData = async (req, res) => {
     console.log(`[Options Historical] Date Range: ${fromDate} to ${toDate}, Interval: ${finalInterval}`);
 
     try {
-        const result = await getCandlesWithCache(bestOption.symbol, bestOption.token, "NFO", finalInterval, fromDate, toDate);
+        const result = await getCandlesWithCache(bestOption.symbol, bestOption.token, finalExchange, finalInterval, fromDate, toDate);
         const data = result.data;
         
         // Auto-Add Live
         if (store.wsClient) {
             store.tokenToName[bestOption.token] = bestOption.symbol;
-            store.wsClient.fetchData({ correlationID: `opt_add_${bestOption.symbol}`, action: 1, mode: 2, exchangeType: 2, tokens: [bestOption.token] });
-            if (!store.latestMarketData[bestOption.symbol]) {
-                store.latestMarketData[bestOption.symbol] = { symbol: bestOption.symbol, token: bestOption.token, ltp: "0.00", status: "waiting..." };
+            store.tokenToExchange[bestOption.token] = finalExchange;
+            const exchType = finalExchange === "BFO" ? 4 : 2;
+            store.wsClient.fetchData({ correlationID: `opt_add_${bestOption.symbol}`, action: 1, mode: 2, exchangeType: exchType, tokens: [bestOption.token] });
+            const key = `${bestOption.symbol}:${finalExchange}`;
+            if (!store.latestMarketData[key]) {
+                store.latestMarketData[key] = { symbol: bestOption.symbol, token: bestOption.token, ltp: "0.00", status: "waiting...", exchange: finalExchange };
             }
         }
 
@@ -199,8 +205,13 @@ const getFuturesHistoricalData = async (req, res) => {
     };
     const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
-    const futures = store.nfoMasterData.filter(f => f.name === symbol.toUpperCase() && (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX"));
-    if (futures.length === 0) return res.status(404).json({ success: false, message: "Not found" });
+    const finalExchange = (req.query.exchange || "NFO").toUpperCase();
+    const futures = store.nfoMasterData.filter(f => 
+        f.name === symbol.toUpperCase() && 
+        f.exch_seg === finalExchange &&
+        (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX")
+    );
+    if (futures.length === 0) return res.status(404).json({ success: false, message: `Futures not found for ${symbol} on ${finalExchange}` });
     const bestFuture = futures.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
 
     const now = new Date();
@@ -218,15 +229,18 @@ const getFuturesHistoricalData = async (req, res) => {
     }
 
     try {
-        const result = await getCandlesWithCache(bestFuture.symbol, bestFuture.token, "NFO", finalInterval, fromDate, toDate);
+        const result = await getCandlesWithCache(bestFuture.symbol, bestFuture.token, finalExchange, finalInterval, fromDate, toDate);
         const data = result.data;
         
         // Auto-Add Live
         if (store.wsClient) {
             store.tokenToName[bestFuture.token] = bestFuture.symbol;
-            store.wsClient.fetchData({ correlationID: `fut_add_${bestFuture.symbol}`, action: 1, mode: 2, exchangeType: 2, tokens: [bestFuture.token] });
-            if (!store.latestMarketData[bestFuture.symbol]) {
-                store.latestMarketData[bestFuture.symbol] = { symbol: bestFuture.symbol, token: bestFuture.token, ltp: "0.00", status: "waiting..." };
+            store.tokenToExchange[bestFuture.token] = finalExchange;
+            const exchType = finalExchange === "BFO" ? 4 : 2;
+            store.wsClient.fetchData({ correlationID: `fut_add_${bestFuture.symbol}`, action: 1, mode: 2, exchangeType: exchType, tokens: [bestFuture.token] });
+            const key = `${bestFuture.symbol}:${finalExchange}`;
+            if (!store.latestMarketData[key]) {
+                store.latestMarketData[key] = { symbol: bestFuture.symbol, token: bestFuture.token, ltp: "0.00", status: "waiting...", exchange: finalExchange };
             }
         }
 
@@ -285,7 +299,7 @@ const getFuturesHistoricalData = async (req, res) => {
 
 const getManualHistoricalData = async (req, res) => {
     try {
-        let { type, symbol, interval, period, fromdate, todate, fromDate, toDate } = req.query;
+        let { type, symbol, interval, period, fromdate, todate, fromDate, toDate, exchange } = req.query;
         
         // Normalize parameter names (handle both fromdate and fromDate)
         const finalFromDate = fromdate || fromDate;
@@ -316,7 +330,8 @@ const getManualHistoricalData = async (req, res) => {
             symbol: symbol, 
             interval: interval,
             fromDate: formattedFromDate, 
-            toDate: formattedToDate
+            toDate: formattedToDate,
+            exchange: exchange || "NSE"
         }
 
         const data = await getHistoricalCandle(params);

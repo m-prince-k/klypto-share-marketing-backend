@@ -21,6 +21,7 @@ async function fetchTop200Stocks() {
         const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
         
         const nseEquity = response.data.filter(s => s.exch_seg === "NSE" && s.instrumenttype === "");
+        const bseEquity = response.data.filter(s => s.exch_seg === "BSE" && s.instrumenttype === "");
 
         const manualMap = {
             "RELIND": "RELIANCE", "STABAN": "SBIN", "ICIBAN": "ICICIBANK", "HDFBAN": "HDFCBANK",
@@ -80,32 +81,57 @@ async function fetchTop200Stocks() {
             const cleanUserSym = userSym.toUpperCase().trim();
             let searchSym = manualMap[cleanUserSym] || cleanUserSym;
 
-            let found = nseEquity.find(s => s.symbol === `${searchSym}-EQ` || s.symbol === searchSym);
-
-            // If not found, try exact name match
-            if (!found) {
-                found = nseEquity.find(s => s.name.toUpperCase().replace(/\s/g, "") === searchSym);
+            // 1. Handle NSE
+            let nseStock = nseEquity.find(s => s.symbol === `${searchSym}-EQ` || s.symbol === searchSym);
+            if (!nseStock) {
+                nseStock = nseEquity.find(s => s.name.toUpperCase().replace(/\s/g, "") === searchSym);
             }
 
-            if (found) {
-                const officialSymbol = found.symbol.replace("-EQ", "");
+            if (nseStock) {
+                const officialSymbol = nseStock.symbol.replace("-EQ", "");
                 matchedStocks.push({
                     name: officialSymbol,
                     userCode: userSym,
-                    token: found.token,
-                    actualSymbol: found.symbol,
-                    fullName: found.name
+                    token: nseStock.token,
+                    actualSymbol: nseStock.symbol,
+                    fullName: nseStock.name,
+                    segment: 'NSE'
                 });
                 
-                store.symbolToTokenMaster[userSym.toUpperCase()] = found.token;
-                store.symbolToTokenMaster[officialSymbol.toUpperCase()] = found.token;
-                store.tokenToName[found.token] = officialSymbol;
-            } else {
+                store.symbolToTokenMaster[userSym.toUpperCase()] = nseStock.token;
+                store.symbolToTokenMaster[`${userSym.toUpperCase()}_NSE`] = nseStock.token;
+                store.tokenToName[nseStock.token] = officialSymbol;
+                store.tokenToExchange[nseStock.token] = "NSE";
+            }
+
+            // 2. Handle BSE
+            let bseStock = bseEquity.find(s => s.symbol === `${searchSym}-EQ` || s.symbol === searchSym);
+            if (!bseStock) {
+                bseStock = bseEquity.find(s => s.name.toUpperCase().replace(/\s/g, "") === searchSym);
+            }
+
+            if (bseStock) {
+                const officialSymbol = bseStock.symbol.replace("-EQ", "");
+                matchedStocks.push({
+                    name: officialSymbol,
+                    userCode: userSym,
+                    token: bseStock.token,
+                    actualSymbol: bseStock.symbol,
+                    fullName: bseStock.name,
+                    segment: 'BSE'
+                });
+                
+                store.symbolToTokenMaster[`${userSym.toUpperCase()}_BSE`] = bseStock.token;
+                store.tokenToName[bseStock.token] = officialSymbol;
+                store.tokenToExchange[bseStock.token] = "BSE";
+            }
+
+            if (!nseStock && !bseStock) {
                 unmatched.push(userSym);
             }
         });
 
-        console.log(`[MasterScrip] Matched: ${matchedStocks.length}, Unmatched: ${unmatched.length}`);
+        console.log(`[MasterScrip] Total Matched Entries: ${matchedStocks.length}, Unmatched: ${unmatched.length}`);
         if (unmatched.length > 0) {
             console.log(`[MasterScrip] Sample Unmatched: ${unmatched.slice(0, 5).join(", ")}`);
         }
@@ -123,11 +149,11 @@ async function fetchTop200Stocks() {
                     token: s.token,
                     actualSymbol: s.actualSymbol,
                     fullName: s.fullName,
-                    segment: 'NSE'
+                    segment: s.segment
                 });
                 upsertCount++;
             } catch (upsertErr) {
-                console.error(`[MasterScrip] DB Upsert failed for ${s.name}:`, upsertErr.message);
+                console.error(`[MasterScrip] DB Upsert failed for ${s.name} (${s.segment}):`, upsertErr.message);
             }
         }
         console.log(`[MasterScrip] Successfully upserted ${upsertCount} stocks to DB.`);
@@ -141,11 +167,16 @@ async function fetchTop200Stocks() {
         const allTargetNames = [...new Set([...stockNames, ...indexNames])];
 
         store.nfoMasterData = nfoResponse.data.filter(s => 
-            s.exch_seg === "NFO" && 
+            (s.exch_seg === "NFO" || s.exch_seg === "BFO") && 
             (s.instrumenttype === "OPTSTK" || s.instrumenttype === "OPTIDX" || s.instrumenttype === "FUTSTK" || s.instrumenttype === "FUTIDX") &&
             allTargetNames.includes(s.name)
         );
         console.log(`Successfully indexed ${store.nfoMasterData.length} F&O contracts.`);
+        
+        // Populate F&O tokens to exchange mapping
+        store.nfoMasterData.forEach(o => {
+            store.tokenToExchange[o.token] = o.exch_seg;
+        });
 
         store.stocks.forEach(s => {
             store.latestMarketData[s.name] = {

@@ -10,8 +10,12 @@ module.exports = (sequelize, DataTypes) => {
   LivePrice.init({
     symbol: {
       type: DataTypes.STRING,
-      allowNull: false,
-      unique: true
+      allowNull: false
+    },
+    exchange: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        defaultValue: 'NSE'
     },
     token: {
       type: DataTypes.STRING,

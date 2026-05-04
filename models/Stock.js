@@ -10,8 +10,7 @@ module.exports = (sequelize, DataTypes) => {
   Stock.init({
     name: {
       type: DataTypes.STRING,
-      allowNull: false,
-      unique: true
+      allowNull: false
     },
     userCode: {
       type: DataTypes.STRING
