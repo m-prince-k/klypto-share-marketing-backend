@@ -85,7 +85,7 @@ const indicatorDetails = async (req, res) => {
 
     try {
         const { type, symbol, interval, period, fromdate, todate, fromDate, toDate } = req.query;
-        
+
         // Normalize parameter names
         const finalFromDate = fromdate || fromDate;
         const finalToDate = todate || toDate;
@@ -107,7 +107,7 @@ const indicatorDetails = async (req, res) => {
         }
 
         const candles = await getHistoricalCandle(data);
-    
+
 
         let values = await prepareCandlesWithIndicators(type, candles, res);
         // return res.send(values);
@@ -127,7 +127,7 @@ const updateIndicator = async (req, res) => {
             return await res.json({ statusCode: 403, message: "Type must be defined" });
         } else {
             const { symbol, interval, period, fromdate, todate, fromDate, toDate } = req.query;
-            
+
             // Normalize parameter names
             const finalFromDate = fromdate || fromDate;
             const finalToDate = todate || toDate;
@@ -694,29 +694,28 @@ const orderDispatch = async (req, res) => {
             return await res.status(400).json({ statusCode: 400, message: 'Missing required fields in the request body' });
         } else {
             const { smartApi } = req.angel;
-       
-          
+
             const { tradingsymbol, symboltoken, transactiontype, ordertype, price, quantity, exchange, producttype, duration, variety, squareoff, stoploss } = req.body;
             let payload = {
-                tradingsymbol: tradingsymbol || "SBIN-EQ",
-                symboltoken: symboltoken || "3045",
-                transactiontype: transactiontype || "BUY",
-                exchange: exchange || "NSE",
-                ordertype: ordertype || "LIMIT",
-                producttype: producttype || "INTRADAY",
-                duration: duration || "DAY",
-                price: price || "600",
-                quantity: quantity || 1,
-                variety: variety || "NORMAL",
-                squareoff: squareoff || "0",
-                stoploss: stoploss || "0"
+                tradingsymbol: tradingsymbol,
+                symboltoken: symboltoken,
+                transactiontype: transactiontype,
+                exchange: exchange,
+                ordertype: ordertype,
+                producttype: producttype,
+                duration: duration,
+                price: price,
+                quantity: quantity,
+                variety: variety,
+                squareoff: squareoff,
+                stoploss: stoploss
             };
 
             const dispatchResult = await dispatchOrder(smartApi, payload);
-            // return res.send(dispatchResult);
+             return res.send(dispatchResult);
 
             // Extract the actual Angel One API response
-            const angelResponse = dispatchResult.data;
+            // const angelResponse = dispatchResult?.data;
 
             // ⚠️ Safety check (API fail case)
             // if (!dispatchResult || !dispatchResult.data || !dispatchResult.data.orderid) {
@@ -727,30 +726,29 @@ const orderDispatch = async (req, res) => {
             //     });
             // }
 
-           
+
             // return res.sen/d(dispatchResult);
 
             // 🔹 2. Save in DB
             const savedOrder = await Order.create({
                 order_id: dispatchResult?.data?.data?.orderid,
-                user_id: req.user.id, 
+                user_id: req.user.id,
+                client_id: dispatchResult?.data?.data?.clientid,
+                strike_pice:req.body.strikeprice,
+                expirey_date:req.body.expireydate,
                 uniqueorderid: dispatchResult?.data?.data?.uniqueorderid,
-                tradingsymbol,
-                symboltoken,
-                transactiontype,
-                ordertype,
-                price,
-                quantity,
-
-                exchange: dispatchResult.data.exchange || null,
-                product_type: dispatchResult.data.producttype || null,
-                duration: dispatchResult.data.duration || 'DAY',
-
+                tradingsymbol: tradingsymbol,
+                symboltoken: symboltoken,
+                transactiontype: transactiontype,
+                ordertype: ordertype,
+                price: price,
+                quantity: quantity,
+                exchange: dispatchResult?.data?.exchange || null,
+                product_type: dispatchResult?.data?.producttype || null,
+                duration: dispatchResult?.data?.duration || 'DAY',
                 status: 'OPEN',
-                status_message: dispatchResult.message || null,
-
+                status_message: dispatchResult?.message || null,
                 order_time: new Date(),
-
                 raw_response: dispatchResult
             });
 
@@ -807,10 +805,10 @@ const getOptionsChain = async (req, res) => {
         if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
 
         const uSym = symbol.toUpperCase().trim();
-        
+
         const options = store.nfoMasterData.filter(o => {
-            return (o.name === uSym || o.name.startsWith(uSym)) && 
-                   (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK");
+            return (o.name === uSym || o.name.startsWith(uSym)) &&
+                (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK");
         });
 
         if (options.length === 0) {
@@ -819,10 +817,10 @@ const getOptionsChain = async (req, res) => {
 
         // All unique expiry dates sorted
         const expiries = [...new Set(options.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
-        
+
         // All unique strikes (converted from paise to rupees) sorted
         const strikes = [...new Set(options.map(o => parseFloat(o.strike) / 100))].sort((a, b) => a - b);
-        
+
         // Lot size from first contract
         const lotSize = parseInt(options[0]?.lotsize) || 0;
 

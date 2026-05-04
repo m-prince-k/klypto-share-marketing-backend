@@ -89,8 +89,8 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
                 currentChunkEndDate = new Date(finalEndDate);
             }
 
-            const fStr = formatDate(currentStartDate, currentStartDate.getHours() === 0 ? "09:15" : null);
-            const tStr = formatDate(currentChunkEndDate, currentChunkEndDate.getHours() === 0 ? "15:30" : null);
+            const fStr = formatDate(currentStartDate, currentStartDate.getHours() === 0 ? "09:15" : null, apiInterval);
+            const tStr = formatDate(currentChunkEndDate, currentChunkEndDate.getHours() === 0 ? "15:30" : null, apiInterval);
 
             console.log(`[AngelOne API] Fetching ${finalExchange} chunk: ${fStr} to ${tStr}`);
 
@@ -106,7 +106,8 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
                 allCandles.push(...response.data);
             }
 
-            currentStartDate = new Date(currentChunkEndDate.getTime() + 60000);
+            currentStartDate = currentChunkEndDate;
+            if (currentStartDate >= finalEndDate) break;
 
             if (currentStartDate < finalEndDate) {
                 await new Promise(resolve => setTimeout(resolve, 350));
