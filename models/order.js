@@ -19,7 +19,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     
     expirey_date:{
-      type:DataTypes.DATE,
+      type:DataTypes.STRING,
       allowNull: false
     },
     // 🔹 User Mapping
@@ -32,6 +32,10 @@ module.exports = (sequelize, DataTypes) => {
     uniqueorderid: {
       type: DataTypes.STRING,
       allowNull: false
+    },
+    client_id: {
+      type: DataTypes.STRING,
+      allowNull: true
     },
 
     // 🔹 Order Info
@@ -63,7 +67,10 @@ module.exports = (sequelize, DataTypes) => {
 
     // 🔹 Debugging
     raw_response: DataTypes.JSONB,
-    status: DataTypes.BOOLEAN
+    is_active: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true
+    }
 
   }, {
     tableName: "orders",

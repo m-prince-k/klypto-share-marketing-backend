@@ -14,9 +14,16 @@ const getStocks = (req, res) => {
 };
 
 const getLiveEquity = (req, res) => {
+    const symbol = req.query.symbol;
+    let data = Object.values(store.latestMarketData).filter(d => !d.symbol.includes("CE") && !d.symbol.includes("PE"));
+
+    if (symbol) {
+        data = data.filter(d => d.symbol.toUpperCase() === symbol.toUpperCase());
+    }
+
     res.json({
         success: true,
-        data: Object.values(store.latestMarketData).filter(d => !d.symbol.includes("CE") && !d.symbol.includes("PE"))
+        data: data
     });
 };
 
@@ -66,16 +73,30 @@ const syncDynamicCandleData = async (req, res) => {
 };
 
 const getLiveOptions = (req, res) => {
+    const symbol = req.query.symbol;
+    let data = Object.values(store.latestMarketData).filter(d => d.symbol.includes("CE") || d.symbol.includes("PE"));
+
+    if (symbol) {
+        data = data.filter(d => d.symbol.toUpperCase() === symbol.toUpperCase());
+    }
+
     res.json({
         success: true,
-        data: Object.values(store.latestMarketData).filter(d => d.symbol.includes("CE") || d.symbol.includes("PE"))
+        data: data
     });
 };
 
 const getLiveFutures = (req, res) => {
+    const symbol = req.query.symbol;
+    let data = Object.values(store.latestMarketData).filter(d => d.symbol.endsWith("FUT"));
+
+    if (symbol) {
+        data = data.filter(d => d.symbol.toUpperCase() === symbol.toUpperCase());
+    }
+
     res.json({
         success: true,
-        data: Object.values(store.latestMarketData).filter(d => d.symbol.endsWith("FUT"))
+        data: data
     });
 };
 
@@ -712,7 +733,7 @@ const orderDispatch = async (req, res) => {
             };
 
             const dispatchResult = await dispatchOrder(smartApi, payload);
-             return res.send(dispatchResult);
+
 
             // Extract the actual Angel One API response
             // const angelResponse = dispatchResult?.data;
@@ -733,9 +754,9 @@ const orderDispatch = async (req, res) => {
             const savedOrder = await Order.create({
                 order_id: dispatchResult?.data?.data?.orderid,
                 user_id: req.user.id,
-                client_id: dispatchResult?.data?.data?.clientid,
-                strike_pice:req.body.strikeprice,
-                expirey_date:req.body.expireydate,
+                // client_id: dispatchResult?.data?.data?.clientid,
+                strike_price: req.body.strike_price,
+                expirey_date: req.body.expirey_date,
                 uniqueorderid: dispatchResult?.data?.data?.uniqueorderid,
                 tradingsymbol: tradingsymbol,
                 symboltoken: symboltoken,
@@ -743,9 +764,9 @@ const orderDispatch = async (req, res) => {
                 ordertype: ordertype,
                 price: price,
                 quantity: quantity,
-                exchange: dispatchResult?.data?.exchange || null,
-                product_type: dispatchResult?.data?.producttype || null,
-                duration: dispatchResult?.data?.duration || 'DAY',
+                exchange: exchange,
+                product_type: producttype,
+                duration: duration,
                 status: 'OPEN',
                 status_message: dispatchResult?.message || null,
                 order_time: new Date(),

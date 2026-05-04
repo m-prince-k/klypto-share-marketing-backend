@@ -26,10 +26,10 @@ module.exports = {
         type: Sequelize.FLOAT,
         allowNull: true
       },
-      expirey_date:{
-        type:Sequelize.DATE,
+      expirey_date: {
+        type: Sequelize.STRING,
         allowNull: false
-      },  
+      },
       // 🔹 Client Code
       uniqueorderid: {
         type: Sequelize.STRING,
