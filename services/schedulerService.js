@@ -12,10 +12,11 @@ function startSchedulers() {
         const candleData = tokens.map(token => {
             const c = store.liveCandles[token];
             const symbol = store.tokenToName[token] || token;
+            const isNfo = store.nfoMasterData.some(n => n.symbol === symbol) || symbol.length > 10; 
             return {
                 symbol: symbol,
                 token: token,
-                exchange: symbol.includes("-") ? "NFO" : "NSE",
+                exchange: isNfo ? "NFO" : "NSE",
                 interval: "ONE_MINUTE",
                 timestamp: new Date(c.minute),
                 open: c.open,
@@ -148,8 +149,8 @@ async function runInitialHistoricalLoad() {
                     const fromDateObj = new Date();
                     fromDateObj.setDate(now.getDate() - ((i + 1) * 30));
 
-                    const fDate = formatDate(fromDateObj, "09:15");
-                    const tDate = formatDate(toDateObj, "15:30");
+                    const fDate = formatDate(fromDateObj, "09:15", interval);
+                    const tDate = formatDate(toDateObj, "15:30", interval);
 
                     await getCandlesWithCache(stock.name, stock.token, "NSE", interval, fDate, tDate);
                     
@@ -183,8 +184,8 @@ async function runInitialHistoricalLoad() {
                         const fromDateObj = new Date();
                         fromDateObj.setDate(now.getDate() - ((i + 1) * 30));
 
-                        const fDate = formatDate(fromDateObj, "09:15");
-                        const tDate = formatDate(toDateObj, "15:30");
+                        const fDate = formatDate(fromDateObj, "09:15", interval);
+                        const tDate = formatDate(toDateObj, "15:30", interval);
 
                         await getCandlesWithCache(bestFuture.symbol, bestFuture.token, "NFO", interval, fDate, tDate);
                         await new Promise(r => setTimeout(r, 1000));

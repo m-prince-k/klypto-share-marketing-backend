@@ -37,13 +37,13 @@ const getHistoricalData = async (req, res) => {
     if (days && !fromDate) {
         const pastDate = new Date();
         pastDate.setDate(now.getDate() - parseInt(days));
-        fromDate = formatDate(pastDate, "09:15");
-        toDate = formatDate(now, "15:30");
+        fromDate = formatDate(pastDate, "09:15", finalInterval);
+        toDate = formatDate(now, "15:30", finalInterval);
     } else if (!fromDate || !toDate) {
         const oneMonthAgo = new Date();
         oneMonthAgo.setDate(now.getDate() - 30);
-        fromDate = formatDate(oneMonthAgo, "09:15");
-        toDate = formatDate(now, "15:30");
+        fromDate = formatDate(oneMonthAgo, "09:15", finalInterval);
+        toDate = formatDate(now, "15:30", finalInterval);
     }
 
     try {
@@ -80,13 +80,34 @@ const getOptionsHistoricalData = async (req, res) => {
 
     const options = store.nfoMasterData.filter(o => {
         const uName = symbol.toUpperCase().trim();
-        // Angel One stores strike in paise (e.g. 48000 is stored as 4800000.000000)
-        const nameMatch = o.name === uName; 
-        const strikeMatch = (parseFloat(o.strike) / 100) === parseFloat(strike);
-        const typeMatch = o.symbol.endsWith(type.toUpperCase());
-        const expiryMatch = expiry ? o.expiry === expiry : true;
+        // Standardize expiry comparison (handle both DDMMMYYYY and YYYY-MM-DD)
+        const parseExpiry = (exp) => {
+            if (!exp) return null;
+            const d = new Date(exp);
+            if (isNaN(d.getTime())) return null;
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        };
 
-        return nameMatch && strikeMatch && typeMatch && expiryMatch;
+        const targetExpiry = expiry ? parseExpiry(expiry) : null;
+        const currentExpiry = parseExpiry(o.expiry);
+
+        const nameMatch = o.name === uName; 
+        // Angel One stores strike in paise (x100) or sometimes in rupees. Handle both.
+        const strikeVal = parseFloat(o.strike);
+        const targetStrike = parseFloat(strike);
+        const strikeMatch = (strikeVal === targetStrike) || (strikeVal / 100 === targetStrike);
+        
+        // Exact type match: symbol should contain type (CE/PE) and be an option
+        const typeUpper = type.toUpperCase();
+        const typeMatch = o.symbol.endsWith(typeUpper) || o.symbol.includes(typeUpper + " ");
+        const isOption = o.instrumenttype.startsWith("OPT");
+        
+        const expiryMatch = targetExpiry ? currentExpiry === targetExpiry : true;
+
+        return nameMatch && strikeMatch && typeMatch && expiryMatch && isOption;
     });
 
     if (options.length === 0) {
@@ -96,29 +117,41 @@ const getOptionsHistoricalData = async (req, res) => {
         });
     }
 
-    // Sort by expiry to pick the nearest one if multiple exist (and no expiry was provided)
-    const bestOption = options.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+    // Filter for current/future expiries only if no specific expiry was requested
+    let filteredOptions = options;
+    if (!expiry) {
+        const todayStr = parseExpiry(new Date());
+        filteredOptions = options.filter(o => {
+            const expStr = parseExpiry(o.expiry);
+            return expStr >= todayStr;
+        });
+        // Fallback to all if none are future (unlikely)
+        if (filteredOptions.length === 0) filteredOptions = options;
+    }
+
+    // Sort by expiry to pick the nearest one
+    const bestOption = filteredOptions.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
 
     const now = new Date();
 
     if (days && !fromDate) {
         const pastDate = new Date();
         pastDate.setDate(now.getDate() - parseInt(days));
-        fromDate = formatDate(pastDate, "09:15");
-        toDate = formatDate(now, "15:30");
+        fromDate = formatDate(pastDate, "09:15", finalInterval);
+        toDate = formatDate(now, "15:30", finalInterval);
     } else if (fromDate && toDate) {
         // User provided both dates - format them properly if needed
         if (typeof fromDate === 'string' && fromDate.length === 10) {
-            fromDate = formatDate(new Date(fromDate), "09:15");
+            fromDate = formatDate(new Date(fromDate), "09:15", finalInterval);
         }
         if (typeof toDate === 'string' && toDate.length === 10) {
-            toDate = formatDate(new Date(toDate), "15:30");
+            toDate = formatDate(new Date(toDate), "15:30", finalInterval);
         }
     } else {
         const oneMonthAgo = new Date();
         oneMonthAgo.setDate(now.getDate() - 30);
-        fromDate = formatDate(oneMonthAgo, "09:15");
-        toDate = formatDate(now, "15:30");
+        fromDate = formatDate(oneMonthAgo, "09:15", finalInterval);
+        toDate = formatDate(now, "15:30", finalInterval);
     }
 
     console.log(`[Options Historical] Matched Contract: ${bestOption.symbol}, Token: ${bestOption.token}, Strike: ${bestOption.strike}, Expiry: ${bestOption.expiry}`);
@@ -137,7 +170,13 @@ const getOptionsHistoricalData = async (req, res) => {
             }
         }
 
-        res.json({ success: true, symbol: bestOption.symbol, source: "api_chunked", count: data.length, data: data });
+        res.json({ 
+            success: true, 
+            symbol: bestOption.symbol, 
+            source: result.source, 
+            count: data.length, 
+            data: data 
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -169,13 +208,13 @@ const getFuturesHistoricalData = async (req, res) => {
     if (days && !fromDate) {
         const pastDate = new Date();
         pastDate.setDate(now.getDate() - parseInt(days));
-        fromDate = formatDate(pastDate, "09:15");
-        toDate = formatDate(now, "15:30");
+        fromDate = formatDate(pastDate, "09:15", finalInterval);
+        toDate = formatDate(now, "15:30", finalInterval);
     } else if (!fromDate || !toDate) {
         const oneMonthAgo = new Date();
         oneMonthAgo.setDate(now.getDate() - 30);
-        fromDate = formatDate(oneMonthAgo, "09:15");
-        toDate = formatDate(now, "15:30");
+        fromDate = formatDate(oneMonthAgo, "09:15", finalInterval);
+        toDate = formatDate(now, "15:30", finalInterval);
     }
 
     try {
@@ -191,7 +230,13 @@ const getFuturesHistoricalData = async (req, res) => {
             }
         }
 
-        res.json({ success: true, symbol: bestFuture.symbol, source: "api_chunked", count: data.length, data: data });
+        res.json({ 
+            success: true, 
+            symbol: bestFuture.symbol, 
+            source: result.source, 
+            count: data.length, 
+            data: data 
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -259,14 +304,14 @@ const getManualHistoricalData = async (req, res) => {
 
         // If it's just a date (YYYY-MM-DD), add the default market times
         if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-            formattedFromDate = formatDate(new Date(finalFromDate), "09:15");
+            formattedFromDate = formatDate(new Date(finalFromDate), "09:15", interval);
         }
         if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-            formattedToDate = formatDate(new Date(finalToDate), "15:30");
+            formattedToDate = formatDate(new Date(finalToDate), "15:30", interval);
         }
 
         console.log(`[Historical-V2] Request: ${symbol}, Interval: ${interval}, Range: ${formattedFromDate} to ${formattedToDate}`);
-
+        
         let params = { 
             symbol: symbol, 
             interval: interval,

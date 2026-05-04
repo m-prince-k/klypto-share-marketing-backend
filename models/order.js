@@ -13,7 +13,15 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: false
     },
-
+    strike_price: {
+      type: DataTypes.FLOAT,
+      allowNull: true
+    },
+    
+    expirey_date:{
+      type:DataTypes.DATE,
+      allowNull: false
+    },
     // 🔹 User Mapping
     user_id: {
       type: DataTypes.UUID,

@@ -22,11 +22,22 @@ module.exports = {
         allowNull: false,
         unique: true
       },
-
+      strike_price: {
+        type: Sequelize.FLOAT,
+        allowNull: true
+      },
+      expirey_date:{
+        type:Sequelize.DATE,
+        allowNull: false
+      },  
       // 🔹 Client Code
       uniqueorderid: {
         type: Sequelize.STRING,
         allowNull: false
+      },
+      client_id: {
+        type: Sequelize.STRING,
+        allowNull: true
       },
 
       // 🔹 Order Fields
@@ -90,9 +101,9 @@ module.exports = {
       raw_response: {
         type: Sequelize.JSONB
       },
-      status:{
+      is_active: {
         type: Sequelize.BOOLEAN,
-        defaultValue: false
+        defaultValue: true
       },
 
       // 🔹 Timestamps
