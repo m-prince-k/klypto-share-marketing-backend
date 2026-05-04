@@ -10,12 +10,11 @@ const angelAuthMiddleware = async (req, res, next) => {
     try {
         const loginData = await smartApi.generateSession("AAAP423969", "2004", totp);
         if (!loginData?.data) {
-            return res.send({message:"Angel login failed"});
+            return res.send({ message: "Angel login failed" });
         }
 
         const authToken = loginData.data.jwtToken;
         const refreshToken = loginData.data.refreshToken;
-
         // 📡 Feed Token
         const feedToken = loginData.data.feedToken;
 
