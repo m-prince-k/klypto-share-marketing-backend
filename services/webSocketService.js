@@ -6,6 +6,7 @@ function formatTickData(data) {
 
     let formatted = { ...data };
     let cleanToken = data.token ? data.token.replace(/\"/g, "").trim() : null;
+    formatted.exchange = store.tokenToExchange[cleanToken] || "NSE";
     formatted.symbol = store.tokenToName[cleanToken] || cleanToken || "Unknown";
 
     const priceFields = ['last_traded_price', 'open_price_day', 'high_price_day', 'low_price_day', 'close_price', 'avg_price', 'net_change'];
@@ -62,12 +63,25 @@ async function startWebSocketConnection(loginData, io) {
     console.log(`WebSocket Connected. Subscribing to Equity and Futures...`);
 
     // 1. Subscribe to Equity (NSE)
-    const equityTokens = store.stocks.map(s => s.token);
-    store.wsClient.fetchData({
-        correlationID: "equity_subscription",
-        action: 1, mode: 2, exchangeType: 1,
-        tokens: equityTokens
-    });
+    const nseTokens = store.stocks.filter(s => s.segment === "NSE").map(s => s.token);
+    if (nseTokens.length > 0) {
+        store.wsClient.fetchData({
+            correlationID: "nse_subscription",
+            action: 1, mode: 2, exchangeType: 1,
+            tokens: nseTokens
+        });
+    }
+
+    // 1.1 Subscribe to Equity (BSE)
+    const bseTokens = store.stocks.filter(s => s.segment === "BSE").map(s => s.token);
+    if (bseTokens.length > 0) {
+        console.log(`Subscribing to ${bseTokens.length} BSE tokens...`);
+        store.wsClient.fetchData({
+            correlationID: "bse_subscription",
+            action: 1, mode: 2, exchangeType: 3, // 3 is BSE
+            tokens: bseTokens
+        });
+    }
 
     // 2. Subscribe to Near-Month Futures (NFO)
     // Filter nfoMasterData for Current Expiry Futures of our tracked stocks
@@ -88,14 +102,27 @@ async function startWebSocketConnection(loginData, io) {
 
     if (nearMonthFutures.length > 0) {
         console.log(`Subscribing to ${nearMonthFutures.length} Near-Month Futures...`);
-        const futTokens = nearMonthFutures.map(f => f.token);
         
-        // Batch futures subscription (max 50 per call to be safe)
-        for (let i = 0; i < futTokens.length; i += 50) {
-            const batch = futTokens.slice(i, i + 50);
+        // Split by exchange
+        const nfoFuts = nearMonthFutures.filter(f => f.exch_seg === "NFO").map(f => f.token);
+        const bfoFuts = nearMonthFutures.filter(f => f.exch_seg === "BFO").map(f => f.token);
+
+        // NFO Sub
+        for (let i = 0; i < nfoFuts.length; i += 50) {
+            const batch = nfoFuts.slice(i, i + 50);
             store.wsClient.fetchData({
-                correlationID: `futures_batch_${i}`,
+                correlationID: `nfo_futures_batch_${i}`,
                 action: 1, mode: 2, exchangeType: 2,
+                tokens: batch
+            });
+        }
+
+        // BFO Sub
+        for (let i = 0; i < bfoFuts.length; i += 50) {
+            const batch = bfoFuts.slice(i, i + 50);
+            store.wsClient.fetchData({
+                correlationID: `bfo_futures_batch_${i}`,
+                action: 1, mode: 2, exchangeType: 4, // 4 is BFO
                 tokens: batch
             });
         }
@@ -104,7 +131,9 @@ async function startWebSocketConnection(loginData, io) {
     store.wsClient.on("tick", (data) => {
         const formatted = formatTickData(data);
         if (formatted) {
-            store.latestMarketData[formatted.symbol] = formatted;
+            // Key by Symbol:Exchange to avoid collisions
+            const key = `${formatted.symbol}:${formatted.exchange}`;
+            store.latestMarketData[key] = formatted;
             io.emit("marketUpdate", formatted);
         }
     });

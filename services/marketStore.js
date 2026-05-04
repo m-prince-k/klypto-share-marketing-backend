@@ -4,6 +4,7 @@ module.exports = {
     wsClient: null, // Global WebSocket instance
     symbolToTokenMaster: {}, // All NSE stocks for Historical Data
     tokenToName: {},
+    tokenToExchange: {}, // Map token to exchange (NSE, BSE, NFO)
     latestMarketData: {},
     nfoMasterData: [], // Store NFO scripts for lookup
     liveCandles: {} // Real-time candle aggregation { [token]: { open, high, low, close, volume, minute } }

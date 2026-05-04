@@ -55,7 +55,7 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       {
         unique: true,
-        fields: ['symbol', 'interval', 'timestamp'] // Prevent duplicate candles
+        fields: ['symbol', 'exchange', 'interval', 'timestamp'] // Prevent duplicate candles across exchanges
       }
     ]
   });

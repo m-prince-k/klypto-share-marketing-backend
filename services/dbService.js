@@ -37,6 +37,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         const dbCandles = await Candle.findAll({
             where: {
                 symbol: symbol.toUpperCase(),
+                exchange: exchange, // Now filtering by exchange too
                 interval: interval,
                 timestamp: { [Op.between]: [new Date(fromDate), new Date(toDate)] }
             },
