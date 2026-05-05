@@ -210,10 +210,10 @@ async function fetchTop200Stocks() {
         const indexNames = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
         const allTargetNames = [...new Set([...stockNames, ...indexNames])];
 
+        // Store ALL F&O contracts from NFO and BFO to support any symbol requested
         store.nfoMasterData = nfoResponse.data.filter(s => 
             (s.exch_seg === "NFO" || s.exch_seg === "BFO") && 
-            (s.instrumenttype === "OPTSTK" || s.instrumenttype === "OPTIDX" || s.instrumenttype === "FUTSTK" || s.instrumenttype === "FUTIDX") &&
-            allTargetNames.includes(s.name)
+            (s.instrumenttype === "OPTSTK" || s.instrumenttype === "OPTIDX" || s.instrumenttype === "FUTSTK" || s.instrumenttype === "FUTIDX")
         );
         console.log(`Successfully indexed ${store.nfoMasterData.length} F&O contracts.`);
         

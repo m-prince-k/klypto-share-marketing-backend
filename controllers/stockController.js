@@ -3,16 +3,17 @@ const { getHistoricalCandle } = require('../services/angelOne');
 const store = require('../services/marketStore');
 const { syncLivePrices, syncCandleData } = require('../services/stockService');
 const { Timeframe, Indicator, Order } = require('../models');
+const { Sequelize, Op } = require('sequelize');
 const { response } = require('express');
 
 const getStocks = (req, res) => {
     const stocksWithPrice = store.stocks.map(s => {
         const key = `${s.name}:${s.segment}`;
         const liveData = store.latestMarketData[key] || {};
-        
+
         const ltp = parseFloat(liveData.last_traded_price || 0);
         const close = parseFloat(liveData.close_price || 0);
-        
+
         // Manual calculation to ensure accuracy
         const rawChange = ltp - close;
         const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
@@ -37,16 +38,16 @@ const getStocks = (req, res) => {
 const getIndices = (req, res) => {
     // Indices usually have tokens starting with 999 or are in this specific list
     const mainIndices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX", "NIFTYNEXT50", "NIFTY100", "NIFTY200", "NIFTY500"];
-    
+
     const indicesData = store.stocks
         .filter(s => mainIndices.includes(s.name) || s.name.startsWith("NIFTY_") || s.token.startsWith("999"))
         .map(s => {
             const key = `${s.name}:${s.segment}`;
             const liveData = store.latestMarketData[key] || store.latestMarketData[s.name] || {};
-            
+
             const ltpVal = liveData.last_traded_price || liveData.ltp || "0.00";
             const closeVal = liveData.close_price || liveData.close || "0.00";
-            
+
             const ltp = parseFloat(ltpVal);
             const close = parseFloat(closeVal);
             const rawChange = ltp - close;
@@ -87,6 +88,7 @@ const syncLiveEquityToDB = async (req, res) => {
     try {
         const interval = req.query.interval;
         const symbol = req.query.symbol;
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Respect Angel One rate limits for long-duration fetches (1 year = ~12 chunks)
         let data;
         let mode;
 
@@ -135,7 +137,7 @@ const getLiveOptions = (req, res) => {
     if (symbol) {
         const uSym = symbol.toUpperCase().trim();
         const existing = data.filter(d => d.symbol.toUpperCase() === uSym);
-        
+
         if (existing.length > 0) {
             data = existing;
         } else {
@@ -144,21 +146,21 @@ const getLiveOptions = (req, res) => {
             if (option && store.wsClient) {
                 console.log(`[LiveOptions] Auto-subscribing to: ${uSym}`);
                 const exchType = option.exch_seg === "BFO" ? 4 : 2;
-                store.wsClient.fetchData({ 
-                    correlationID: `live_opt_add_${uSym}`, 
-                    action: 1, 
-                    mode: 2, 
-                    exchangeType: exchType, 
-                    tokens: [option.token] 
+                store.wsClient.fetchData({
+                    correlationID: `live_opt_add_${uSym}`,
+                    action: 1,
+                    mode: 2,
+                    exchangeType: exchType,
+                    tokens: [option.token]
                 });
-                
+
                 const key = `${uSym}:${option.exch_seg}`;
-                store.latestMarketData[key] = { 
-                    symbol: uSym, 
-                    token: option.token, 
-                    ltp: "0.00", 
-                    status: "subscribing...", 
-                    exchange: option.exch_seg 
+                store.latestMarketData[key] = {
+                    symbol: uSym,
+                    token: option.token,
+                    ltp: "0.00",
+                    status: "subscribing...",
+                    exchange: option.exch_seg
                 };
                 data = [store.latestMarketData[key]];
             } else {
@@ -909,44 +911,239 @@ const fetchOrders = async (req, res) => {
 
 const getOptionsChain = async (req, res) => {
     try {
-        const { symbol } = req.query;
+        const { symbol, expiry } = req.query;
         if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
 
         const uSym = symbol.toUpperCase().trim();
 
-        const options = store.nfoMasterData.filter(o => {
-            return (o.name === uSym || o.name.startsWith(uSym)) &&
-                (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK");
-        });
+        // 1. Get Underlying LTP
+        // Try exact match first, then partial match if needed
+        let stockEntry = store.stocks.find(s => s.name === uSym || s.userCode === uSym);
+        const underlyingKey = stockEntry?.segment === "BSE" ? `${uSym}:BSE` : `${uSym}:NSE`;
+        const underlyingData = store.latestMarketData[underlyingKey] || store.latestMarketData[uSym] || {};
+        const underlyingLtp = parseFloat(underlyingData.last_traded_price || underlyingData.ltp || 0);
 
-        if (options.length === 0) {
-            return res.status(404).json({ success: false, message: "No options found for symbol" });
+        // 2. Filter Master Data for this symbol's options (Flexible match)
+        const allOptions = store.nfoMasterData.filter(o =>
+            (o.name === uSym || o.symbol.startsWith(uSym)) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
+        );
+
+        if (allOptions.length === 0) {
+            return res.status(404).json({ success: false, message: `No options found for ${uSym}` });
         }
 
-        // All unique expiry dates sorted
-        const expiries = [...new Set(options.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
+        // 3. Get Expiries and choose one
+        const uniqueExpiries = [...new Set(allOptions.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
+        const selectedExpiry = expiry || uniqueExpiries[0];
 
-        // All unique strikes (converted from paise to rupees) sorted
-        const strikes = [...new Set(options.map(o => parseFloat(o.strike) / 100))].sort((a, b) => a - b);
+        // 4. Filter for selected expiry and group by strike
+        const expiryOptions = allOptions.filter(o => o.expiry === selectedExpiry);
+        const strikeMap = {};
 
-        // Lot size from first contract
-        const lotSize = parseInt(options[0]?.lotsize) || 0;
+        expiryOptions.forEach(o => {
+            const strike = parseFloat(o.strike) / 100;
+            if (!strikeMap[strike]) strikeMap[strike] = { strike, call: null, put: null };
 
-        // Strike gap
-        let strikeGap = 0;
-        if (strikes.length > 1) strikeGap = strikes[1] - strikes[0];
+            if (o.symbol.endsWith("CE")) strikeMap[strike].call = o;
+            else if (o.symbol.endsWith("PE")) strikeMap[strike].put = o;
+        });
+
+        const strikes = Object.values(strikeMap).sort((a, b) => a.strike - b.strike);
+
+        // 5. Fetch Live Data for all tokens in batches of 50
+        const allTokens = expiryOptions.map(o => o.token);
+        const liveMarketMap = {};
+
+        const batchSize = 50;
+        for (let i = 0; i < allTokens.length; i += batchSize) {
+            const batch = allTokens.slice(i, i + batchSize);
+            try {
+                const marketRes = await smartApi.marketData({
+                    mode: "FULL",
+                    exchangeTokens: { "NFO": batch }
+                });
+
+                if (marketRes?.data?.fetched) {
+                    marketRes.data.fetched.forEach(item => {
+                        liveMarketMap[item.symbolToken] = item;
+                    });
+                }
+            } catch (err) {
+                console.error(`[OptionChain] Batch ${i} failed:`, err.message);
+            }
+        }
+
+        // 6. Format Final Response
+        const finalChain = strikes.map(s => {
+            const formatData = (opt) => {
+                if (!opt) return null;
+                const live = liveMarketMap[opt.token] || {};
+                const ltp = parseFloat(live.ltp || 0);
+                const close = parseFloat(live.close || 0);
+                return {
+                    symbol: opt.symbol,
+                    token: opt.token,
+                    ltp: ltp.toFixed(2),
+                    change: (ltp - close).toFixed(2),
+                    pChange: close > 0 ? (((ltp - close) / close) * 100).toFixed(2) : "0.00",
+                    oi: live.oi || "0",
+                    oiChange: live.net_change_oi || "0",
+                    volume: live.volume || "0",
+                    iv: live.iv || "0" // IV might not be available in standard data, but keeping for future
+                };
+            };
+
+            return {
+                strike: s.strike,
+                isATM: Math.abs(s.strike - underlyingLtp) < (strikes[1].strike - strikes[0].strike) / 2, // Simple ATM logic
+                call: formatData(s.call),
+                put: formatData(s.put)
+            };
+        });
 
         res.json({
             success: true,
             symbol: uSym,
-            lotSize,
-            strikeGap,
-            expiries,
-            strikes
+            underlyingLtp,
+            expiry: selectedExpiry,
+            allExpiries: uniqueExpiries,
+            count: finalChain.length,
+            chain: finalChain
         });
 
     } catch (error) {
         console.error("Error in getOptionsChain:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+const syncOptionsChainHistory = async (req, res) => {
+    try {
+        const { symbol, interval = "FIVE_MINUTE" } = req.body;
+        if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
+
+        const uSym = symbol.toUpperCase().trim();
+        const allOptions = store.nfoMasterData.filter(o =>
+            (o.name === uSym || o.symbol.startsWith(uSym)) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
+        );
+
+        if (allOptions.length === 0) {
+            return res.status(404).json({ success: false, message: `No options found for ${uSym}` });
+        }
+
+        // Run in background to avoid timeout
+        const startSync = async () => {
+            console.log(`[Sync-OptionChain] Starting deep history sync for ${allOptions.length} contracts of ${uSym}...`);
+            const now = new Date();
+            const oneYearAgo = new Date();
+            oneYearAgo.setFullYear(now.getFullYear() - 1);
+
+            const fromDate = formatDate(oneYearAgo, "09:15", interval);
+            const toDate = formatDate(now, "15:30", interval);
+
+            let successCount = 0;
+            for (const opt of allOptions) {
+                try {
+                    console.log(`[Sync-OptionChain] Syncing ${opt.symbol} (${opt.token})...`);
+                    await getCandlesWithCache(opt.symbol, opt.token, opt.exch_seg, interval, fromDate, toDate);
+                    successCount++;
+                    // Delay between contracts to respect rate limits
+                    await new Promise(r => setTimeout(r, 1500));
+                } catch (err) {
+                    console.error(`[Sync-OptionChain] Failed for ${opt.symbol}:`, err.message);
+                }
+            }
+            console.log(`[Sync-OptionChain] Completed. Successfully synced ${successCount}/${allOptions.length} contracts.`);
+        };
+
+        startSync();
+
+        res.json({
+            success: true,
+            message: `Deep sync started in background for ${allOptions.length} contracts of ${uSym}. This will take some time.`,
+            estimatedTimeMinutes: Math.round((allOptions.length * 1.5 * (365 / 30)) / 60) // Rough estimation
+        });
+
+    } catch (error) {
+        console.error("Error in syncOptionsChainHistory:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+const getHistoricalOptionChain = async (req, res) => {
+    try {
+        const { symbol, timestamp, interval = "FIVE_MINUTE" } = req.query;
+        if (!symbol || !timestamp) {
+            return res.status(400).json({ success: false, message: "Symbol and Timestamp are required" });
+        }
+
+        const uSym = symbol.toUpperCase().trim();
+        const targetTime = new Date(timestamp);
+
+        // 1. Fetch all candles for this symbol's options at this timestamp
+        // We look for contracts in nfoMasterData first to get tokens
+        const allOptions = store.nfoMasterData.filter(o =>
+            (o.name === uSym || o.symbol.startsWith(uSym)) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
+        );
+        const { OptionChain, Candle } = require('../models');
+        const uniqueExpiries = await OptionChain.findAll({
+            attributes: [[Sequelize.fn('DISTINCT', Sequelize.col('expiry')), 'expiry']],
+            where: { underlying: uSym },
+            raw: true
+        });
+
+        // 2. Query DB for candles at this timestamp for this underlying
+        const whereClause = {
+            underlying: uSym,
+            interval: interval,
+            timestamp: targetTime
+        };
+        // Removed the undefined 'expiry' check since we want all expiries for the option chain at this time.
+
+        const candles = await OptionChain.findAll({ where: whereClause });
+
+        if (candles.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: `No historical data found in database for ${uSym} at ${timestamp}. Make sure to sync data first.`
+            });
+        }
+
+        // 3. Map candles back to strikes
+        const strikeMap = {};
+        candles.forEach(c => {
+            const opt = allOptions.find(o => o.token === c.token);
+            if (!opt) return;
+
+            const strike = parseFloat(opt.strike) / 100;
+            if (!strikeMap[strike]) strikeMap[strike] = { strike, call: null, put: null };
+
+            const formatted = {
+                symbol: opt.symbol,
+                token: opt.token,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume
+            };
+
+            if (opt.symbol.endsWith("CE")) strikeMap[strike].call = formatted;
+            else if (opt.symbol.endsWith("PE")) strikeMap[strike].put = formatted;
+        });
+
+        const sortedChain = Object.values(strikeMap).sort((a, b) => a.strike - b.strike);
+
+        res.json({
+            success: true,
+            symbol: uSym,
+            timestamp: targetTime,
+            count: sortedChain.length,
+            chain: sortedChain
+        });
+
+    } catch (error) {
+        console.error("Error in getHistoricalOptionChain:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -965,5 +1162,7 @@ module.exports = {
     syncDynamicCandleData,
     getLiveOptions,
     getLiveFutures,
-    getIndices
+    getIndices,
+    syncOptionsChainHistory,
+    getHistoricalOptionChain
 };
