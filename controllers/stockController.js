@@ -1077,11 +1077,21 @@ const getHistoricalOptionChain = async (req, res) => {
             return res.status(400).json({ success: false, message: "Symbol is required" });
         }
 
-        const finalFromDate = fromDate || fromdate;
-        const finalToDate = toDate || todate;
+        const { formatDate } = require('../services/dbService');
+        
+        let finalFromDate = fromDate || fromdate;
+        let finalToDate = toDate || todate;
 
         if (!timestamp && (!finalFromDate || !finalToDate)) {
             return res.status(400).json({ success: false, message: "Either 'timestamp' OR 'fromDate' and 'toDate' are required" });
+        }
+
+        // Auto-append market times if only Date (YYYY-MM-DD) is provided
+        if (finalFromDate && finalFromDate.length === 10) {
+            finalFromDate = formatDate(new Date(finalFromDate), "09:15", interval);
+        }
+        if (finalToDate && finalToDate.length === 10) {
+            finalToDate = formatDate(new Date(finalToDate), "15:30", interval);
         }
 
         const uSym = symbol.toUpperCase().trim();
