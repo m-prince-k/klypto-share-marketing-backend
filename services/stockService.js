@@ -5,6 +5,7 @@ const smartApi = require('./smartApi');
 const { formatDate } = require('./dbService');
 
 async function fetchTop200Stocks() {
+    store.stocks = [];
     const userSymbols = ["ABB","ABBPOW","ADAENT","ADAGRE","ADAPOR","ADATRA","ADICAP","ALKLAB","AMBCE","AMBEN","ANGBRO","APLAPO","APOHOS","ASHLEY","ASIPAI","ASTPOL","AURPHA","AUSMA","AVESUP","AXIBAN","BAAUTO","BAFINS",
         "BAJFI","BAJHOL","BANBAN","BANBAR","BANIND","BHAAIR","BHADYN","BHAELE","BHAFOR","BHAINF","BHAPET","BHEL","BIOCON","BLUSTA","BOSLIM","BRIIND","BSE","CADHEA","CANBAN","CDSL","CHOINV","CIPLA","CNXBAN",
         "COALIN","COLPAL","COMAGE","CONCOR","CROGR","CROGRE","CUMIND","DABIND","DELLIM","DIVLAB","DIXTEC","DLFLIM","DRREDD","EICMOT","EXIIND","FEDBAN","FORHEA","FSNECO","GAIL","GLEPHA","GMRINF","GODCON",
@@ -22,6 +23,49 @@ async function fetchTop200Stocks() {
         
         const nseEquity = response.data.filter(s => s.exch_seg === "NSE" && s.instrumenttype === "");
         const bseEquity = response.data.filter(s => s.exch_seg === "BSE" && s.instrumenttype === "");
+
+        // --- MANUALLY ADD INDICES ---
+        const INDICES = [
+            { name: "NIFTY", token: "99926000", segment: "NSE" },
+            { name: "BANKNIFTY", token: "99926009", segment: "NSE" },
+            { name: "FINNIFTY", token: "99926037", segment: "NSE" },
+            { name: "MIDCPNIFTY", token: "99926035", segment: "NSE" },
+            { name: "NIFTYNEXT50", token: "99926004", segment: "NSE" },
+            { name: "NIFTY100", token: "99926011", segment: "NSE" },
+            { name: "NIFTY200", token: "99926012", segment: "NSE" },
+            { name: "NIFTY500", token: "99926013", segment: "NSE" },
+            { name: "NIFTY_IT", token: "99926014", segment: "NSE" },
+            { name: "NIFTY_PHARMA", token: "99926021", segment: "NSE" },
+            { name: "NIFTY_FMCG", token: "99926015", segment: "NSE" },
+            { name: "NIFTY_METAL", token: "99926019", segment: "NSE" },
+            { name: "NIFTY_AUTO", token: "99926016", segment: "NSE" },
+            { name: "NIFTY_ENERGY", token: "99926017", segment: "NSE" },
+            { name: "NIFTY_REALTY", token: "99926023", segment: "NSE" },
+            { name: "NIFTY_PSE", token: "99926036", segment: "NSE" },
+            { name: "NIFTY_INFRA", token: "99926018", segment: "NSE" },
+            { name: "NIFTY_MEDIA", token: "99926020", segment: "NSE" },
+            { name: "NIFTY_PSU_BANK", token: "99926040", segment: "NSE" },
+            { name: "NIFTY_PVT_BANK", token: "99926039", segment: "NSE" },
+            { name: "SENSEX", token: "99919000", segment: "BSE" },
+            { name: "BANKEX", token: "99919012", segment: "BSE" }
+        ];
+
+        INDICES.forEach(idx => {
+            store.symbolToTokenMaster[idx.name] = idx.token;
+            store.symbolToTokenMaster[`${idx.name}_${idx.segment}`] = idx.token;
+            store.tokenToName[idx.token] = idx.name;
+            store.tokenToExchange[idx.token] = idx.segment;
+            
+            store.stocks.push({
+                name: idx.name,
+                userCode: idx.name,
+                token: idx.token,
+                actualSymbol: idx.name,
+                fullName: idx.name,
+                segment: idx.segment
+            });
+        });
+        // ----------------------------
 
         const manualMap = {
             "RELIND": "RELIANCE", "STABAN": "SBIN", "ICIBAN": "ICICIBANK", "HDFBAN": "HDFCBANK",
@@ -136,7 +180,7 @@ async function fetchTop200Stocks() {
             console.log(`[MasterScrip] Sample Unmatched: ${unmatched.slice(0, 5).join(", ")}`);
         }
 
-        store.stocks = matchedStocks;
+        store.stocks = [...store.stocks, ...matchedStocks];
         
         // Sync to DB
         console.log(`[MasterScrip] Syncing ${matchedStocks.length} stocks to Database...`);
@@ -296,8 +340,18 @@ async function syncCandleData(interval = "FIVE_MINUTE", isLive = false, targetSy
 
     for (const stock of stocksToSync) {
         try {
+            // Determine exchange - use provided exchange or look up in store
+            let finalExchange = "NSE";
+            if (stock.exchange) {
+                finalExchange = stock.exchange;
+            } else if (store.tokenToExchange[stock.token]) {
+                finalExchange = store.tokenToExchange[stock.token];
+            } else if (stock.symbol && (stock.symbol.includes("CE") || stock.symbol.includes("PE") || stock.symbol.endsWith("FUT"))) {
+                finalExchange = "NFO";
+            }
+
             const res = await smartApi.getCandleData({
-                exchange: "NSE",
+                exchange: finalExchange,
                 symboltoken: stock.token,
                 interval: apiInterval,
                 fromdate: fDate,
