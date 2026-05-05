@@ -1072,51 +1072,68 @@ const syncOptionsChainHistory = async (req, res) => {
 
 const getHistoricalOptionChain = async (req, res) => {
     try {
-        const { symbol, timestamp, interval = "FIVE_MINUTE" } = req.query;
-        if (!symbol || !timestamp) {
-            return res.status(400).json({ success: false, message: "Symbol and Timestamp are required" });
+        let { symbol, timestamp, fromDate, toDate, fromdate, todate, interval = "FIVE_MINUTE" } = req.query;
+        if (!symbol) {
+            return res.status(400).json({ success: false, message: "Symbol is required" });
+        }
+
+        const finalFromDate = fromDate || fromdate;
+        const finalToDate = toDate || todate;
+
+        if (!timestamp && (!finalFromDate || !finalToDate)) {
+            return res.status(400).json({ success: false, message: "Either 'timestamp' OR 'fromDate' and 'toDate' are required" });
         }
 
         const uSym = symbol.toUpperCase().trim();
-        const targetTime = new Date(timestamp);
+        const { OptionChain } = require('../models');
 
-        // 1. Fetch all candles for this symbol's options at this timestamp
-        // We look for contracts in nfoMasterData first to get tokens
+        // 1. Fetch all matching contracts from master data
         const allOptions = store.nfoMasterData.filter(o =>
             (o.name === uSym || o.symbol.startsWith(uSym)) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
         );
-        const { OptionChain, Candle } = require('../models');
-        const uniqueExpiries = await OptionChain.findAll({
-            attributes: [[Sequelize.fn('DISTINCT', Sequelize.col('expiry')), 'expiry']],
-            where: { underlying: uSym },
-            raw: true
-        });
 
-        // 2. Query DB for candles at this timestamp for this underlying
+        // 2. Query DB for candles
         const whereClause = {
             underlying: uSym,
-            interval: interval,
-            timestamp: targetTime
+            interval: interval
         };
-        // Removed the undefined 'expiry' check since we want all expiries for the option chain at this time.
 
-        const candles = await OptionChain.findAll({ where: whereClause });
+        if (timestamp) {
+            whereClause.timestamp = new Date(timestamp);
+        } else {
+            whereClause.timestamp = {
+                [Op.between]: [new Date(finalFromDate), new Date(finalToDate)]
+            };
+        }
+
+        const candles = await OptionChain.findAll({ 
+            where: whereClause,
+            order: [['timestamp', 'ASC']]
+        });
 
         if (candles.length === 0) {
             return res.status(404).json({
                 success: false,
-                message: `No historical data found in database for ${uSym} at ${timestamp}. Make sure to sync data first.`
+                message: `No historical data found in database for ${uSym}. Make sure to sync data first.`
             });
         }
 
-        // 3. Map candles back to strikes
-        const strikeMap = {};
+        // 3. Group by timestamp
+        const groupedByTime = {};
+        
         candles.forEach(c => {
+            const timeKey = c.timestamp.toISOString();
+            if (!groupedByTime[timeKey]) {
+                groupedByTime[timeKey] = {}; // strikeMap for this timestamp
+            }
+
             const opt = allOptions.find(o => o.token === c.token);
             if (!opt) return;
 
             const strike = parseFloat(opt.strike) / 100;
-            if (!strikeMap[strike]) strikeMap[strike] = { strike, call: null, put: null };
+            if (!groupedByTime[timeKey][strike]) {
+                groupedByTime[timeKey][strike] = { strike, call: null, put: null };
+            }
 
             const formatted = {
                 symbol: opt.symbol,
@@ -1128,18 +1145,36 @@ const getHistoricalOptionChain = async (req, res) => {
                 volume: c.volume
             };
 
-            if (opt.symbol.endsWith("CE")) strikeMap[strike].call = formatted;
-            else if (opt.symbol.endsWith("PE")) strikeMap[strike].put = formatted;
+            if (opt.symbol.endsWith("CE")) groupedByTime[timeKey][strike].call = formatted;
+            else if (opt.symbol.endsWith("PE")) groupedByTime[timeKey][strike].put = formatted;
         });
 
-        const sortedChain = Object.values(strikeMap).sort((a, b) => a.strike - b.strike);
+        // 4. Format output
+        const finalData = Object.keys(groupedByTime).map(timeKey => {
+            const sortedChain = Object.values(groupedByTime[timeKey]).sort((a, b) => a.strike - b.strike);
+            return {
+                timestamp: timeKey,
+                chain: sortedChain
+            };
+        });
 
+        // If only a single timestamp was requested, return the old flat structure for backward compatibility
+        if (timestamp) {
+            return res.json({
+                success: true,
+                symbol: uSym,
+                timestamp: new Date(timestamp),
+                count: finalData[0]?.chain.length || 0,
+                chain: finalData[0]?.chain || []
+            });
+        }
+
+        // For date ranges, return the array of timestamps
         res.json({
             success: true,
             symbol: uSym,
-            timestamp: targetTime,
-            count: sortedChain.length,
-            chain: sortedChain
+            count: finalData.length, // number of timestamps
+            data: finalData
         });
 
     } catch (error) {
