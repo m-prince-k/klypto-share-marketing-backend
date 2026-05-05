@@ -172,7 +172,13 @@ const getOptionsHistoricalData = async (req, res) => {
     console.log(`[Options Historical] Date Range: ${fromDate} to ${toDate}, Interval: ${finalInterval}`);
 
     try {
-        const result = await getCandlesWithCache(bestOption.symbol, bestOption.token, finalExchange, finalInterval, fromDate, toDate);
+        const extraInfo = {
+            underlying: bestOption.name,
+            strike: parseFloat(bestOption.strike) / 100,
+            expiry: parseExpiry(bestOption.expiry),
+            optionType: bestOption.symbol.endsWith("CE") ? "CE" : "PE"
+        };
+        const result = await getCandlesWithCache(bestOption.symbol, bestOption.token, finalExchange, finalInterval, fromDate, toDate, extraInfo);
         const data = result.data;
 
         // Auto-Add Live
