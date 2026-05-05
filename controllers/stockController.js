@@ -6,10 +6,66 @@ const { Timeframe, Indicator, Order } = require('../models');
 const { response } = require('express');
 
 const getStocks = (req, res) => {
+    const stocksWithPrice = store.stocks.map(s => {
+        const key = `${s.name}:${s.segment}`;
+        const liveData = store.latestMarketData[key] || {};
+        
+        const ltp = parseFloat(liveData.last_traded_price || 0);
+        const close = parseFloat(liveData.close_price || 0);
+        
+        // Manual calculation to ensure accuracy
+        const rawChange = ltp - close;
+        const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
+        const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
+
+        return {
+            ...s,
+            ltp: liveData.last_traded_price || "0.00",
+            change: changeStr,
+            percent_change: pChange,
+            sentiment: liveData.sentiment || "neutral"
+        };
+    });
+
     res.json({
         success: true,
-        count: store.stocks.length,
-        stocks: store.stocks
+        count: stocksWithPrice.length,
+        stocks: stocksWithPrice
+    });
+};
+
+const getIndices = (req, res) => {
+    // Indices usually have tokens starting with 999 or are in this specific list
+    const mainIndices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX", "NIFTYNEXT50", "NIFTY100", "NIFTY200", "NIFTY500"];
+    
+    const indicesData = store.stocks
+        .filter(s => mainIndices.includes(s.name) || s.name.startsWith("NIFTY_") || s.token.startsWith("999"))
+        .map(s => {
+            const key = `${s.name}:${s.segment}`;
+            const liveData = store.latestMarketData[key] || store.latestMarketData[s.name] || {};
+            
+            const ltpVal = liveData.last_traded_price || liveData.ltp || "0.00";
+            const closeVal = liveData.close_price || liveData.close || "0.00";
+            
+            const ltp = parseFloat(ltpVal);
+            const close = parseFloat(closeVal);
+            const rawChange = ltp - close;
+            const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
+            const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
+
+            return {
+                ...s,
+                ltp: ltpVal,
+                change: changeStr,
+                percent_change: pChange,
+                sentiment: liveData.sentiment || "neutral"
+            };
+        });
+
+    res.json({
+        success: true,
+        count: indicesData.length,
+        data: indicesData
     });
 };
 
@@ -77,7 +133,38 @@ const getLiveOptions = (req, res) => {
     let data = Object.values(store.latestMarketData).filter(d => d.symbol.includes("CE") || d.symbol.includes("PE"));
 
     if (symbol) {
-        data = data.filter(d => d.symbol.toUpperCase() === symbol.toUpperCase());
+        const uSym = symbol.toUpperCase().trim();
+        const existing = data.filter(d => d.symbol.toUpperCase() === uSym);
+        
+        if (existing.length > 0) {
+            data = existing;
+        } else {
+            // Auto-Add to Tracking if found in master
+            const option = store.nfoMasterData.find(o => o.symbol === uSym);
+            if (option && store.wsClient) {
+                console.log(`[LiveOptions] Auto-subscribing to: ${uSym}`);
+                const exchType = option.exch_seg === "BFO" ? 4 : 2;
+                store.wsClient.fetchData({ 
+                    correlationID: `live_opt_add_${uSym}`, 
+                    action: 1, 
+                    mode: 2, 
+                    exchangeType: exchType, 
+                    tokens: [option.token] 
+                });
+                
+                const key = `${uSym}:${option.exch_seg}`;
+                store.latestMarketData[key] = { 
+                    symbol: uSym, 
+                    token: option.token, 
+                    ltp: "0.00", 
+                    status: "subscribing...", 
+                    exchange: option.exch_seg 
+                };
+                data = [store.latestMarketData[key]];
+            } else {
+                data = [];
+            }
+        }
     }
 
     res.json({
@@ -733,7 +820,7 @@ const orderDispatch = async (req, res) => {
             };
 
             const dispatchResult = await dispatchOrder(smartApi, payload);
-
+            return res.send(dispatchResult);
 
             // Extract the actual Angel One API response
             // const angelResponse = dispatchResult?.data;
@@ -877,5 +964,6 @@ module.exports = {
     syncLiveEquityToDB,
     syncDynamicCandleData,
     getLiveOptions,
-    getLiveFutures
+    getLiveFutures,
+    getIndices
 };

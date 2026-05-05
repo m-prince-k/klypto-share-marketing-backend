@@ -19,14 +19,14 @@ const getHistoricalData = async (req, res) => {
         "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
     };
     const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
-    
+
     if (!smartApi.access_token) return res.status(503).json({ success: false, message: "Still authenticating..." });
     if (!symbol) return res.status(400).json({ success: false, message: "Symbol required" });
 
     const finalExchange = (exchange || "NSE").toUpperCase();
     const tokenKey = finalExchange === "NSE" ? symbol.toUpperCase() : `${symbol.toUpperCase()}_${finalExchange}`;
     const token = store.symbolToTokenMaster[tokenKey];
-    
+
     if (!token) return res.status(400).json({ success: false, message: `Invalid symbol or exchange: ${symbol} on ${finalExchange}` });
 
     // Auto-Add Tracking
@@ -81,55 +81,66 @@ const getOptionsHistoricalData = async (req, res) => {
     };
     const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
+    const parseExpiry = (exp) => {
+        if (!exp) return null;
+        const d = new Date(exp);
+        if (isNaN(d.getTime())) return null;
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+
     const finalExchange = (exchange || "NFO").toUpperCase();
     const options = store.nfoMasterData.filter(o => {
         const uName = symbol.toUpperCase().trim();
-        // ... (standardize expiry and other checks)
-        const parseExpiry = (exp) => {
-            if (!exp) return null;
-            const d = new Date(exp);
-            if (isNaN(d.getTime())) return null;
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${y}-${m}-${day}`;
-        };
 
         const targetExpiry = expiry ? parseExpiry(expiry) : null;
         const currentExpiry = parseExpiry(o.expiry);
 
-        const nameMatch = o.name === uName; 
+        const nameMatch = o.name === uName;
         const exchMatch = o.exch_seg === finalExchange;
         const strikeVal = parseFloat(o.strike);
         const targetStrike = parseFloat(strike);
         const strikeMatch = (strikeVal === targetStrike) || (strikeVal / 100 === targetStrike);
-        
+
         const typeUpper = type.toUpperCase();
         const typeMatch = o.symbol.endsWith(typeUpper) || o.symbol.includes(typeUpper + " ");
         const isOption = o.instrumenttype.startsWith("OPT");
-        
+
         const expiryMatch = targetExpiry ? currentExpiry === targetExpiry : true;
 
         return nameMatch && exchMatch && strikeMatch && typeMatch && expiryMatch && isOption;
     });
 
+    console.log(`[Options Historical] Found ${options.length} total matches for ${symbol} ${strike} ${type}`);
+    if (options.length > 0) {
+        console.log(`[Options Historical] Available Expiries: ${[...new Set(options.map(o => o.expiry))].join(', ')}`);
+    }
+
     if (options.length === 0) {
-        return res.status(404).json({ 
-            success: false, 
-            message: `Contract not found for ${symbol} ${strike} ${type}${expiry ? ' with expiry ' + expiry : ''}.` 
+        return res.status(404).json({
+            success: false,
+            message: `Contract not found for ${symbol} ${strike} ${type}${expiry ? ' with expiry ' + expiry : ''}.`
         });
     }
 
-    // Filter for current/future expiries only if no specific expiry was requested
+    // Filter for expiries that were active at the end of the requested period
     let filteredOptions = options;
     if (!expiry) {
-        const todayStr = parseExpiry(new Date());
+        // Use toDate as reference if available, otherwise use today
+        const referenceDate = toDate ? new Date(toDate) : new Date();
+        const referenceStr = parseExpiry(referenceDate);
+
         filteredOptions = options.filter(o => {
             const expStr = parseExpiry(o.expiry);
-            return expStr >= todayStr;
+            return expStr >= referenceStr;
         });
-        // Fallback to all if none are future (unlikely)
-        if (filteredOptions.length === 0) filteredOptions = options;
+
+        // Fallback: if no contract expires after the reference date, take the one with the latest expiry
+        if (filteredOptions.length === 0) {
+            filteredOptions = [options.sort((a, b) => new Date(b.expiry) - new Date(a.expiry))[0]];
+        }
     }
 
     // Sort by expiry to pick the nearest one
@@ -163,7 +174,7 @@ const getOptionsHistoricalData = async (req, res) => {
     try {
         const result = await getCandlesWithCache(bestOption.symbol, bestOption.token, finalExchange, finalInterval, fromDate, toDate);
         const data = result.data;
-        
+
         // Auto-Add Live
         if (store.wsClient) {
             store.tokenToName[bestOption.token] = bestOption.symbol;
@@ -176,12 +187,12 @@ const getOptionsHistoricalData = async (req, res) => {
             }
         }
 
-        res.json({ 
-            success: true, 
-            symbol: bestOption.symbol, 
-            source: result.source, 
-            count: data.length, 
-            data: data 
+        res.json({
+            success: true,
+            symbol: bestOption.symbol,
+            source: result.source,
+            count: data.length,
+            data: data
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -206,8 +217,8 @@ const getFuturesHistoricalData = async (req, res) => {
     const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
     const finalExchange = (req.query.exchange || "NFO").toUpperCase();
-    const futures = store.nfoMasterData.filter(f => 
-        f.name === symbol.toUpperCase() && 
+    const futures = store.nfoMasterData.filter(f =>
+        f.name === symbol.toUpperCase() &&
         f.exch_seg === finalExchange &&
         (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX")
     );
@@ -231,7 +242,7 @@ const getFuturesHistoricalData = async (req, res) => {
     try {
         const result = await getCandlesWithCache(bestFuture.symbol, bestFuture.token, finalExchange, finalInterval, fromDate, toDate);
         const data = result.data;
-        
+
         // Auto-Add Live
         if (store.wsClient) {
             store.tokenToName[bestFuture.token] = bestFuture.symbol;
@@ -244,12 +255,12 @@ const getFuturesHistoricalData = async (req, res) => {
             }
         }
 
-        res.json({ 
-            success: true, 
-            symbol: bestFuture.symbol, 
-            source: result.source, 
-            count: data.length, 
-            data: data 
+        res.json({
+            success: true,
+            symbol: bestFuture.symbol,
+            source: result.source,
+            count: data.length,
+            data: data
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -259,7 +270,7 @@ const getFuturesHistoricalData = async (req, res) => {
 // const syncContinuousFutures = async (req, res) => {
 //     try {
 //         const { stocks, expiries, interval } = req.body;
-        
+
 //         if (!stocks || !expiries) {
 //             return res.status(400).json({ success: false, message: "Stocks and Expiries arrays are required in body" });
 //         }
@@ -281,7 +292,7 @@ const getFuturesHistoricalData = async (req, res) => {
 // const syncAllFutures = async (req, res) => {
 //     try {
 //         const interval = req.query.interval || "5m";
-        
+
 //         // Start sync using the hardcoded lists
 //         syncFuturesHistory(NIFTY_200, EXPIRY_DAYS, interval)
 //             .then(() => console.log("[FuturesSync] Bulk sync finished."))
@@ -300,15 +311,15 @@ const getFuturesHistoricalData = async (req, res) => {
 const getManualHistoricalData = async (req, res) => {
     try {
         let { type, symbol, interval, period, fromdate, todate, fromDate, toDate, exchange } = req.query;
-        
+
         // Normalize parameter names (handle both fromdate and fromDate)
         const finalFromDate = fromdate || fromDate;
         const finalToDate = todate || toDate;
 
         if (!symbol || !interval || !finalFromDate || !finalToDate) {
-            return res.status(400).json({ 
-                success: false, 
-                message: "Missing parameters: symbol, interval, fromDate/fromdate, and toDate/todate are required." 
+            return res.status(400).json({
+                success: false,
+                message: "Missing parameters: symbol, interval, fromDate/fromdate, and toDate/todate are required."
             });
         }
 
@@ -325,11 +336,11 @@ const getManualHistoricalData = async (req, res) => {
         }
 
         console.log(`[Historical-V2] Request: ${symbol}, Interval: ${interval}, Range: ${formattedFromDate} to ${formattedToDate}`);
-        
-        let params = { 
-            symbol: symbol, 
+
+        let params = {
+            symbol: symbol,
             interval: interval,
-            fromDate: formattedFromDate, 
+            fromDate: formattedFromDate,
             toDate: formattedToDate,
             exchange: exchange || "NSE"
         }
@@ -353,5 +364,5 @@ module.exports = {
     getFuturesHistoricalData,
     // syncContinuousFutures,
     // syncAllFutures
-    
+
 };
