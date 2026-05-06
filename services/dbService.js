@@ -25,7 +25,9 @@ const formatDate = (date, time, interval) => {
 async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null) {
     try {
         const { Candle, OptionChain } = require('../models');
-        const isOption = exchange === "NFO" || exchange === "BFO";
+        // Distinguish between Options and Futures in NFO/BFO
+        const isOption = (exchange === "NFO" || exchange === "BFO") && 
+                         (symbol.endsWith("CE") || symbol.endsWith("PE") || (extraInfo && extraInfo.optionType));
         const ModelToUse = isOption ? OptionChain : Candle;
         
         console.log(`[dbService] Fetching ${symbol} | Exchange: ${exchange} | isOption: ${isOption} | Model: ${ModelToUse?.name}`);

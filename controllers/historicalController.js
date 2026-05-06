@@ -222,14 +222,40 @@ const getFuturesHistoricalData = async (req, res) => {
     };
     const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
+    const { expiry } = req.query;
     const finalExchange = (req.query.exchange || "NFO").toUpperCase();
+    
+    // Support NSE/BSE keywords
+    const exchangeMap = { "NSE": "NFO", "BSE": "BFO" };
+    const mappedExchange = exchangeMap[finalExchange] || finalExchange;
+
     const futures = store.nfoMasterData.filter(f =>
         f.name === symbol.toUpperCase() &&
-        f.exch_seg === finalExchange &&
+        f.exch_seg === mappedExchange &&
         (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX")
     );
-    if (futures.length === 0) return res.status(404).json({ success: false, message: `Futures not found for ${symbol} on ${finalExchange}` });
-    const bestFuture = futures.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+
+    if (futures.length === 0) return res.status(404).json({ success: false, message: `Futures not found for ${symbol} on ${mappedExchange}` });
+    
+    let bestFuture;
+    if (expiry) {
+        // Find matching expiry
+        const targetExp = new Date(expiry).toISOString().split('T')[0];
+        bestFuture = futures.find(f => {
+            const fExp = new Date(f.expiry).toISOString().split('T')[0];
+            return fExp === targetExp;
+        });
+        
+        if (!bestFuture) {
+            return res.status(404).json({ 
+                success: false, 
+                message: `Future with expiry ${expiry} not found. Available: ${futures.map(f => f.expiry).join(', ')}` 
+            });
+        }
+    } else {
+        // Default to Near Month
+        bestFuture = futures.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+    }
 
     const now = new Date();
 
@@ -246,18 +272,18 @@ const getFuturesHistoricalData = async (req, res) => {
     }
 
     try {
-        const result = await getCandlesWithCache(bestFuture.symbol, bestFuture.token, finalExchange, finalInterval, fromDate, toDate);
+        const result = await getCandlesWithCache(bestFuture.symbol, bestFuture.token, mappedExchange, finalInterval, fromDate, toDate);
         const data = result.data;
-
+ 
         // Auto-Add Live
         if (store.wsClient) {
             store.tokenToName[bestFuture.token] = bestFuture.symbol;
-            store.tokenToExchange[bestFuture.token] = finalExchange;
-            const exchType = finalExchange === "BFO" ? 4 : 2;
+            store.tokenToExchange[bestFuture.token] = mappedExchange;
+            const exchType = mappedExchange === "BFO" ? 4 : 2;
             store.wsClient.fetchData({ correlationID: `fut_add_${bestFuture.symbol}`, action: 1, mode: 2, exchangeType: exchType, tokens: [bestFuture.token] });
-            const key = `${bestFuture.symbol}:${finalExchange}`;
+            const key = `${bestFuture.symbol}:${mappedExchange}`;
             if (!store.latestMarketData[key]) {
-                store.latestMarketData[key] = { symbol: bestFuture.symbol, token: bestFuture.token, ltp: "0.00", status: "waiting...", exchange: finalExchange };
+                store.latestMarketData[key] = { symbol: bestFuture.symbol, token: bestFuture.token, ltp: "0.00", status: "waiting...", exchange: mappedExchange };
             }
         }
 
@@ -353,14 +379,37 @@ const getManualHistoricalData = async (req, res) => {
             });
         }
 
-        console.log(`[Historical-V2] Request: ${symbol}, Interval: ${interval}, Range: ${formattedFromDate} to ${formattedToDate}`);
+        const finalExchange = (exchange || req.query.segment || "NSE").toUpperCase();
+        const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
+
+        // Explicit Token Resolution
+        const uSym = symbol.toUpperCase();
+        let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}_${mappedExchange}`];
+        
+        // Manual fallback for Indices
+        if (!finalToken) {
+            if (uSym === "BANKNIFTY") finalToken = "26009";
+            if (uSym === "NIFTY") finalToken = "26000";
+            if (uSym === "FINNIFTY") finalToken = "26037";
+        }
+
+        // Strict Date Formatting for ONE_DAY (some indices require YYYY-MM-DD only)
+        let fFrom = formattedFromDate;
+        let fTo = formattedToDate;
+        if (interval === "ONE_DAY" || interval === "day" || interval === "1d") {
+            fFrom = formattedFromDate.split(' ')[0];
+            fTo = formattedToDate.split(' ')[0];
+        }
+
+        console.log(`[Historical-V2] Request: ${symbol}, Token: ${finalToken}, Range: ${fFrom} to ${fTo}`);
 
         let params = {
             symbol: symbol,
             interval: interval,
-            fromDate: formattedFromDate,
-            toDate: formattedToDate,
-            exchange: exchange || "NSE"
+            fromDate: fFrom,
+            toDate: fTo,
+            exchange: mappedExchange,
+            symboltoken: finalToken
         }
 
         const data = await getHistoricalCandle(params);

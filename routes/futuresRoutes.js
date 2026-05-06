@@ -5,6 +5,7 @@ const historicalController = require('../controllers/historicalController');
 
 router.get('/live', stockController.getLiveFutures);
 router.get('/historical', historicalController.getFuturesHistoricalData);
+router.get('/symbols', stockController.getFuturesSymbols);
 // router.post('/sync-continuous', historicalController.syncContinuousFutures);
 // router.get('/sync-all', historicalController.syncAllFutures);
 
