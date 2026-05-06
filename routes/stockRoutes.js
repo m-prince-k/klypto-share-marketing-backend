@@ -11,6 +11,7 @@ router.get('/live', stockController.getLiveEquity);
 router.get('/sync-live', stockController.syncLiveEquityToDB); //means live abhi ki jaankaari milegi 
 router.get('/sync-data', stockController.syncDynamicCandleData);// means pichle 24 hour ki poori jaankaari history of previous 24 hours 
 router.get('/historical', historicalController.getHistoricalData);
+router.get('/overview', stockController.getStockOverview);
 
 router.get('/historical-v2', historicalController.getManualHistoricalData);
 

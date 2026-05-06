@@ -5,6 +5,7 @@ const { syncLivePrices, syncCandleData } = require('../services/stockService');
 const { Timeframe, Indicator, Order } = require('../models');
 const { Sequelize, Op } = require('sequelize');
 const { response } = require('express');
+const { getIO } = require('../services/socket');
 
 const getStocks = (req, res) => {
     const stocksWithPrice = store.stocks.map(s => {
@@ -28,6 +29,9 @@ const getStocks = (req, res) => {
         };
     });
 
+
+
+    
     res.json({
         success: true,
         count: stocksWithPrice.length,
@@ -963,10 +967,17 @@ const getOptionsChain = async (req, res) => {
                     exchangeTokens: { "NFO": batch }
                 });
 
+                console.log(`[OptionChain] Batch ${i}: status=${marketRes?.status}, fetched=${marketRes?.data?.fetched?.length || 0}, unfetched=${marketRes?.data?.unfetched?.length || 0}`);
+
                 if (marketRes?.data?.fetched) {
                     marketRes.data.fetched.forEach(item => {
                         liveMarketMap[item.symbolToken] = item;
                     });
+                }
+
+                // Log unfetched tokens for debugging
+                if (marketRes?.data?.unfetched?.length > 0) {
+                    console.log(`[OptionChain] Unfetched tokens:`, marketRes.data.unfetched.slice(0, 5));
                 }
             } catch (err) {
                 console.error(`[OptionChain] Batch ${i} failed:`, err.message);
@@ -986,10 +997,14 @@ const getOptionsChain = async (req, res) => {
                     ltp: ltp.toFixed(2),
                     change: (ltp - close).toFixed(2),
                     pChange: close > 0 ? (((ltp - close) / close) * 100).toFixed(2) : "0.00",
-                    oi: live.oi || "0",
-                    oiChange: live.net_change_oi || "0",
-                    volume: live.volume || "0",
-                    iv: live.iv || "0" // IV might not be available in standard data, but keeping for future
+                    oi: live.opnInterest || "0",
+                    oiChange: "0", // Angel One doesn't provide OI change directly in marketData
+                    volume: live.tradeVolume || "0",
+                    iv: "0", // IV not available in standard marketData
+                    bidPrice: live.depth?.buy?.[0]?.price || "0",
+                    askPrice: live.depth?.sell?.[0]?.price || "0",
+                    bidQty: live.depth?.buy?.[0]?.quantity || "0",
+                    askQty: live.depth?.sell?.[0]?.quantity || "0"
                 };
             };
 
@@ -1045,7 +1060,27 @@ const syncOptionsChainHistory = async (req, res) => {
             for (const opt of allOptions) {
                 try {
                     console.log(`[Sync-OptionChain] Syncing ${opt.symbol} (${opt.token})...`);
-                    await getCandlesWithCache(opt.symbol, opt.token, opt.exch_seg, interval, fromDate, toDate);
+                    
+                    // Format expiry to YYYY-MM-DD for database DATEONLY field
+                    const rawExp = opt.expiry; // e.g. "07MAY2026"
+                    let formattedExpiry = rawExp;
+                    if (rawExp && rawExp.length >= 9) {
+                        const day = rawExp.substring(0, 2);
+                        const monthStr = rawExp.substring(2, 5);
+                        const year = rawExp.substring(5);
+                        const monthMap = { 'JAN': '01', 'FEB': '02', 'MAR': '03', 'APR': '04', 'MAY': '05', 'JUN': '06', 'JUL': '07', 'AUG': '08', 'SEP': '09', 'OCT': '10', 'NOV': '11', 'DEC': '12' };
+                        const month = monthMap[monthStr.toUpperCase()] || '01';
+                        formattedExpiry = `${year}-${month}-${day}`;
+                    }
+
+                    const extraInfo = {
+                        underlying: uSym,
+                        strike: parseFloat(opt.strike) / 100,
+                        expiry: formattedExpiry,
+                        optionType: opt.symbol.endsWith("CE") ? "CE" : "PE"
+                    };
+
+                    await getCandlesWithCache(opt.symbol, opt.token, opt.exch_seg, interval, fromDate, toDate, extraInfo);
                     successCount++;
                     // Delay between contracts to respect rate limits
                     await new Promise(r => setTimeout(r, 1500));
@@ -1059,14 +1094,12 @@ const syncOptionsChainHistory = async (req, res) => {
         startSync();
 
         res.json({
-            success: true,
-            message: `Deep sync started in background for ${allOptions.length} contracts of ${uSym}. This will take some time.`,
-            estimatedTimeMinutes: Math.round((allOptions.length * 1.5 * (365 / 30)) / 60) // Rough estimation
+            status: true,
+            message: `Started background sync for ${allOptions.length} contracts of ${uSym}. This may take a few minutes.`
         });
-
     } catch (error) {
         console.error("Error in syncOptionsChainHistory:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ status: false, message: error.message });
     }
 };
 
@@ -1078,7 +1111,7 @@ const getHistoricalOptionChain = async (req, res) => {
         }
 
         const { formatDate } = require('../services/dbService');
-        
+
         let finalFromDate = fromDate || fromdate;
         let finalToDate = toDate || todate;
 
@@ -1116,21 +1149,21 @@ const getHistoricalOptionChain = async (req, res) => {
             };
         }
 
-        const candles = await OptionChain.findAll({ 
+        const candles = await OptionChain.findAll({
             where: whereClause,
             order: [['timestamp', 'ASC']]
         });
 
         if (candles.length === 0) {
             return res.status(404).json({
-                success: false,
+                status: false,
                 message: `No historical data found in database for ${uSym}. Make sure to sync data first.`
             });
         }
 
         // 3. Group by timestamp
         const groupedByTime = {};
-        
+
         candles.forEach(c => {
             const timeKey = c.timestamp.toISOString();
             if (!groupedByTime[timeKey]) {
@@ -1160,36 +1193,121 @@ const getHistoricalOptionChain = async (req, res) => {
         });
 
         // 4. Format output
-        const finalData = Object.keys(groupedByTime).map(timeKey => {
-            const sortedChain = Object.values(groupedByTime[timeKey]).sort((a, b) => a.strike - b.strike);
-            return {
-                timestamp: timeKey,
-                chain: sortedChain
-            };
-        });
+        const allTimestamps = Object.keys(groupedByTime).sort();
+        const totalTimestamps = allTimestamps.length;
+        const dataRangeFrom = totalTimestamps > 0 ? allTimestamps[0] : null;
+        const dataRangeTo = totalTimestamps > 0 ? allTimestamps[totalTimestamps - 1] : null;
 
-        // If only a single timestamp was requested, return the old flat structure for backward compatibility
-        if (timestamp) {
+        // If only a single timestamp was requested, return a simplified structure
+        if (timestamp && totalTimestamps === 1) {
+            const timeKey = allTimestamps[0];
+            const sortedChain = Object.values(groupedByTime[timeKey]).sort((a, b) => a.strike - b.strike);
             return res.json({
-                success: true,
+                status: true,
                 symbol: uSym,
-                timestamp: new Date(timestamp),
-                count: finalData[0]?.chain.length || 0,
-                chain: finalData[0]?.chain || []
+                timestamp: timeKey,
+                count: sortedChain.length,
+                chain: sortedChain
             });
         }
 
-        // For date ranges, return the array of timestamps
         res.json({
-            success: true,
-            symbol: uSym,
-            count: finalData.length, // number of timestamps
-            data: finalData
+            status: true,
+            metadata: {
+                symbol: uSym,
+                interval: interval,
+                totalTimestamps: totalTimestamps,
+                dataRangeFrom: dataRangeFrom,
+                dataRangeTo: dataRangeTo,
+                requestedRange: { from: fromDate, to: toDate }
+            },
+            data: groupedByTime
         });
-
     } catch (error) {
         console.error("Error in getHistoricalOptionChain:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ status: false, message: error.message });
+    }
+};
+
+const getStockOverview = async (req, res) => {
+    try {
+        const { symbol, exchange = "NSE" } = req.query;
+        if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
+
+        const uSym = symbol.toUpperCase().trim();
+        const exch = exchange.toUpperCase().trim();
+
+        // Find token
+        let token = null;
+        if (exch === "NSE" || exch === "BSE") {
+            token = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}_${exch}`];
+            if (!token) {
+                const stock = store.stocks.find(s => s.name === uSym && s.segment === exch);
+                if (stock) token = stock.token;
+            }
+        } else {
+            const nfoStock = store.nfoMasterData.find(f => f.symbol === uSym && f.exch_seg === exch);
+            if (nfoStock) token = nfoStock.token;
+        }
+
+        if (!token) {
+            return res.status(404).json({ success: false, message: `Symbol ${uSym} not found on ${exch}` });
+        }
+
+        const smartApi = require('../services/smartApi');
+        if (!smartApi.access_token) {
+            return res.status(503).json({ success: false, message: "API still authenticating..." });
+        }
+
+        // Fetch FULL market data
+        const payload = {
+            mode: "FULL",
+            exchangeTokens: {
+                [exch]: [token]
+            }
+        };
+
+        const response = await smartApi.marketData(payload);
+
+        if (response && response.status && response.data && response.data.fetched && response.data.fetched.length > 0) {
+            const raw = response.data.fetched[0];
+
+            // Format to match user requested profile
+            const profile = {
+                symbol: uSym,
+                exchange: exch,
+                activity: {
+                    open: raw.open,
+                    high: raw.high,
+                    low: raw.low,
+                    close: raw.close,
+                    ltp: raw.ltp
+                },
+                priceDetails: {
+                    averagePrice: raw.avgPrice || 0, // Average Trade Price
+                    volume: raw.tradeVolume || 0,        // Volume
+                    openInterest: raw.opnInterest || 0,
+                    bid: raw.depth && raw.depth.buy && raw.depth.buy.length > 0 ? raw.depth.buy[0].price : 0,
+                    ask: raw.depth && raw.depth.sell && raw.depth.sell.length > 0 ? raw.depth.sell[0].price : 0
+                },
+                circuitLimits: {
+                    lower: raw.lowerCircuit || 0,
+                    upper: raw.upperCircuit || 0
+                },
+                fiftyTwoWeek: {
+                    low: raw["52WeekLow"] || 0,
+                    high: raw["52WeekHigh"] || 0
+                },
+                raw_data: raw // keeping raw data just in case
+            };
+
+            return res.json({ success: true, data: profile });
+        } else {
+            return res.status(400).json({ success: false, message: "Could not fetch market data from API" });
+        }
+    } catch (err) {
+        console.error("Error in getStockOverview:", err);
+        return res.status(500).json({ success: false, error: err.message });
     }
 };
 
@@ -1209,5 +1327,6 @@ module.exports = {
     getLiveFutures,
     getIndices,
     syncOptionsChainHistory,
-    getHistoricalOptionChain
+    getHistoricalOptionChain,
+    getStockOverview
 };

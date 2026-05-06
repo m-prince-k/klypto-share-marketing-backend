@@ -106,7 +106,7 @@ async function fetchTop200Stocks() {
             "PREEST": "PRESTIGE", "RBLBAN": "RBLBANK", "RUCSOY": "PATANJALI", "SBICAR": "SBICARD",
             "SHRCEM": "SHREECEM", "SHRTRA": "SHRIRAMFIN", "SIEMEN": "SIEMENS", "SONBLW": "SONACOMS",
             "SUPIND": "SUPREMEIND", "SUZENE": "SUZLON", "TATELX": "TATAELXSI", "TATGLO": "TATACONSUM",
-            "TATTEC": "TATATECH", "TECMAH": "TECHM", "TORPHA": "TORNTPHARM", "TORPOW": "TORNTPOWER",
+            "TATTEC": "TATATECH", "TECMAH": "TECHM", "TORPHA": "TORNTPHARM", "TORNTPOWER": "TORNTPOWER",
             "TVSMOT": "TVSMOTOR", "UNIP": "UPL", "VARBEV": "VBL", "VEDLIM": "VEDL", "WAAENE": "WAREEENER",
             "ZOMLIM": "ZOMATO", "ADICAP": "ADANIPOWER", "ALKLAB": "ALKEM", "AMBCE": "AMBUJACEM",
             "COMAGE": "CAMS", "CROGR": "CROMPTON", "DELLIM": "DELHIVERY", "FORHEA": "FORTIS",
@@ -117,6 +117,23 @@ async function fetchTop200Stocks() {
             "PGELEC": "PGHH", "SOLIN": "SOLARINDS", "SYNINT": "SYNGENE", "TUBIN": "TIINDIA",
             "CNXBAN": "BANKNIFTY", "NIFFIN": "FINNIFTY", "NIFNEX": "NIFTYNXT50"
         };
+
+        // --- NEW: INDEX ALL NSE AND BSE SYMBOLS FOR HISTORICAL DATA ---
+        console.log(`[MasterScrip] Indexing all NSE (${nseEquity.length}) and BSE (${bseEquity.length}) symbols...`);
+        nseEquity.forEach(s => {
+            const officialSymbol = s.symbol.replace("-EQ", "");
+            store.symbolToTokenMaster[officialSymbol.toUpperCase()] = s.token;
+            store.symbolToTokenMaster[`${officialSymbol.toUpperCase()}_NSE`] = s.token;
+            store.tokenToName[s.token] = officialSymbol;
+            store.tokenToExchange[s.token] = "NSE";
+        });
+        bseEquity.forEach(s => {
+            const officialSymbol = s.symbol.replace("-EQ", "");
+            store.symbolToTokenMaster[`${officialSymbol.toUpperCase()}_BSE`] = s.token;
+            store.tokenToName[s.token] = officialSymbol;
+            store.tokenToExchange[s.token] = "BSE";
+        });
+        // ----------------------------------------------------------------
 
         const matchedStocks = [];
         const unmatched = [];

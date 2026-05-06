@@ -329,16 +329,28 @@ const getManualHistoricalData = async (req, res) => {
             });
         }
 
+        // Clean up accidental formatting issues from frontend (e.g., "2024-01-01 :09:15" -> "2024-01-01 09:15")
+        let cleanedFromDate = typeof finalFromDate === 'string' ? finalFromDate.replace(/\s+:/, ' ') : finalFromDate;
+        let cleanedToDate = typeof finalToDate === 'string' ? finalToDate.replace(/\s+:/, ' ') : finalToDate;
+
         // Format dates to YYYY-MM-DD HH:mm if they are just YYYY-MM-DD
-        let formattedFromDate = finalFromDate;
-        let formattedToDate = finalToDate;
+        let formattedFromDate = cleanedFromDate;
+        let formattedToDate = cleanedToDate;
 
         // If it's just a date (YYYY-MM-DD), add the default market times
-        if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-            formattedFromDate = formatDate(new Date(finalFromDate), "09:15", interval);
+        if (typeof cleanedFromDate === 'string' && cleanedFromDate.length === 10) {
+            formattedFromDate = formatDate(new Date(cleanedFromDate), "09:15", interval);
         }
-        if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-            formattedToDate = formatDate(new Date(finalToDate), "15:30", interval);
+        if (typeof cleanedToDate === 'string' && cleanedToDate.length === 10) {
+            formattedToDate = formatDate(new Date(cleanedToDate), "15:30", interval);
+        }
+
+        // Validate that dates are actually valid dates
+        if (isNaN(new Date(formattedFromDate).getTime()) || isNaN(new Date(formattedToDate).getTime())) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid date format provided. Please use YYYY-MM-DD or YYYY-MM-DD HH:mm"
+            });
         }
 
         console.log(`[Historical-V2] Request: ${symbol}, Interval: ${interval}, Range: ${formattedFromDate} to ${formattedToDate}`);

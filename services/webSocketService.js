@@ -134,6 +134,30 @@ async function startWebSocketConnection(loginData, io) {
             // Key by Symbol:Exchange to avoid collisions
             const key = `${formatted.symbol}:${formatted.exchange}`;
             store.latestMarketData[key] = formatted;
+            
+            // Format for frontend '/stocks' equivalent
+            const s = store.stocks.find(st => st.name === formatted.symbol && st.segment === formatted.exchange) || 
+                      store.stocks.find(st => st.name === formatted.symbol);
+                      
+            if (s) {
+                const ltp = parseFloat(formatted.last_traded_price || 0);
+                const close = parseFloat(formatted.close_price || 0);
+                const rawChange = ltp - close;
+                const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
+                const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
+
+                const stockUpdate = {
+                    ...s,
+                    ltp: formatted.last_traded_price || "0.00",
+                    change: changeStr,
+                    percent_change: pChange,
+                    sentiment: formatted.sentiment || "neutral"
+                };
+
+                // Emit individual stock update that frontend can listen to
+                io.emit("stockUpdate", stockUpdate);
+            }
+
             io.emit("marketUpdate", formatted);
         }
     });
