@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {CandlestickSeries,createChart} from 'lightweight-charts';
+import { CandlestickSeries, createChart } from 'lightweight-charts';
 import io from 'socket.io-client';
 
 const GoldChart = () => {
@@ -12,7 +12,7 @@ const GoldChart = () => {
         if (!chartContainerRef.current) return;
 
         // 1. Initialize Chart
-        chartRef.current =createChart(chartContainerRef.current, {
+        chartRef.current = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth || 800,
             height: 500,
             layout: {
@@ -30,7 +30,7 @@ const GoldChart = () => {
             },
         });
 
-        seriesRef.current = chartRef.current.addSeries(CandlestickSeries,{
+        seriesRef.current = chartRef.current.addSeries(CandlestickSeries, {
             upColor: '#10b981',
             downColor: '#ef4444',
             borderDownColor: '#ef4444',
@@ -40,9 +40,10 @@ const GoldChart = () => {
         });
 
         // 2. Setup WebSocket Listener (No REST API fetch)
-        const socket = io("http://localhost:7000/equity/commodity/gold/live?interval=1m&fromDate=2026-04-01&toDate=2026-05-06");
+        const socket = io("http://localhost:7000");
 
         socket.on("goldUpdate", (payload) => {
+            console.log(payload, "___________-6789")
             console.log("[Socket] Received Live Gold Update");
             if (payload.success && payload.data) {
                 const contractData = payload.data.find(d => d.name === selectedGold);
