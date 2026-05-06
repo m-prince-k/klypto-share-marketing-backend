@@ -3,7 +3,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 require('dotenv').config();
 
-const { connectSocket } = require('./services/socket');
+const { connectSocket, getIO } = require('./services/socket');
 const { sequelize } = require('./models');
 const store = require('./services/marketStore');
 const { login } = require('./services/authService');
@@ -23,10 +23,7 @@ const server = http.createServer(app);
 
 //init socket
 connectSocket(server);
-
-const io = new Server(server, {
-    cors: { origin: "*" }
-});
+const io = getIO();
 
 const PORT = process.env.PORT || 3000;
 
@@ -43,36 +40,39 @@ app.use('/futures', futuresRoutes);
 // Socket.io Connection
 io.on("connection", (socket) => {
     console.log("Frontend client connected via Socket.io");
-    socket.emit("marketSnapshot", Object.values(store.latestMarketData));
-    // socket.emit('stocks', store.stocks);
-    // let data = [
-    //     {
-    //         "name": "asfas",
-    //         "userCode": "NIFTY",
-    //         "token": "99926000",
-    //         "actualSymbol": "NIFTY",
-    //         "fullName": "NIFTY",
-    //         "segment": "NSE",
-    //         "ltp": "24032.80",
-    //         "change": "-86.50",
-    //         "percent_change": "-0.36",
-    //         "sentiment": "bearish"
-    //     },
-    //     {
-    //         "name": "BANKNIFTY",
-    //         "userCode": "BANKNIFTY",
-    //         "token": "99926009",
-    //         "actualSymbol": "BANKNIFTY",
-    //         "fullName": "BANKNIFTY",
-    //         "segment": "NSE",
-    //         "ltp": "54547.05",
-    //         "change": "-331.45",
-    //         "percent_change": "-0.60",
-    //         "sentiment": "bearish"
-    //     },
-    // ];
-    // socket.emit('msg', data);
 
+    // Helper to get formatted stock list
+    const getFormattedStocks = () => {
+        return store.stocks.map(s => {
+            const key = `${s.name}:${s.segment}`;
+            const liveData = store.latestMarketData[key] || {};
+            const ltp = parseFloat(liveData.last_traded_price || 0);
+            const close = parseFloat(liveData.close_price || 0);
+            const rawChange = ltp - close;
+            const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
+            const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
+
+            return {
+                ...s,
+                ltp: liveData.last_traded_price || "0.00",
+                change: changeStr,
+                percent_change: pChange,
+                sentiment: liveData.sentiment || "neutral"
+            };
+        });
+    };
+
+
+    socket.emit("msg", "this is klypto trading view");
+   
+    // Emit initial data
+    socket.emit("marketSnapshot", Object.values(store.latestMarketData));
+    socket.emit("stocks", getFormattedStocks());
+
+    // Allow manual refresh request
+    socket.on("getAllStocks", () => {
+        socket.emit("stocks", getFormattedStocks());
+    });
 });
 
 async function bootstrap() {
@@ -98,9 +98,12 @@ async function bootstrap() {
             console.log(`🔮 FUTURES LIVE:     http://localhost:${PORT}/futures/live`);
             console.log(`=================================================\n`);
 
+            const { startGoldBroadcast } = require('./services/socket');
+
             startWebSocketConnection(loginData, io);
             startSchedulers();
             runInitialHistoricalLoad();
+            startGoldBroadcast();
         });
     } catch (err) {
         console.error("Bootstrap error:", err);

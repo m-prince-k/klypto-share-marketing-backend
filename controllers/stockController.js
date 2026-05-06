@@ -31,7 +31,7 @@ const getStocks = (req, res) => {
 
 
 
-    
+
     res.json({
         success: true,
         count: stocksWithPrice.length,
@@ -76,10 +76,45 @@ const getIndices = (req, res) => {
 
 const getLiveEquity = (req, res) => {
     const symbol = req.query.symbol;
-    let data = Object.values(store.latestMarketData).filter(d => !d.symbol.includes("CE") && !d.symbol.includes("PE"));
+    let data = Object.values(store.latestMarketData).filter(d =>
+        !d.symbol.includes("CE") && !d.symbol.includes("PE") && !d.symbol.endsWith("FUT")
+    );
 
     if (symbol) {
-        data = data.filter(d => d.symbol.toUpperCase() === symbol.toUpperCase());
+        const uSym = symbol.toUpperCase().trim();
+        const existing = data.filter(d => d.symbol.toUpperCase() === uSym);
+
+        if (existing.length > 0) {
+            data = existing;
+        } else {
+            // Auto-Add to Tracking
+            const token = store.symbolToTokenMaster[uSym];
+            const exchange = store.tokenToExchange[token] || "NSE";
+
+            if (token && store.wsClient) {
+                console.log(`[LiveEquity] Auto-subscribing to: ${uSym} (${token}) on ${exchange}`);
+                const exchType = (exchange === "BSE") ? 3 : 1;
+                store.wsClient.fetchData({
+                    correlationID: `live_eq_add_${uSym}`,
+                    action: 1,
+                    mode: 2,
+                    exchangeType: exchType,
+                    tokens: [token]
+                });
+
+                const key = `${uSym}:${exchange}`;
+                store.latestMarketData[key] = {
+                    symbol: uSym,
+                    token: token,
+                    ltp: "0.00",
+                    status: "subscribing...",
+                    exchange: exchange
+                };
+                data = [store.latestMarketData[key]];
+            } else {
+                data = [];
+            }
+        }
     }
 
     res.json({
@@ -191,6 +226,43 @@ const getLiveFutures = (req, res) => {
         success: true,
         data: data
     });
+};
+
+const getFuturesSymbols = async (req, res) => {
+    try {
+        const { Future } = require('../models');
+        const futures = await Future.findAll({
+            order: [['name', 'ASC'], ['expiry', 'ASC']]
+        });
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const parseExpiry = (expiryStr) => {
+            if (!expiryStr || expiryStr.length < 9) return new Date(0);
+            const day = parseInt(expiryStr.substring(0, 2));
+            const monthStr = expiryStr.substring(2, 5).toUpperCase();
+            const year = parseInt(expiryStr.substring(5, 9));
+            const months = {
+                'JAN': 0, 'FEB': 1, 'MAR': 2, 'APR': 3, 'MAY': 4, 'JUN': 5,
+                'JUL': 6, 'AUG': 7, 'SEP': 8, 'OCT': 9, 'NOV': 10, 'DEC': 11
+            };
+            return new Date(year, months[monthStr], day);
+        };
+
+        const validFutures = futures.filter(f => {
+            const expDate = parseExpiry(f.expiry);
+            return expDate >= today;
+        });
+
+        res.json({
+            success: true,
+            count: validFutures.length,
+            data: validFutures
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
 };
 
 
@@ -1060,7 +1132,7 @@ const syncOptionsChainHistory = async (req, res) => {
             for (const opt of allOptions) {
                 try {
                     console.log(`[Sync-OptionChain] Syncing ${opt.symbol} (${opt.token})...`);
-                    
+
                     // Format expiry to YYYY-MM-DD for database DATEONLY field
                     const rawExp = opt.expiry; // e.g. "07MAY2026"
                     let formattedExpiry = rawExp;
@@ -1311,6 +1383,211 @@ const getStockOverview = async (req, res) => {
     }
 };
 
+const getRSIScanner = async (req, res) => {
+    try {
+        const { calculateRSIIndicator } = require('../Indicators/rsi-indicator');
+        const { Candle } = require('../models');
+        
+        // 1. Get Dynamic Parameters
+        const { rsi_threshold = 60 } = req.body;
+        const { interval = '5m', fromDate, toDate } = req.query;
+
+        // 2. Map Interval
+        const intervalMap = {
+            "1m": "ONE_MINUTE", "3m": "THREE_MINUTE", "5m": "FIVE_MINUTE", 
+            "15m": "FIFTEEN_MINUTE", "30m": "THIRTY_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY"
+        };
+        const dbInterval = intervalMap[interval.toLowerCase()] || "FIVE_MINUTE";
+        const threshold = parseFloat(rsi_threshold);
+
+        const results = [];
+        console.log(`[Scanner] Running Custom RSI > ${threshold} scan on ${dbInterval}...`);
+
+        // Helper to enrich with live or historical data
+        const enrichWithMarketData = (symbol, segment, extra, historicalLtp = null) => {
+            const key = `${symbol}:${segment}`;
+            const liveData = store.latestMarketData[key] || {};
+            
+            // If historical scan, use the historical close price
+            const ltp = historicalLtp !== null ? parseFloat(historicalLtp) : parseFloat(liveData.last_traded_price || 0);
+            const close = parseFloat(liveData.close_price || 0); // Previous day close (might be inaccurate for deep history, but standard for scanner)
+            
+            const rawChange = historicalLtp !== null ? 0 : (ltp - close); // For historical, change relative to itself is 0 unless we fetch prev candle
+            const changeStr = historicalLtp === null ? (close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00") : "0.00";
+            const pChange = historicalLtp === null ? (close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00") : "0.00";
+
+            return {
+                symbol,
+                segment,
+                ...extra,
+                ltp: ltp.toFixed(2),
+                change: changeStr,
+                percent_change: pChange,
+                sentiment: historicalLtp ? "historical" : (liveData.sentiment || "neutral")
+            };
+        };
+
+        // 3. Scan Equities
+        for (const stock of store.stocks) {
+            try {
+                const whereClause = { symbol: stock.name, interval: dbInterval };
+                if (fromDate && toDate) {
+                    const toDateObj = new Date(toDate);
+                    toDateObj.setHours(23, 59, 59, 999); // Include end of day
+                    whereClause.timestamp = { [Op.between]: [new Date(fromDate), toDateObj] };
+                } else if (toDate) {
+                    const toDateObj = new Date(toDate);
+                    toDateObj.setHours(23, 59, 59, 999);
+                    whereClause.timestamp = { [Op.lte]: toDateObj };
+                }
+
+                const candles = await Candle.findAll({
+                    where: whereClause,
+                    order: [['timestamp', 'DESC']],
+                    limit: 100
+                });
+
+                if (candles.length >= 14) {
+                    const chronCandles = candles.reverse();
+                    const rsiData = await calculateRSIIndicator(chronCandles, { length: 14 });
+                    const currentRSI = rsiData[rsiData.length - 1].rsi;
+                    const histLtp = (fromDate || toDate) ? chronCandles[chronCandles.length - 1].close : null;
+
+                    if (currentRSI > threshold) {
+                        results.push(enrichWithMarketData(stock.name, stock.segment, { 
+                            rsi: currentRSI.toFixed(2),
+                            type: 'EQUITY'
+                        }, histLtp));
+                    }
+                }
+            } catch (e) {
+                // ignore
+                console.error(e)
+            }
+        }
+
+        // 4. Scan Futures (Disabled per user request)
+        // const stockNames = store.stocks.map(s => s.name);
+        // for (const name of stockNames) { ... }
+
+        res.json({
+            success: true,
+            parameters: { interval: interval, threshold: threshold, fromDate, toDate },
+            count: results.length,
+            data: results
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+};
+
+const getLiveGold = async (req, res) => {
+    try {
+        const smartApi = require('../services/smartApi');
+        const store = require('../services/marketStore');
+
+        // Search for Gold Futures contracts in MCX
+        const goldContracts = (store.mcxMasterData || []).filter(s => 
+            (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
+            s.instrumenttype === 'FUTCOM'
+        );
+
+        if (goldContracts.length === 0) {
+            return res.status(404).json({ success: false, message: "No Gold futures found in MCX master data." });
+        }
+
+        // Group by name (e.g., GOLD, GOLDM) and pick the nearest expiry for each
+        const nearestContracts = {};
+        for (const contract of goldContracts) {
+            if (!nearestContracts[contract.name]) {
+                nearestContracts[contract.name] = contract;
+            } else {
+                const currentExpiry = new Date(nearestContracts[contract.name].expiry);
+                const newExpiry = new Date(contract.expiry);
+                if (newExpiry < currentExpiry) {
+                    nearestContracts[contract.name] = contract;
+                }
+            }
+        }
+
+        const { fromDate, toDate, interval = "1d" } = req.query;
+        
+        // Map common interval strings to Angel One format if needed, but getHistoricalCandle expects things like "ONE_DAY"
+        const intervalMap = {
+            "1m": "ONE_MINUTE", "3m": "THREE_MINUTE", "5m": "FIVE_MINUTE", 
+            "15m": "FIFTEEN_MINUTE", "30m": "THIRTY_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY"
+        };
+        const apiInterval = intervalMap[interval.toLowerCase()] || "ONE_DAY";
+
+        // Default dates if not provided
+        const tDate = toDate ? new Date(toDate) : new Date();
+        const fDate = fromDate ? new Date(fromDate) : new Date();
+        if (!fromDate) {
+            fDate.setDate(tDate.getDate() - 30); // Default to 1 month
+        }
+
+        // Use exact current time for today to get live records
+        const now = new Date();
+        let tDateStr = tDate.toISOString().split('T')[0] + " 23:59";
+        if (tDate.toDateString() === now.toDateString()) {
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            tDateStr = tDate.toISOString().split('T')[0] + ` ${hh}:${mm}`;
+        }
+        
+        const fDateStr = fDate.toISOString().split('T')[0] + " 00:00";
+
+        const { getHistoricalCandle } = require('../services/angelOne');
+
+        const results = [];
+        for (const contract of Object.values(nearestContracts)) {
+            try {
+                const candles = await getHistoricalCandle({
+                    symbol: contract.symbol,
+                    interval: apiInterval,
+                    fromDate: fDateStr,
+                    toDate: tDateStr,
+                    exchange: "MCX",
+                    symboltoken: contract.token,
+                    skipSave: true
+                });
+
+                if (candles && candles.length > 0) {
+                    // Add IST Time for clarity
+                    const enrichedCandles = candles.map(c => {
+                        const istDate = new Date(c.timestamp);
+                        istDate.setMinutes(istDate.getMinutes() + 330); // UTC to IST
+                        return {
+                            ...c,
+                            timeIST: istDate.toISOString().replace('T', ' ').split('.')[0]
+                        };
+                    });
+
+                    results.push({
+                        name: contract.name,
+                        symbol: contract.symbol,
+                        token: contract.token,
+                        expiry: contract.expiry,
+                        exchange: "MCX",
+                        data: enrichedCandles
+                    });
+                }
+            } catch (err) {
+                console.error(`Failed to fetch historical data for ${contract.symbol}`, err);
+            }
+        }
+
+        return res.json({
+            success: true,
+            parameters: { interval: apiInterval, fromDate: fDateStr, toDate: tDateStr },
+            count: results.length,
+            data: results
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+};
+
 module.exports = {
     fetchOrders,
     getOptionsChain,
@@ -1328,5 +1605,8 @@ module.exports = {
     getIndices,
     syncOptionsChainHistory,
     getHistoricalOptionChain,
-    getStockOverview
+    getStockOverview,
+    getFuturesSymbols,
+    getRSIScanner,
+    getLiveGold
 };

@@ -14,6 +14,8 @@ router.get('/historical', historicalController.getHistoricalData);
 router.get('/overview', stockController.getStockOverview);
 
 router.get('/historical-v2', historicalController.getManualHistoricalData);
+router.post('/rsi-scanner', stockController.getRSIScanner);
+router.get('/commodity/gold/live', stockController.getLiveGold);
 
 
 // ---------------------------indicator routes---------------------------

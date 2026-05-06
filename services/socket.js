@@ -7,7 +7,8 @@ const connectSocket = (server) => {
     io = new Server(server, {
         cors: {
             origin: "*"
-        }
+        },
+        //transports: ["websocket"],
     });
 
     io.on("connection", (socket) => {
@@ -19,6 +20,42 @@ const connectSocket = (server) => {
     });
 };
 
+const startGoldBroadcast = () => {
+    const { fetchGoldHistory } = require('./commodityService');
+    
+    console.log("[Socket] Initializing Gold Real-time Broadcast...");
+    
+    const broadcast = async () => {
+        if (!io) {
+            console.log("[Socket] io not initialized yet, skipping broadcast.");
+            return;
+        }
+        
+        try {
+            console.log("[Socket] Fetching fresh Gold data for broadcast...");
+            const data = await fetchGoldHistory("1m", 1); // Just last 1 day for broadcast efficiency
+            if (data && data.length > 0) {
+                io.emit("goldUpdate", {
+                    success: true,
+                    timestamp: new Date().toISOString(),
+                    data: data
+                });
+                console.log(`[Socket] Broadcasted Gold Update (${data.length} contracts) to all clients.`);
+            } else {
+                console.log("[Socket] No Gold data found to broadcast.");
+            }
+        } catch (err) {
+            console.error("[Socket] Gold Broadcast Error:", err.message);
+        }
+    };
+
+    // Run immediately on start
+    broadcast();
+    
+    // Then run every 60 seconds
+    setInterval(broadcast, 60000);
+};
+
 // export io getter
 const getIO = () => {
     if (!io) {
@@ -27,4 +64,4 @@ const getIO = () => {
     return io;
 };
 
-module.exports = { connectSocket, getIO };
+module.exports = { connectSocket, getIO, startGoldBroadcast };

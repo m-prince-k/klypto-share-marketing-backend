@@ -1,6 +1,7 @@
 const smartApi = require('./smartApi');
 const store = require('./marketStore');
 const { Candle } = require('../models');
+const { formatDate } = require('./dbService');
 
 /**
  * Fetch historical candles directly from Angel One API
@@ -17,7 +18,7 @@ const { Candle } = require('../models');
  * @param {string} toDate - YYYY-MM-DD HH:mm
  * @param {string} exchange - NSE or NFO
  */
-async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange, symboltoken}) {
+async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange, symboltoken, skipSave = false}) {
     try {
         if (!symbol || typeof symbol !== 'string') throw new Error("Invalid or missing symbol parameter.");
         if (!interval || typeof interval !== 'string') throw new Error("Invalid or missing interval parameter.");
@@ -34,16 +35,23 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         // 2. Find token for the symbol (skip if already provided)
         let token = symboltoken || null;
         if (!token) {
+            const uSym = symbol.toUpperCase();
             if (finalExchange === "NSE") {
-                token = store.symbolToTokenMaster[symbol.toUpperCase()];
+                token = store.symbolToTokenMaster[uSym];
+            } else if (finalExchange === "BSE") {
+                token = store.symbolToTokenMaster[`${uSym}_BSE`];
             } else {
-                const nfoStock = store.nfoMasterData.find(f => f.symbol === symbol.toUpperCase());
+                // Futures/Options (NFO/BFO)
+                const nfoStock = store.nfoMasterData.find(f => f.symbol === uSym);
                 token = nfoStock ? nfoStock.token : null;
             }
 
             if (!token) {
-                // Fallback: look in store.stocks
-                const stock = store.stocks.find(s => s.name && s.name.toUpperCase() === symbol.toUpperCase());
+                // Final Fallback: look in store.stocks for a match on name and segment
+                const stock = store.stocks.find(s => 
+                    s.name && s.name.toUpperCase() === uSym && 
+                    (s.segment === finalExchange || (finalExchange === "NFO" && s.segment === "NSE"))
+                );
                 token = stock ? stock.token : null;
             }
         }
@@ -71,51 +79,68 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         };
         const maxDaysPerChunk = maxDaysMap[apiInterval] || 30;
 
-        // 5. Parse dates
-        let currentStartDate = new Date(fromDate);
-        const finalEndDate = new Date(toDate);
-        let allCandles = [];
-
-        console.log(`[AngelOne Service] Starting chunked fetch for ${symbol} (${apiInterval}) on ${finalExchange} from ${fromDate} to ${toDate}`);
-
-        const { formatDate } = require('./dbService');
-
-        // 6. Iterative Fetching
-        while (currentStartDate < finalEndDate) {
-            let currentChunkEndDate = new Date(currentStartDate);
-            currentChunkEndDate.setDate(currentChunkEndDate.getDate() + maxDaysPerChunk);
+        // 5. Setup Chunking
+        const splitIntoChunks = (start, end, maxDays) => {
+            const chunks = [];
+            let curr = new Date(start);
+            const target = new Date(end);
             
-            if (currentChunkEndDate > finalEndDate) {
-                currentChunkEndDate = new Date(finalEndDate);
+            const isMcx = finalExchange === "MCX";
+            const startTime = isMcx ? "09:00" : "09:15";
+            const endTime = isMcx ? "23:55" : "15:30";
+
+            while (curr < target) {
+                let chunkEnd = new Date(curr);
+                chunkEnd.setDate(chunkEnd.getDate() + maxDays);
+                if (chunkEnd > target) chunkEnd = new Date(target);
+                
+                // Format with specific times for first/last chunks if they are exactly at 00:00
+                const fromStr = formatDate(curr, curr.getHours() === 0 && curr.getMinutes() === 0 ? startTime : null, apiInterval);
+                const toStr = formatDate(chunkEnd, chunkEnd.getHours() === 0 && chunkEnd.getMinutes() === 0 ? endTime : null, apiInterval);
+
+                chunks.push({ from: fromStr, to: toStr });
+
+                // Move curr forward and add 1 second to prevent overlap
+                curr = new Date(chunkEnd);
+                curr.setSeconds(curr.getSeconds() + 1);
             }
+            return chunks;
+        };
 
-            const fStr = formatDate(currentStartDate, currentStartDate.getHours() === 0 ? "09:15" : null, apiInterval);
-            const tStr = formatDate(currentChunkEndDate, currentChunkEndDate.getHours() === 0 ? "15:30" : null, apiInterval);
+        const maxDays = (apiInterval === "ONE_MINUTE") ? 30 : 365;
+        let chunks = splitIntoChunks(fromDate, toDate, maxDays);
 
-            console.log(`[AngelOne API] Fetching ${finalExchange} chunk: ${fStr} to ${tStr}`);
+        // Strict Date Formatting for ONE_DAY (ONLY for Indices, others need time)
+        const isIndex = (token === "26000" || token === "26009" || token === "26037" || token === "26035" || token.startsWith("999"));
+        if (apiInterval === "ONE_DAY" && isIndex) {
+            chunks = chunks.map(c => ({
+                from: c.from.split(' ')[0],
+                to: c.to.split(' ')[0]
+            }));
+        }
 
-            const response = await smartApi.getCandleData({
+        console.log(`[AngelOne Service] Starting chunked fetch for ${symbol} on ${finalExchange}. Chunks: ${chunks.length}`);
+
+        let allCandles = [];
+        for (const chunk of chunks) {
+            const apiParams = {
                 exchange: finalExchange,
                 symboltoken: token,
                 interval: apiInterval,
-                fromdate: fStr,
-                todate: tStr
-            });
-
-            console.log(`[AngelOne API] Response Status: ${response?.status}, Data Count: ${response?.data?.length || 0}`);
-            if (!response?.status) {
-                console.log(`[AngelOne API] Error Body: ${JSON.stringify(response)}`);
-            }
+                fromdate: chunk.from,
+                todate: chunk.to
+            };
+            console.log(`[AngelOne API] Requesting:`, JSON.stringify(apiParams));
+            const response = await smartApi.getCandleData(apiParams);
 
             if (response && response.status && response.data) {
                 allCandles.push(...response.data);
+            } else {
+                console.log(`[AngelOne API] Error or empty response:`, JSON.stringify(response));
             }
 
-            currentStartDate = currentChunkEndDate;
-            if (currentStartDate >= finalEndDate) break;
-
-            if (currentStartDate < finalEndDate) {
-                await new Promise(resolve => setTimeout(resolve, 350));
+            if (chunks.indexOf(chunk) < chunks.length - 1) {
+                await new Promise(r => setTimeout(r, 400));
             }
         }
 
@@ -140,7 +165,7 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         const uniqueData = Array.from(new Map(formattedData.map(item => [item.time, item])).values());
         
         // Save to Database
-        if (uniqueData.length > 0) {
+        if (uniqueData.length > 0 && !skipSave) {
             try {
                 // Candle bulkCreate handles duplicates based on composite unique key
                 await Candle.bulkCreate(uniqueData, { ignoreDuplicates: true });
@@ -150,7 +175,7 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
             }
         }
 
-        console.log(`[AngelOne Service] Completed. Total candles: ${uniqueData.length}`);
+        console.log(`[AngelOne Service] Completed. Total candles: ${uniqueData.length} (Saved to DB: ${!skipSave})`);
         return uniqueData;
 
     } catch (err) {
