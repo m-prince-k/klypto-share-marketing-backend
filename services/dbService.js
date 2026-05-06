@@ -10,7 +10,7 @@ const formatDate = (date, time, interval) => {
     const day = String(d.getDate()).padStart(2, '0');
 
     if (interval === "ONE_DAY") {
-        return `${year}-${month}-${day}`;
+        return `${year}-${month}-${day} ${time || "00:00"}`;
     }
 
     if (!time) {
@@ -82,9 +82,9 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         console.log(`[API Fallback] Fetching ${symbol} from Angel One (${exchange})...`);
         
         const maxDaysMap = {
-            "ONE_MINUTE": 30, "THREE_MINUTE": 60, "FIVE_MINUTE": 100,
-            "TEN_MINUTE": 100, "FIFTEEN_MINUTE": 200, "THIRTY_MINUTE": 200,
-            "ONE_HOUR": 400, "ONE_DAY": 2000
+            "ONE_MINUTE": 30, "THREE_MINUTE": 45, "FIVE_MINUTE": 60,
+            "TEN_MINUTE": 60, "FIFTEEN_MINUTE": 90, "THIRTY_MINUTE": 120,
+            "ONE_HOUR": 200, "ONE_DAY": 2000
         };
         const maxDaysPerChunk = maxDaysMap[interval] || 30;
 
@@ -97,8 +97,8 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             currentChunkEndDate.setDate(currentChunkEndDate.getDate() + maxDaysPerChunk);
             if (currentChunkEndDate > finalEndDate) currentChunkEndDate = new Date(finalEndDate);
 
-            const fStr = formatDate(currentStartDate, currentStartDate.getHours() === 0 ? "09:15" : null, interval);
-            const tStr = formatDate(currentChunkEndDate, currentChunkEndDate.getHours() === 0 ? "15:30" : null, interval);
+            const fStr = formatDate(currentStartDate, "09:15", interval);
+            const tStr = formatDate(currentChunkEndDate, "15:30", interval);
 
             const response = await smartApi.getCandleData({
                 exchange,
@@ -107,6 +107,11 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 fromdate: fStr,
                 todate: tStr
             });
+
+            console.log(`[AngelOne API] Response Status: ${response?.status}, Data Count: ${response?.data?.length || 0}`);
+            if (!response?.status) {
+                console.log(`[AngelOne API] Error Message: ${response?.message || 'Unknown error'}`);
+            }
 
             if (response && response.status && response.data) {
                 console.log(`[API Chunk] ${symbol} Success: Received ${response.data.length} candles.`);

@@ -37,12 +37,15 @@ async function syncAllOptionsHistory(interval = "FIVE_MINUTE") {
     const fromDate = formatDate(oneYearAgo, "09:15", interval);
     const toDate = formatDate(now, "15:30", interval);
 
-    // Sync ALL options
+    // Sync options ONLY for the symbols we are tracking in store.stocks
+    const trackedSymbols = store.stocks.map(s => s.name);
     const allOptions = store.nfoMasterData.filter(o => 
-        o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK"
+        (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK") &&
+        trackedSymbols.includes(o.name)
     );
 
-    console.log(`[BulkSync-Options] Total contracts to sync: ${allOptions.length}`);
+    console.log(`[BulkSync-Options] Total tracked symbols: ${trackedSymbols.length}`);
+    console.log(`[BulkSync-Options] Total contracts to sync for these symbols: ${allOptions.length}`);
 
     let count = 0;
     for (const opt of allOptions) {

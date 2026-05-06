@@ -112,8 +112,27 @@ function startSchedulers() {
                     const atmOptions = options.filter(o => o.expiry === nearestExpiry);
 
                     for (const opt of atmOptions) {
+                        // Format expiry to YYYY-MM-DD for database DATEONLY field
+                        const rawExp = opt.expiry; // e.g. "07MAY2026"
+                        let formattedExpiry = rawExp;
+                        if (rawExp && rawExp.length >= 9) {
+                            const day = rawExp.substring(0, 2);
+                            const monthStr = rawExp.substring(2, 5);
+                            const year = rawExp.substring(5);
+                            const monthMap = { 'JAN': '01', 'FEB': '02', 'MAR': '03', 'APR': '04', 'MAY': '05', 'JUN': '06', 'JUL': '07', 'AUG': '08', 'SEP': '09', 'OCT': '10', 'NOV': '11', 'DEC': '12' };
+                            const month = monthMap[monthStr.toUpperCase()] || '01';
+                            formattedExpiry = `${year}-${month}-${day}`;
+                        }
+
+                        const extraInfo = {
+                            underlying: index,
+                            strike: parseFloat(opt.strike) / 100,
+                            expiry: formattedExpiry,
+                            optionType: opt.symbol.endsWith("CE") ? "CE" : "PE"
+                        };
+
                         for (const interval of ['FIVE_MINUTE', 'ONE_DAY']) {
-                            await getCandlesWithCache(opt.symbol, opt.token, "NFO", interval, null, null);
+                            await getCandlesWithCache(opt.symbol, opt.token, "NFO", interval, null, null, extraInfo);
                             await new Promise(r => setTimeout(r, 1000));
                         }
                     }

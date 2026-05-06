@@ -102,6 +102,11 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
                 todate: tStr
             });
 
+            console.log(`[AngelOne API] Response Status: ${response?.status}, Data Count: ${response?.data?.length || 0}`);
+            if (!response?.status) {
+                console.log(`[AngelOne API] Error Body: ${JSON.stringify(response)}`);
+            }
+
             if (response && response.status && response.data) {
                 allCandles.push(...response.data);
             }
