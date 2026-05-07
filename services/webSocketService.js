@@ -191,6 +191,7 @@ async function startWebSocketConnection(loginData, io) {
 
                 // Add Live Tick for Chart (NSE)
                 const cleanToken = formatted.token ? formatted.token.replace(/\"/g, "").trim() : null;
+                const istOffset = 5.5 * 60 * 60;
                 const candle = store.liveCandles[cleanToken];
                 if (candle) {
                     io.emit(EVENTS.LIVE_TICK, {
@@ -198,7 +199,7 @@ async function startWebSocketConnection(loginData, io) {
                         symbol: formatted.symbol,
                         exchange: formatted.exchange,
                         data: {
-                            time: Math.floor(candle.minute / 1000),
+                            time: Math.floor(candle.minute / 1000) + istOffset,
                             open: candle.open,
                             high: candle.high,
                             low: candle.low,
@@ -213,6 +214,7 @@ async function startWebSocketConnection(loginData, io) {
                 const cleanToken = formatted.token ? formatted.token.replace(/\"/g, "").trim() : null;
                 const candle = store.liveCandles[cleanToken];
                 const contract = (store.mcxMasterData || []).find(c => c.token === cleanToken);
+                const istOffset = 5.5 * 60 * 60;
                 
                 if (candle && contract) {
                     io.emit(EVENTS.LIVE_TICK, {
@@ -221,7 +223,7 @@ async function startWebSocketConnection(loginData, io) {
                         fullSymbol: contract.symbol, // e.g. "GOLD05JUN26FUT"
                         exchange: "MCX",
                         data: {
-                            time: Math.floor(candle.minute / 1000),
+                            time: Math.floor(candle.minute / 1000) + istOffset,
                             open: candle.open,
                             high: candle.high,
                             low: candle.low,
