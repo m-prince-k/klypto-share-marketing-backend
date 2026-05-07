@@ -340,89 +340,17 @@ const getFuturesHistoricalData = async (req, res) => {
 // };
 
 
+
 const getManualHistoricalData = async (req, res) => {
     try {
-        let { type, symbol, interval, period, fromdate, todate, fromDate, toDate, exchange } = req.query;
-
-        // Normalize parameter names (handle both fromdate and fromDate)
-        const finalFromDate = fromdate || fromDate;
-        const finalToDate = todate || toDate;
-
-        if (!symbol || !interval || !finalFromDate || !finalToDate) {
-            return res.status(400).json({
-                success: false,
-                message: "Missing parameters: symbol, interval, fromDate/fromdate, and toDate/todate are required."
-            });
-        }
-
-        // Clean up accidental formatting issues from frontend (e.g., "2024-01-01 :09:15" -> "2024-01-01 09:15")
-        let cleanedFromDate = typeof finalFromDate === 'string' ? finalFromDate.replace(/\s+:/, ' ') : finalFromDate;
-        let cleanedToDate = typeof finalToDate === 'string' ? finalToDate.replace(/\s+:/, ' ') : finalToDate;
-
-        // Format dates to YYYY-MM-DD HH:mm if they are just YYYY-MM-DD
-        let formattedFromDate = cleanedFromDate;
-        let formattedToDate = cleanedToDate;
-
-        // If it's just a date (YYYY-MM-DD), add the default market times
-        if (typeof cleanedFromDate === 'string' && cleanedFromDate.length === 10) {
-            formattedFromDate = formatDate(new Date(cleanedFromDate), "09:15", interval);
-        }
-        if (typeof cleanedToDate === 'string' && cleanedToDate.length === 10) {
-            formattedToDate = formatDate(new Date(cleanedToDate), "15:30", interval);
-        }
-
-        // Validate that dates are actually valid dates
-        if (isNaN(new Date(formattedFromDate).getTime()) || isNaN(new Date(formattedToDate).getTime())) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid date format provided. Please use YYYY-MM-DD or YYYY-MM-DD HH:mm"
-            });
-        }
-
-        const finalExchange = (exchange || req.query.segment || "NSE").toUpperCase();
-        const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
-
-        // Explicit Token Resolution
-        const uSym = symbol.toUpperCase();
-        let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}_${mappedExchange}`];
-        
-        // Manual fallback for Indices
-        if (!finalToken) {
-            if (uSym === "BANKNIFTY") finalToken = "26009";
-            if (uSym === "NIFTY") finalToken = "26000";
-            if (uSym === "FINNIFTY") finalToken = "26037";
-        }
-
-        // Strict Date Formatting for ONE_DAY (some indices require YYYY-MM-DD only)
-        let fFrom = formattedFromDate;
-        let fTo = formattedToDate;
-        if (interval === "ONE_DAY" || interval === "day" || interval === "1d") {
-            fFrom = formattedFromDate.split(' ')[0];
-            fTo = formattedToDate.split(' ')[0];
-        }
-
-        console.log(`[Historical-V2] Request: ${symbol}, Token: ${finalToken}, Range: ${fFrom} to ${fTo}`);
-
-        let params = {
-            symbol: symbol,
-            interval: interval,
-            fromDate: fFrom,
-            toDate: fTo,
-            exchange: mappedExchange,
-            symboltoken: finalToken
-        }
-
-        const data = await getHistoricalCandle(params);
-        return res.json({
-            success: true,
-            count: data.length,
-            data: data
-        });
+        const { fetchManualHistoricalData } = require('../services/historicalService');
+        const result = await fetchManualHistoricalData(req.query);
+        return res.json(result);
     } catch (err) {
-        console.error("[Historical-V2] Error:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 };
+
 
 module.exports = {
     getManualHistoricalData,

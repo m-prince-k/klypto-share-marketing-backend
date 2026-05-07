@@ -9,18 +9,16 @@ const formatDate = (date, time, interval) => {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
 
-    if (interval === "ONE_DAY") {
-        return `${year}-${month}-${day} ${time || "00:00"}`;
+
+    if (time) {
+        return `${year}-${month}-${day} ${time}`;
     }
 
-    if (!time) {
-        const hours = String(d.getHours()).padStart(2, '0');
-        const minutes = String(d.getMinutes()).padStart(2, '0');
-        return `${year}-${month}-${day} ${hours}:${minutes}`;
-    }
-
-    return `${year}-${month}-${day} ${time}`;
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
 };
+
 
 async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null) {
     try {

@@ -1387,14 +1387,14 @@ const getRSIScanner = async (req, res) => {
     try {
         const { calculateRSIIndicator } = require('../Indicators/rsi-indicator');
         const { Candle } = require('../models');
-        
+
         // 1. Get Dynamic Parameters
         const { rsi_threshold = 60 } = req.body;
         const { interval = '5m', fromDate, toDate } = req.query;
 
         // 2. Map Interval
         const intervalMap = {
-            "1m": "ONE_MINUTE", "3m": "THREE_MINUTE", "5m": "FIVE_MINUTE", 
+            "1m": "ONE_MINUTE", "3m": "THREE_MINUTE", "5m": "FIVE_MINUTE",
             "15m": "FIFTEEN_MINUTE", "30m": "THIRTY_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY"
         };
         const dbInterval = intervalMap[interval.toLowerCase()] || "FIVE_MINUTE";
@@ -1407,11 +1407,11 @@ const getRSIScanner = async (req, res) => {
         const enrichWithMarketData = (symbol, segment, extra, historicalLtp = null) => {
             const key = `${symbol}:${segment}`;
             const liveData = store.latestMarketData[key] || {};
-            
+
             // If historical scan, use the historical close price
             const ltp = historicalLtp !== null ? parseFloat(historicalLtp) : parseFloat(liveData.last_traded_price || 0);
             const close = parseFloat(liveData.close_price || 0); // Previous day close (might be inaccurate for deep history, but standard for scanner)
-            
+
             const rawChange = historicalLtp !== null ? 0 : (ltp - close); // For historical, change relative to itself is 0 unless we fetch prev candle
             const changeStr = historicalLtp === null ? (close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00") : "0.00";
             const pChange = historicalLtp === null ? (close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00") : "0.00";
@@ -1454,7 +1454,7 @@ const getRSIScanner = async (req, res) => {
                     const histLtp = (fromDate || toDate) ? chronCandles[chronCandles.length - 1].close : null;
 
                     if (currentRSI > threshold) {
-                        results.push(enrichWithMarketData(stock.name, stock.segment, { 
+                        results.push(enrichWithMarketData(stock.name, stock.segment, {
                             rsi: currentRSI.toFixed(2),
                             type: 'EQUITY'
                         }, histLtp));
@@ -1487,7 +1487,7 @@ const getLiveGold = async (req, res) => {
         const store = require('../services/marketStore');
 
         // Search for Gold Futures contracts in MCX
-        const goldContracts = (store.mcxMasterData || []).filter(s => 
+        const goldContracts = (store.mcxMasterData || []).filter(s =>
             (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
             s.instrumenttype === 'FUTCOM'
         );
@@ -1496,25 +1496,31 @@ const getLiveGold = async (req, res) => {
             return res.status(404).json({ success: false, message: "No Gold futures found in MCX master data." });
         }
 
-        // Group by name (e.g., GOLD, GOLDM) and pick the nearest expiry for each
+
+        // Group by name (e.g., GOLD, GOLDM) and pick the nearest active expiry for each
         const nearestContracts = {};
+        const todayForExpiry = new Date();
+        todayForExpiry.setHours(0, 0, 0, 0);
+
         for (const contract of goldContracts) {
+            const expDate = new Date(contract.expiry);
+            if (expDate < todayForExpiry) continue; // Skip expired
+
             if (!nearestContracts[contract.name]) {
                 nearestContracts[contract.name] = contract;
             } else {
                 const currentExpiry = new Date(nearestContracts[contract.name].expiry);
-                const newExpiry = new Date(contract.expiry);
-                if (newExpiry < currentExpiry) {
+                if (expDate < currentExpiry) {
                     nearestContracts[contract.name] = contract;
                 }
             }
         }
 
         const { fromDate, toDate, interval = "1d" } = req.query;
-        
-        // Map common interval strings to Angel One format if needed, but getHistoricalCandle expects things like "ONE_DAY"
+
+        // Map common interval strings to Angel One format
         const intervalMap = {
-            "1m": "ONE_MINUTE", "3m": "THREE_MINUTE", "5m": "FIVE_MINUTE", 
+            "1m": "ONE_MINUTE", "3m": "THREE_MINUTE", "5m": "FIVE_MINUTE",
             "15m": "FIFTEEN_MINUTE", "30m": "THIRTY_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY"
         };
         const apiInterval = intervalMap[interval.toLowerCase()] || "ONE_DAY";
@@ -1523,19 +1529,13 @@ const getLiveGold = async (req, res) => {
         const tDate = toDate ? new Date(toDate) : new Date();
         const fDate = fromDate ? new Date(fromDate) : new Date();
         if (!fromDate) {
-            fDate.setDate(tDate.getDate() - 30); // Default to 1 month
+            fDate.setDate(tDate.getDate() - 30);
         }
 
-        // Use exact current time for today to get live records
-        const now = new Date();
-        let tDateStr = tDate.toISOString().split('T')[0] + " 23:59";
-        if (tDate.toDateString() === now.toDateString()) {
-            const hh = String(now.getHours()).padStart(2, '0');
-            const mm = String(now.getMinutes()).padStart(2, '0');
-            tDateStr = tDate.toISOString().split('T')[0] + ` ${hh}:${mm}`;
-        }
-        
+        // Use 23:59 for the end date to ensure we get the latest data for that day
+        const tDateStr = tDate.toISOString().split('T')[0] + " 23:59";
         const fDateStr = fDate.toISOString().split('T')[0] + " 00:00";
+
 
         const { getHistoricalCandle } = require('../services/angelOne');
 

@@ -71,13 +71,24 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         };
         const apiInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
-        // 4. Define Chunk Limits
+
+
+
+        // 4. Define Chunk Limits (Adhere to Angel One limits)
         const maxDaysMap = {
-            "ONE_MINUTE": 30, "THREE_MINUTE": 60, "FIVE_MINUTE": 100,
-            "TEN_MINUTE": 100, "FIFTEEN_MINUTE": 200, "THIRTY_MINUTE": 200,
-            "ONE_HOUR": 400, "ONE_DAY": 2000
+            "ONE_MINUTE": 7, 
+            "THREE_MINUTE": 15, 
+            "FIVE_MINUTE": 30,
+
+
+            "TEN_MINUTE": 100, 
+            "FIFTEEN_MINUTE": 200, 
+            "THIRTY_MINUTE": 200,
+            "ONE_HOUR": 200, 
+            "ONE_DAY": 365
         };
         const maxDaysPerChunk = maxDaysMap[apiInterval] || 30;
+
 
         // 5. Setup Chunking
         const splitIntoChunks = (start, end, maxDays) => {
@@ -94,11 +105,20 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
                 chunkEnd.setDate(chunkEnd.getDate() + maxDays);
                 if (chunkEnd > target) chunkEnd = new Date(target);
                 
+
                 // Format with specific times for first/last chunks if they are exactly at 00:00
-                const fromStr = formatDate(curr, curr.getHours() === 0 && curr.getMinutes() === 0 ? startTime : null, apiInterval);
-                const toStr = formatDate(chunkEnd, chunkEnd.getHours() === 0 && chunkEnd.getMinutes() === 0 ? endTime : null, apiInterval);
+                // For ONE_DAY interval, we prefer 00:00 to 23:59 range
+                let fromStr, toStr;
+                if (apiInterval === "ONE_DAY") {
+                    fromStr = formatDate(curr, "00:00", apiInterval);
+                    toStr = formatDate(chunkEnd, "23:59", apiInterval);
+                } else {
+                    fromStr = formatDate(curr, curr.getHours() === 0 && curr.getMinutes() === 0 ? startTime : null, apiInterval);
+                    toStr = formatDate(chunkEnd, chunkEnd.getHours() === 0 && chunkEnd.getMinutes() === 0 ? endTime : null, apiInterval);
+                }
 
                 chunks.push({ from: fromStr, to: toStr });
+
 
                 // Move curr forward and add 1 second to prevent overlap
                 curr = new Date(chunkEnd);
@@ -144,23 +164,42 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
             }
         }
 
+
         // 7. Format the combined response
         const formattedData = allCandles.map(candle => {
-            const ts = new Date(candle[0]);
+            let ts;
+            const rawTs = candle[0];
+
+            if (rawTs instanceof Date) {
+                ts = rawTs;
+            } else if (typeof rawTs === 'string') {
+                // If it's a string like "2026-05-07 10:29", ensure IST parsing
+                let tsStr = rawTs;
+                if (!tsStr.includes('T') && !tsStr.includes('Z') && !tsStr.includes('+')) {
+                    tsStr += " +05:30";
+                }
+                ts = new Date(tsStr);
+            } else {
+                ts = new Date(rawTs);
+            }
+
+            const timeSeconds = Math.floor(ts.getTime() / 1000);
+
             return {
                 symbol: symbol.toUpperCase(),
                 token: token,
                 exchange: finalExchange,
                 interval: apiInterval,
                 timestamp: ts,
-                time: Math.floor(ts.getTime() / 1000),
+                time: isNaN(timeSeconds) ? null : timeSeconds,
                 open: candle[1],
                 high: candle[2],
                 low: candle[3],
                 close: candle[4],
                 volume: candle[5]
             };
-        });
+        }).filter(c => c.time !== null);
+
 
         const uniqueData = Array.from(new Map(formattedData.map(item => [item.time, item])).values());
         
