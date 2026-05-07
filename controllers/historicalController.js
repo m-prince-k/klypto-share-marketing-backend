@@ -287,12 +287,22 @@ const getFuturesHistoricalData = async (req, res) => {
             }
         }
 
+        // Calculate RSI for the entire historical series
+        const { indicatorEngine } = require('../helper');
+        let rsiData = [];
+        try {
+            rsiData = await indicatorEngine(data, { type: 'RSI', length: 14 });
+        } catch (err) {
+            console.error("[HistoricalController] RSI Calc Error:", err.message);
+        }
+
         res.json({
             success: true,
             symbol: bestFuture.symbol,
             source: result.source,
             count: data.length,
-            data: data
+            data: data,
+            rsi: rsiData
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

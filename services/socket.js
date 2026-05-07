@@ -247,17 +247,36 @@ const startGoldBroadcast = () => {
                 if (goldData && goldData.data.length > 0) {
                     const lastCandle = goldData.data[goldData.data.length - 1];
                     // Format for chart: { time, open, high, low, close }
-                    const formattedTick = {
+                    const istOffset = 5.5 * 60 * 60; // 5 hours 30 mins in seconds
+                    const formattedTickForChart = {
                         symbol: "GOLD",
                         data: {
-                            time: Math.floor(new Date(lastCandle.timestamp).getTime() / 1000),
+                            time: Math.floor(new Date(lastCandle.timestamp).getTime() / 1000) + istOffset,
                             open: parseFloat(lastCandle.open),
                             high: parseFloat(lastCandle.high),
                             low: parseFloat(lastCandle.low),
                             close: parseFloat(lastCandle.close),
                         }
                     };
-                    io.emit(EVENTS.GOLD_UPDATE, formattedTick);
+                    io.emit(EVENTS.GOLD_UPDATE, formattedTickForChart);
+
+                    // Update store so AlertService can see the live candle
+                    store.liveCandles["GOLD"] = {
+                        open: parseFloat(lastCandle.open),
+                        high: parseFloat(lastCandle.high),
+                        low: parseFloat(lastCandle.low),
+                        close: parseFloat(lastCandle.close),
+                        volume: 0
+                    };
+
+                    // Trigger Alert Scanner with real numeric token
+                    const alertService = require('./alertService');
+                    const goldStock = store.stocks.find(s => s.name === "GOLD");
+                    alertService.checkAlerts({
+                        token: goldStock ? goldStock.token : "GOLD",
+                        symbol: "GOLD",
+                        last_traded_price: Number(lastCandle.close)
+                    });
                 }
             }
         } catch (err) {

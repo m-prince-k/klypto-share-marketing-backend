@@ -97,8 +97,9 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             currentChunkEndDate.setDate(currentChunkEndDate.getDate() + maxDaysPerChunk);
             if (currentChunkEndDate > finalEndDate) currentChunkEndDate = new Date(finalEndDate);
 
-            const fStr = formatDate(currentStartDate, "09:15", interval);
-            const tStr = formatDate(currentChunkEndDate, "15:30", interval);
+            const isMCX = exchange === "MCX";
+            const fStr = formatDate(currentStartDate, isMCX ? "09:00" : "09:15", interval);
+            const tStr = formatDate(currentChunkEndDate, isMCX ? "23:55" : "15:30", interval);
 
             console.log(`[AngelOne API] Requesting ${symbol} (${token}) | Interval: ${interval} | From: ${fStr} | To: ${tStr}`);
             
@@ -140,20 +141,22 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 source: "database_fallback", 
                 data: dbCandles.map(c => {
                     const d = c.toJSON ? c.toJSON() : c;
-                    return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) };
+                    const istOffset = 5.5 * 60 * 60;
+                    return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) + istOffset };
                 })
             };
         }
 
         const formattedData = allCandles.map(candle => {
             const ts = new Date(candle[0]);
+            const istOffset = 5.5 * 60 * 60;
             const base = {
                 symbol: symbol.toUpperCase(),
                 token: token,
                 exchange,
                 interval,
                 timestamp: ts,
-                time: Math.floor(ts.getTime() / 1000),
+                time: Math.floor(ts.getTime() / 1000) + istOffset,
                 open: parseFloat(candle[1]),
                 high: parseFloat(candle[2]),
                 low: parseFloat(candle[3]),

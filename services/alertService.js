@@ -24,6 +24,14 @@ class AlertService {
          *   operator, value, triggerType: 'once' | 'once_per_bar' | 'every_tick'
          * }
          */
+        // Token Resolution Safety: If token is "GOLD", find the real numeric token from store
+        if (alert.token === "GOLD") {
+            const goldStock = store.stocks.find(s => s.name === "GOLD");
+            if (goldStock) {
+                alert.token = goldStock.token;
+            }
+        }
+
         const key = `${alert.token}:${alert.interval}`;
         const alertId = alert.id || `${alert.token}_${Date.now()}`;
         
@@ -87,50 +95,62 @@ class AlertService {
             // For a 5m bar, the time would be floor(min / 5) * 5.
             const intervalMs = this.getIntervalMs(alert.interval);
             const currentBarTime = Math.floor(Date.now() / intervalMs) * intervalMs;
+            const ltp = Number(tick.last_traded_price);
             
-            // Construct the latest "forming" candle
+            // Construct the latest "forming" candle with Smart High/Low tracking
             const latestCandle = {
                 time: Math.floor(currentBarTime / 1000),
-                open: liveCandleOneMin.open, // Approximation: use current 1m open as bar open if it's the start
-                high: liveCandleOneMin.high,
-                low: liveCandleOneMin.low,
-                close: Number(tick.last_traded_price),
+                open: liveCandleOneMin.open,
+                high: Math.max(liveCandleOneMin.high, ltp),
+                low: Math.min(liveCandleOneMin.low, ltp),
+                close: ltp,
                 volume: liveCandleOneMin.volume
             };
 
-            // If the historical candles already contain this bar time, replace it. Otherwise append.
+            // Update store state for consistency
+            liveCandleOneMin.high = latestCandle.high;
+            liveCandleOneMin.low = latestCandle.low;
+            liveCandleOneMin.close = ltp;
+
             let combinedCandles = [...historicalCandles];
             const lastHist = combinedCandles[combinedCandles.length - 1];
             
             if (lastHist && lastHist.time === latestCandle.time) {
                 combinedCandles[combinedCandles.length - 1] = latestCandle;
             } else if (lastHist && latestCandle.time > lastHist.time) {
-                // New bar started since last refresh
                 combinedCandles.push(latestCandle);
-                // Optionally prune historical buffer to keep it at 250
                 if (combinedCandles.length > 300) combinedCandles.shift();
-            } else {
+            } else if (!lastHist) {
                 combinedCandles.push(latestCandle);
             }
 
             try {
                 // Calculate Indicator using helper's engine
                 const indicatorData = await indicatorEngine(combinedCandles, alert.params || { type: alert.indicator });
-                if (!indicatorData || indicatorData.length === 0) continue;
+                if (!indicatorData || indicatorData.length < 2) {
+                    // console.log(`[AlertService] Not enough data for ${alert.symbol}`);
+                    continue;
+                }
 
                 const latestResult = indicatorData[indicatorData.length - 1];
-                // Extract value based on indicator structure (some return {rsi: ...}, some {ema: ...})
                 const currentValue = this.extractValue(latestResult, alert.indicator);
                 
                 if (currentValue === null || currentValue === undefined) continue;
 
-                // Previous value for "Cross" detection
-                const prevState = this.lastStates[alert.id] || { value: currentValue, time: latestCandle.time };
-                const prevValue = prevState.value;
-
-                // Check Condition
-                let triggered = false;
+                // Improved Previous Value Logic
+                let prevValue = currentValue;
+                if (this.lastStates[alert.id]) {
+                    prevValue = this.lastStates[alert.id].value;
+                } else {
+                    // Fallback to the RSI of the previous candle for crossover detection
+                    prevValue = this.extractValue(indicatorData[indicatorData.length - 2], alert.indicator);
+                }
+                
                 const threshold = Number(alert.value);
+                let triggered = false;
+
+                // Log values for debugging crossovers
+                console.log(`[AlertScan] ${alert.symbol} RSI: Prev=${prevValue.toFixed(2)}, Curr=${currentValue.toFixed(2)}, Threshold=${threshold} | LTP: ${latestCandle.close}`);
 
                 switch (alert.operator) {
                     case ">": triggered = currentValue > threshold; break;
@@ -153,11 +173,22 @@ class AlertService {
                     this.processTrigger(alert, currentValue, latestCandle.time);
                 }
 
-                // Update state
+                // Broadcast live indicator value to frontend for plotting
+                if (this.io) {
+                    this.io.emit("INDICATOR_UPDATE", {
+                        symbol: alert.symbol,
+                        token: alert.token,
+                        indicator: alert.indicator,
+                        value: currentValue,
+                        time: latestCandle.time
+                    });
+                }
+
+                // Update state for next tick
                 this.lastStates[alert.id] = { value: currentValue, time: latestCandle.time };
 
             } catch (err) {
-                console.error(`[AlertService] Calculation Error for ${alert.symbol}:`, err.message);
+                console.error(`[AlertService] Error for ${alert.symbol}:`, err.message);
             }
         }
     }
