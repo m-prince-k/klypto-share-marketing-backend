@@ -17,10 +17,14 @@ function formatTickData(data) {
     formatted.sentiment = (data.last_traded_price > data.close_price) ? "bullish" : "bearish";
     formatted.fetchedAt = new Date().toISOString();
 
-    const ltp = parseFloat(formatted.last_traded_price);
-    const volume = parseInt(formatted.v) || 0;
-    const now = new Date();
-    const currentMinute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes()).getTime();
+
+
+    const ltp = parseFloat(formatted.last_traded_price || 0);
+    const volume = parseInt(formatted.v || 0);
+    const ts = parseInt(data.exchange_timestamp || 0);
+    const ms = ts > 10000000000 ? ts : ts * 1000;
+    const currentMinute = Math.floor(ms / 60000) * 60000;
+
 
     if (!store.liveCandles[cleanToken]) {
         store.liveCandles[cleanToken] = {
@@ -39,6 +43,7 @@ function formatTickData(data) {
             };
         }
     }
+
 
     if (formatted.exchange_timestamp) {
         const ts = parseInt(formatted.exchange_timestamp);
@@ -128,6 +133,26 @@ async function startWebSocketConnection(loginData, io) {
         }
     }
 
+    // 3. Subscribe to MCX Gold Futures
+    const goldContracts = (store.mcxMasterData || []).filter(s => 
+        (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
+        s.instrumenttype === 'FUTCOM'
+    );
+    const nearestGold = {};
+    for (const contract of goldContracts) {
+        if (!nearestGold[contract.name]) nearestGold[contract.name] = contract;
+        else if (new Date(contract.expiry) < new Date(nearestGold[contract.name].expiry)) nearestGold[contract.name] = contract;
+    }
+    const mcxTokens = Object.values(nearestGold).map(c => c.token);
+    if (mcxTokens.length > 0) {
+        console.log(`Subscribing to ${mcxTokens.length} MCX Gold Futures...`);
+        store.wsClient.fetchData({
+            correlationID: "mcx_gold_subscription",
+            action: 1, mode: 2, exchangeType: 5, // 5 is MCX
+            tokens: mcxTokens
+        });
+    }
+
     store.wsClient.on("tick", (data) => {
         const formatted = formatTickData(data);
         if (formatted) {
@@ -139,6 +164,7 @@ async function startWebSocketConnection(loginData, io) {
             const s = store.stocks.find(st => st.name === formatted.symbol && st.segment === formatted.exchange) || 
                       store.stocks.find(st => st.name === formatted.symbol);
                       
+
             if (s) {
                 const ltp = parseFloat(formatted.last_traded_price || 0);
                 const close = parseFloat(formatted.close_price || 0);
@@ -154,9 +180,52 @@ async function startWebSocketConnection(loginData, io) {
                     sentiment: formatted.sentiment || "neutral"
                 };
 
-                // Emit individual stock update that frontend can listen to
+                // Emit individual stock update
                 io.emit("stockUpdate", stockUpdate);
+
+                // Add Live Tick for Chart (NSE)
+                const cleanToken = formatted.token ? formatted.token.replace(/\"/g, "").trim() : null;
+                const candle = store.liveCandles[cleanToken];
+                if (candle) {
+                    io.emit("liveTick", {
+                        token: cleanToken,
+                        symbol: formatted.symbol,
+                        exchange: formatted.exchange,
+                        data: {
+                            time: Math.floor(candle.minute / 1000),
+                            open: candle.open,
+                            high: candle.high,
+                            low: candle.low,
+                            close: candle.close,
+                            volume: candle.volume
+                        }
+                    });
+                }
             }
+
+            if (formatted.exchange === "MCX") {
+                const cleanToken = formatted.token ? formatted.token.replace(/\"/g, "").trim() : null;
+                const candle = store.liveCandles[cleanToken];
+                const contract = (store.mcxMasterData || []).find(c => c.token === cleanToken);
+                
+                if (candle && contract) {
+                    io.emit("liveTick", {
+                        token: cleanToken,
+                        symbol: contract.name, // e.g. "GOLD"
+                        fullSymbol: contract.symbol, // e.g. "GOLD05JUN26FUT"
+                        exchange: "MCX",
+                        data: {
+                            time: Math.floor(candle.minute / 1000),
+                            open: candle.open,
+                            high: candle.high,
+                            low: candle.low,
+                            close: candle.close,
+                            volume: candle.volume
+                        }
+                    });
+                }
+            }
+
 
             io.emit("marketUpdate", formatted);
         }

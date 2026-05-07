@@ -64,7 +64,7 @@ io.on("connection", (socket) => {
 
 
     socket.emit("msg", "this is klypto trading view");
-   
+
     // Emit initial data
     socket.emit("marketSnapshot", Object.values(store.latestMarketData));
     socket.emit("stocks", getFormattedStocks());
@@ -98,12 +98,9 @@ async function bootstrap() {
             console.log(`🔮 FUTURES LIVE:     http://localhost:${PORT}/futures/live`);
             console.log(`=================================================\n`);
 
-            const { startGoldBroadcast } = require('./services/socket');
-
             startWebSocketConnection(loginData, io);
             startSchedulers();
             runInitialHistoricalLoad();
-            startGoldBroadcast();
         });
     } catch (err) {
         console.error("Bootstrap error:", err);
