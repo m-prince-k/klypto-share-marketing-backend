@@ -9,5 +9,6 @@ module.exports = {
     nfoMasterData: [], // Store NFO scripts for lookup
     mcxMasterData: [], // Store MCX scripts for lookup
     bseMasterData: [], // Store BSE scripts for lookup
-    liveCandles: {} // Real-time candle aggregation { [token]: { open, high, low, close, volume, minute } }
+    liveCandles: {}, // Real-time candle aggregation { [token]: { open, high, low, close, volume, minute } }
+    alerts: [] // Real-time indicator alerts
 };

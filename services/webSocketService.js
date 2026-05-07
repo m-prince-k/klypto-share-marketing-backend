@@ -1,5 +1,8 @@
 const { WebSocketV2 } = require("smartapi-javascript");
 const store = require("./marketStore");
+const EVENTS = require("../constants/socketEvents");
+const alertService = require("./alertService");
+
 
 function formatTickData(data) {
     if (!data || data === "pong") return null;
@@ -156,6 +159,9 @@ async function startWebSocketConnection(loginData, io) {
     store.wsClient.on("tick", (data) => {
         const formatted = formatTickData(data);
         if (formatted) {
+            // Process alerts in real-time
+            alertService.checkAlerts(formatted);
+
             // Key by Symbol:Exchange to avoid collisions
             const key = `${formatted.symbol}:${formatted.exchange}`;
             store.latestMarketData[key] = formatted;
@@ -181,13 +187,13 @@ async function startWebSocketConnection(loginData, io) {
                 };
 
                 // Emit individual stock update
-                io.emit("stockUpdate", stockUpdate);
+                io.emit(EVENTS.STOCK_UPDATE, stockUpdate);
 
                 // Add Live Tick for Chart (NSE)
                 const cleanToken = formatted.token ? formatted.token.replace(/\"/g, "").trim() : null;
                 const candle = store.liveCandles[cleanToken];
                 if (candle) {
-                    io.emit("liveTick", {
+                    io.emit(EVENTS.LIVE_TICK, {
                         token: cleanToken,
                         symbol: formatted.symbol,
                         exchange: formatted.exchange,
@@ -209,7 +215,7 @@ async function startWebSocketConnection(loginData, io) {
                 const contract = (store.mcxMasterData || []).find(c => c.token === cleanToken);
                 
                 if (candle && contract) {
-                    io.emit("liveTick", {
+                    io.emit(EVENTS.LIVE_TICK, {
                         token: cleanToken,
                         symbol: contract.name, // e.g. "GOLD"
                         fullSymbol: contract.symbol, // e.g. "GOLD05JUN26FUT"

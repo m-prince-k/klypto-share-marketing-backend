@@ -130,8 +130,8 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         const maxDays = (apiInterval === "ONE_MINUTE") ? 30 : 365;
         let chunks = splitIntoChunks(fromDate, toDate, maxDays);
 
-        // Strict Date Formatting for ONE_DAY (ONLY for Indices, others need time)
-        const isIndex = (token === "26000" || token === "26009" || token === "26037" || token === "26035" || token.startsWith("999"));
+        // Date formatting for ONE_DAY (Only Indices need strict YYYY-MM-DD, Equity usually needs 09:15 time)
+        const isIndex = (token === "26000" || token === "26009" || token === "26037" || token === "26035" || (token && token.startsWith("999")));
         if (apiInterval === "ONE_DAY" && isIndex) {
             chunks = chunks.map(c => ({
                 from: c.from.split(' ')[0],
