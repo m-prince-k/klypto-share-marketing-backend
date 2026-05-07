@@ -1,15 +1,27 @@
 
 const store = require('./marketStore');
 const { getHistoricalCandle } = require('./angelOne');
-const { formatDate } = require('./dbService');
+const { formatDate, getCandlesWithCache } = require('./dbService');
 
 async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, exchange, segment }) {
     try {
+        const intervalMap = {
+            "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+            "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+            "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+            "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+            "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+            "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+            "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+            "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+        };
+        const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
+
         // Normalize parameter names
         const finalFromDate = fromDate;
         const finalToDate = toDate;
 
-        if (!symbol || !interval || !finalFromDate || !finalToDate) {
+        if (!symbol || !finalInterval || !finalFromDate || !finalToDate) {
             throw new Error("Missing parameters: symbol, interval, fromDate, and toDate are required.");
         }
 
@@ -22,10 +34,10 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
         let formattedToDate = cleanedToDate;
 
         if (typeof cleanedFromDate === 'string' && cleanedFromDate.length === 10) {
-            formattedFromDate = formatDate(new Date(cleanedFromDate), "09:15", interval);
+            formattedFromDate = formatDate(new Date(cleanedFromDate), "09:15", finalInterval);
         }
         if (typeof cleanedToDate === 'string' && cleanedToDate.length === 10) {
-            formattedToDate = formatDate(new Date(cleanedToDate), "15:30", interval);
+            formattedToDate = formatDate(new Date(cleanedToDate), "15:30", finalInterval);
         }
 
         const finalExchange = (exchange || segment || "NSE").toUpperCase();
@@ -34,18 +46,9 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
 
         // Explicit Token Resolution with Hardcoded Map for Top Stocks
         const uSym = symbol.toUpperCase();
-        const hardcodedTokens = {
-            "TCS": "3045",
-            "RELIANCE": "2885",
-            "HDFCBANK": "1333",
-            "ICICIBANK": "4963",
-            "INFY": "1594",
-            "SBIN": "3045", // Wait, SBIN is 3045? No, SBIN is 3045? Let me check... actually SBIN is 3045? No.
-            "SBIN": "3045", // Wait, I'll use a better list
-        };
         
         const topStocksMap = {
-            "TCS": "3045", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
+            "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
             "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
             "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
             "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499"
@@ -113,30 +116,14 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
             console.log(`[HistoricalService] Auto-subscribed to ${uSym} (${finalToken}) on ${mappedExchange} for live updates.`);
         }
 
-
-        // Strict Date Formatting for ONE_DAY
-        let fFrom = formattedFromDate;
-        let fTo = formattedToDate;
-        if (interval === "ONE_DAY" || interval === "day" || interval === "1d") {
-            fFrom = formattedFromDate.split(' ')[0];
-            fTo = formattedToDate.split(' ')[0];
-        }
-
-        const params = {
-            symbol: symbol,
-            interval: interval,
-            fromDate: fFrom,
-            toDate: fTo,
-            exchange: mappedExchange,
-            symboltoken: finalToken
-        };
-
-        const data = await getHistoricalCandle(params);
+        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate);
+        
         return {
             success: true,
-            symbol: symbol.toUpperCase(),
-            count: data.length,
-            data: data
+            symbol: uSym,
+            source: result.source,
+            count: result.data.length,
+            data: result.data
         };
     } catch (err) {
         console.error("[HistoricalService] Error:", err.message);

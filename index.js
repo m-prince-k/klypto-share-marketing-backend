@@ -16,6 +16,7 @@ const stockRoutes = require('./routes/stockRoutes');
 const optionsRoutes = require('./routes/optionsRoutes');
 const futuresRoutes = require('./routes/futuresRoutes');
 const authRoutes = require('./routes/authRoutes');
+const alertRoutes = require('./routes/alertRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -24,6 +25,9 @@ const server = http.createServer(app);
 //init socket
 connectSocket(server);
 const io = getIO();
+
+const alertService = require('./services/alertService');
+alertService.init(io);
 
 const PORT = process.env.PORT || 3000;
 
@@ -36,44 +40,11 @@ app.use('/auth', authRoutes);
 app.use('/equity', stockRoutes);
 app.use('/options', optionsRoutes);
 app.use('/futures', futuresRoutes);
-
-// Socket.io Connection
-io.on("connection", (socket) => {
-    console.log("Frontend client connected via Socket.io");
-
-    // Helper to get formatted stock list
-    const getFormattedStocks = () => {
-        return store.stocks.map(s => {
-            const key = `${s.name}:${s.segment}`;
-            const liveData = store.latestMarketData[key] || {};
-            const ltp = parseFloat(liveData.last_traded_price || 0);
-            const close = parseFloat(liveData.close_price || 0);
-            const rawChange = ltp - close;
-            const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
-            const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
-
-            return {
-                ...s,
-                ltp: liveData.last_traded_price || "0.00",
-                change: changeStr,
-                percent_change: pChange,
-                sentiment: liveData.sentiment || "neutral"
-            };
-        });
-    };
+app.use('/alerts', alertRoutes);
 
 
-    socket.emit("msg", "this is klypto trading view");
+// Socket logic is now managed in services/socket.js
 
-    // Emit initial data
-    socket.emit("marketSnapshot", Object.values(store.latestMarketData));
-    socket.emit("stocks", getFormattedStocks());
-
-    // Allow manual refresh request
-    socket.on("getAllStocks", () => {
-        socket.emit("stocks", getFormattedStocks());
-    });
-});
 
 async function bootstrap() {
     try {
@@ -99,6 +70,7 @@ async function bootstrap() {
             console.log(`=================================================\n`);
 
             startWebSocketConnection(loginData, io);
+            alertService.loadAlerts();
             startSchedulers();
             runInitialHistoricalLoad();
         });
