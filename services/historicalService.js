@@ -116,21 +116,14 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
             console.log(`[HistoricalService] Auto-subscribed to ${uSym} (${finalToken}) on ${mappedExchange} for live updates.`);
         }
 
-        const istOffset = 5.5 * 60 * 60; // 5 hours 30 mins
         const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate);
         
-        // Apply IST Correction to all candles
-        const correctedData = result.data.map(c => ({
-            ...c,
-            time: Number(c.time) + istOffset
-        }));
-
         return {
             success: true,
             symbol: uSym,
             source: result.source,
-            count: correctedData.length,
-            data: correctedData
+            count: result.data.length,
+            data: result.data
         };
     } catch (err) {
         console.error("[HistoricalService] Error:", err.message);

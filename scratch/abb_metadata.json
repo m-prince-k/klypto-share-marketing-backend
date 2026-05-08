@@ -1,0 +1,11 @@
+{
+  "token": "35098",
+  "symbol": "ABB26MAY268600CE",
+  "name": "ABB",
+  "expiry": "26MAY2026",
+  "strike": "860000.000000",
+  "lotsize": "125",
+  "instrumenttype": "OPTSTK",
+  "exch_seg": "NFO",
+  "tick_size": "5.000000"
+}

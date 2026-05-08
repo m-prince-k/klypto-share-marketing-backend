@@ -2,6 +2,7 @@ const store = require('./marketStore');
 const { getHistoricalCandle } = require('./angelOne');
 const { OptionChain } = require('../models');
 const smartApi = require('./smartApi');
+const { formatDate, getCandlesWithCache } = require('./dbService');
 
 async function syncPriorityOptionsHistory() {
     const symbols = [
@@ -145,4 +146,62 @@ async function syncPriorityOptionsHistory() {
     console.log(`[PrioritySync] Completed Priority Sync.`);
 }
 
-module.exports = { syncPriorityOptionsHistory };
+async function syncFullHistoryForSymbol(symbol, months = 12) {
+    const uSym = symbol.toUpperCase().trim();
+    console.log(`[FullSync] Starting ${months}-month history sync for all ${uSym} options...`);
+
+    const interval = "FIVE_MINUTE";
+    const now = new Date();
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(now.getFullYear() - 1);
+
+    const fromDate = formatDate(oneYearAgo, "09:15", interval);
+    const toDate = formatDate(now, "15:30", interval);
+
+    const allOptions = store.nfoMasterData.filter(o =>
+        (o.name === uSym || o.symbol.startsWith(uSym)) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
+    );
+
+    if (allOptions.length === 0) {
+        console.warn(`[FullSync] No options found for ${uSym}`);
+        return;
+    }
+
+    console.log(`[FullSync] Found ${allOptions.length} contracts for ${uSym}.`);
+
+    let successCount = 0;
+    for (const opt of allOptions) {
+        try {
+            console.log(`[FullSync] Processing ${opt.symbol} (${opt.token})...`);
+
+            const rawExp = opt.expiry;
+            let formattedExpiry = rawExp;
+            if (rawExp && rawExp.length >= 9) {
+                const day = rawExp.substring(0, 2);
+                const monthStr = rawExp.substring(2, 5);
+                const year = rawExp.substring(5);
+                const monthMap = { 'JAN': '01', 'FEB': '02', 'MAR': '03', 'APR': '04', 'MAY': '05', 'JUN': '06', 'JUL': '07', 'AUG': '08', 'SEP': '09', 'OCT': '10', 'NOV': '11', 'DEC': '12' };
+                const month = monthMap[monthStr.toUpperCase()] || '01';
+                formattedExpiry = `${year}-${month}-${day}`;
+            }
+
+            const extraInfo = {
+                underlying: uSym,
+                strike: parseFloat(opt.strike) / 100,
+                expiry: formattedExpiry,
+                optionType: opt.symbol.endsWith("CE") ? "CE" : "PE"
+            };
+
+            const result = await getCandlesWithCache(opt.symbol, opt.token, opt.exch_seg, interval, fromDate, toDate, extraInfo);
+            if (result && result.data?.length > 0) successCount++;
+
+            // Respect rate limits
+            await new Promise(r => setTimeout(r, 1200));
+        } catch (err) {
+            console.error(`[FullSync] Failed for ${opt.symbol}:`, err.message);
+        }
+    }
+    console.log(`[FullSync] Completed. Successfully synced data for ${successCount}/${allOptions.length} contracts.`);
+}
+
+module.exports = { syncPriorityOptionsHistory, syncFullHistoryForSymbol };
