@@ -75,31 +75,52 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 const finalData = dbCandles.map(c => {
                     const d = c.toJSON ? c.toJSON() : c;
                     return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) };
+                }).filter(c => {
+                    const ts = new Date(c.timestamp);
+                    const hours = ts.getHours();
+                    const minutes = ts.getMinutes();
+                    const timeVal = hours * 100 + minutes;
+
+                    if (exchange === "MCX") {
+                        return timeVal >= 900 && timeVal <= 2355;
+                    } else {
+                        if (interval === "ONE_DAY") return true;
+                        return timeVal >= 915 && timeVal <= 1530;
+                    }
                 });
 
                 // Merge live candle if available
                 if (interval === "ONE_MINUTE" && store.liveCandles[token]) {
                     const live = store.liveCandles[token];
                     const liveTs = new Date(live.minute);
-                    const lastD = finalData[finalData.length - 1];
-                    const lastTs = lastD ? new Date(lastD.timestamp) : null;
+                    
+                    // Also filter the live candle if it's outside market hours
+                    const lHours = liveTs.getHours();
+                    const lMinutes = liveTs.getMinutes();
+                    const lTimeVal = lHours * 100 + lMinutes;
+                    const isOutside = exchange === "MCX" ? (lTimeVal < 900 || lTimeVal > 2355) : (lTimeVal < 915 || lTimeVal > 1530);
 
-                    if (!lastTs || liveTs.getTime() >= lastTs.getTime()) {
-                        const liveFormatted = {
-                            ...live,
-                            symbol: symbol.toUpperCase(),
-                            token: token,
-                            exchange,
-                            interval,
-                            timestamp: liveTs,
-                            time: Math.floor(liveTs.getTime() / 1000)
-                        };
-                        if (isOption && extraInfo) Object.assign(liveFormatted, extraInfo);
+                    if (!isOutside) {
+                        const lastD = finalData[finalData.length - 1];
+                        const lastTs = lastD ? new Date(lastD.timestamp) : null;
 
-                        if (lastTs && liveTs.getTime() === lastTs.getTime()) {
-                            finalData[finalData.length - 1] = liveFormatted;
-                        } else {
-                            finalData.push(liveFormatted);
+                        if (!lastTs || liveTs.getTime() >= lastTs.getTime()) {
+                            const liveFormatted = {
+                                ...live,
+                                symbol: symbol.toUpperCase(),
+                                token: token,
+                                exchange,
+                                interval,
+                                timestamp: liveTs,
+                                time: Math.floor(liveTs.getTime() / 1000)
+                            };
+                            if (isOption && extraInfo) Object.assign(liveFormatted, extraInfo);
+
+                            if (lastTs && liveTs.getTime() === lastTs.getTime()) {
+                                finalData[finalData.length - 1] = liveFormatted;
+                            } else {
+                                finalData.push(liveFormatted);
+                            }
                         }
                     }
                 }
@@ -279,12 +300,28 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         }
         // ---------------------------------
 
-        if (uniqueData.length > 0) {
-            await ModelToUse.bulkCreate(uniqueData, { ignoreDuplicates: true });
-            console.log(`[API Fallback] Saved ${uniqueData.length} records to ${ModelToUse.name} for ${symbol}`);
+        // --- MARKET HOURS FILTERING ---
+        const filteredData = uniqueData.filter(c => {
+            const ts = new Date(c.timestamp);
+            const hours = ts.getHours();
+            const minutes = ts.getMinutes();
+            const timeVal = hours * 100 + minutes;
+
+            if (exchange === "MCX") {
+                return timeVal >= 900 && timeVal <= 2355;
+            } else {
+                // NSE / BSE / NFO / BFO
+                if (interval === "ONE_DAY") return true; // Daily candles are fine
+                return timeVal >= 915 && timeVal <= 1530;
+            }
+        });
+
+        if (filteredData.length > 0) {
+            await ModelToUse.bulkCreate(filteredData, { ignoreDuplicates: true });
+            console.log(`[API Fallback] Saved ${filteredData.length} records to ${ModelToUse.name} for ${symbol}`);
         }
 
-        return { source: "api_chunked", data: uniqueData, raw_response: null };
+        return { source: "api_chunked", data: filteredData, raw_response: null };
     } catch (err) {
         throw err;
     }

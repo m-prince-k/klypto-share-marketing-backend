@@ -30,5 +30,6 @@ module.exports = {
     LIVE_TICK: "liveTick",
     
     GOLD_UPDATE: "goldUpdate",
-    ALERT_TRIGGERED: "ALERT_TRIGGERED"
+    ALERT_TRIGGERED: "ALERT_TRIGGERED",
+    SYNC_STATUS: "syncStatus"
 };

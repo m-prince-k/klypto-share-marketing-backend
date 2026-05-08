@@ -16,11 +16,12 @@ const EVENTS = {
     STOCKS_LIST: "stocks",
     STOCK_UPDATE: "stockUpdate",
     LIVE_TICK: "liveTick",
-    ALERT_TRIGGERED: "ALERT_TRIGGERED",
+    ALERT_TRIGGERED: "alertTriggered",
     GOLD_UPDATE: "goldUpdate"
 };
 
 const TOP_STOCKS = [
+    { name: 'GOLD', token: '80829', segment: 'MCX' },
     { name: 'TCS', token: '11536', segment: 'NSE' },
     { name: 'RELIANCE', token: '2885', segment: 'NSE' },
     { name: 'HDFCBANK', token: '1333', segment: 'NSE' },
@@ -58,6 +59,7 @@ const GoldChart = () => {
         interval: 'ONE_MINUTE',
         triggerType: 'every_tick'
     });
+    const [syncAlerts, setSyncAlerts] = useState([]);
 
     const intervals = [
         { label: "1m", value: "1m", sec: 60, db: "ONE_MINUTE" },
@@ -164,6 +166,11 @@ const GoldChart = () => {
             setTriggeredAlerts(prev => [alertData, ...prev].slice(0, 5));
             setStocks(prev => prev.map(s => s.name === alertData.symbol ? { ...s, isAlert: true } : s));
             setTimeout(() => setTriggeredAlerts(prev => prev.filter(a => a.timestamp !== alertData.timestamp)), 10000);
+        });
+
+        socket.on(EVENTS.SYNC_STATUS, (status) => {
+            setSyncAlerts(prev => [status, ...prev].slice(0, 3));
+            setTimeout(() => setSyncAlerts(prev => prev.filter(a => a.timestamp !== status.timestamp)), 8000);
         });
 
         socket.on(EVENTS.HISTORICAL_DATA_RESPONSE, (payload) => {
@@ -278,21 +285,16 @@ const GoldChart = () => {
         };
     }, [selectedSymbol, selectedInterval]);
 
-    const handleCreateAlert = async () => {
-        const stock = stocks.find(s => s.name === selectedSymbol);
-        const payload = {
-            symbol: selectedSymbol,
-            token: stock?.token || "11536",
-            exchange: selectedSymbol === 'TCS' ? "NSE" : (stock?.segment || "NSE"),
-            interval: intervals.find(i => i.value === selectedInterval).db,
-            indicator: alertForm.indicator,
-            params: { type: alertForm.indicator, length: 14 },
-            operator: alertForm.operator,
-            value: parseFloat(alertForm.value),
-            triggerType: alertForm.triggerType
-        };
-        await fetch('http://localhost:7000/alerts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        setIsAlertModalOpen(false);
+    const handleCreateAlert = () => {
+        if (socketRef.current) {
+            socketRef.current.emit(EVENTS.SET_RSI_ALERT, {
+                symbol: selectedSymbol,
+                rsi_threshold: parseFloat(alertForm.value),
+                interval: selectedInterval 
+            });
+            setIsAlertModalOpen(false);
+            console.log("[Alert] Sent to backend for symbol:", selectedSymbol);
+        }
     };
 
     return (
@@ -303,7 +305,7 @@ const GoldChart = () => {
                     <h2 className="text-xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent uppercase tracking-tight">Klypto Scanner</h2>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                    {stocks.filter(s => s.isAlert).map(s => (
+                    {stocks.filter(s => s.name === 'GOLD' || s.isAlert).map(s => (
                         <div key={s.name} onClick={() => setSelectedSymbol(s.name)} className={`p-4 rounded-4 cursor-pointer transition-all mb-2 ${selectedSymbol === s.name ? 'bg-primary bg-opacity-10 border border-primary border-opacity-30' : 'bg-slate-900/40 border border-slate-800/50 hover-bg-slate-800'}`}>
                             <div className="flex justify-between items-center">
                                 <span className={`font-weight-black text-sm ${s.isAlert ? 'text-primary' : 'text-slate-200'}`}>{s.name} {s.isAlert && '🔥'}</span>
@@ -349,6 +351,26 @@ const GoldChart = () => {
                     </div>
                     {isLoading && <div className="position-absolute inset-0 d-flex align-items-center justify-content-center bg-dark bg-opacity-10 backdrop-blur-sm z-index-3"><div className="spinner-border text-primary border-4"></div></div>}
                     <div ref={chartContainerRef} className="w-full h-full" />
+                </div>
+
+                {/* Sync Alerts Overlay */}
+                <div className="position-absolute bottom-0 right-0 p-4 space-y-3 z-index-3 pointer-events-none">
+                    {syncAlerts.map((alert, idx) => (
+                        <div key={idx} className="bg-slate-900/80 backdrop-blur-md border border-blue-500/30 p-3 rounded-4 shadow-2xl animate-bounce-short">
+                            <div className="d-flex align-items-center gap-3">
+                                <div className="bg-blue-500 p-2 rounded-3">
+                                    <svg width="16" height="16" fill="white" viewBox="0 0 16 16">
+                                        <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
+                                        <path d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9a5.002 5.002 0 0 0-9.457-1.818H8V3z"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div className="text-[10px] text-blue-400 font-weight-black uppercase tracking-widest">Database Sync</div>
+                                    <div className="text-sm font-weight-bold">{alert.message}</div>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
                 </div>
 
                 {/* Alert Modal (Restored Original Layout) */}
@@ -398,6 +420,11 @@ const GoldChart = () => {
                 .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
                 .custom-select:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2); outline: none; }
                 .custom-select option { background-color: #0f172a; color: white; padding: 10px; }
+                @keyframes bounce-short {
+                    0%, 100% { transform: translateY(0); }
+                    50% { transform: translateY(-4px); }
+                }
+                .animate-bounce-short { animation: bounce-short 0.5s ease-in-out 1; }
             `}} />
         </div>
     );

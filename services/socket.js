@@ -236,9 +236,32 @@ setInterval(async () => {
             const dbInt = { "1m": "ONE_MINUTE", "5m": "FIVE_MINUTE", "15m": "FIFTEEN_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY" }[config.interval] || "FIVE_MINUTE";
 
             for (const stock of store.stocks.slice(0, 50)) {
-                const candles = await Candle.findAll({ where: { symbol: stock.name, interval: dbInt }, order: [['timestamp', 'DESC']], limit: 25 });
+                const dbCandles = await Candle.findAll({ 
+                    where: { symbol: stock.name, interval: dbInt }, 
+                    order: [['timestamp', 'DESC']], 
+                    limit: 25 
+                });
+                
+                let candles = dbCandles.map(c => c.toJSON()).reverse();
+                
+                // Merge live candle for real-time alert accuracy
+                const live = store.liveCandles[stock.token];
+                if (live && (config.interval === "1m" || config.interval === "5m")) {
+                    const liveTs = new Date(live.minute);
+                    const lastCandle = candles[candles.length - 1];
+                    if (!lastCandle || liveTs.getTime() > new Date(lastCandle.timestamp).getTime()) {
+                        candles.push({
+                            ...live,
+                            timestamp: liveTs,
+                            close: parseFloat(live.close)
+                        });
+                    } else if (liveTs.getTime() === new Date(lastCandle.timestamp).getTime()) {
+                        candles[candles.length - 1] = { ...lastCandle, ...live, close: parseFloat(live.close) };
+                    }
+                }
+
                 if (candles.length >= 15) {
-                    const rsiVals = await calculateRSIIndicator([...candles].reverse().map(c => ({ close: parseFloat(c.close) })), 14);
+                    const rsiVals = await calculateRSIIndicator(candles.map(c => ({ close: parseFloat(c.close) })), 14);
                     if (rsiVals.length >= 2) {
                         const currentRSI = rsiVals[rsiVals.length - 1]?.rsi;
                         const prevRSI = rsiVals[rsiVals.length - 2]?.rsi;
@@ -248,14 +271,20 @@ setInterval(async () => {
                             results.push({ 
                                 symbol: stock.name, 
                                 rsi: currentRSI.toFixed(2), 
-                                ltp: parseFloat(candles[0].close).toFixed(2),
-                                type: 'CROSS_ABOVE'
+                                ltp: parseFloat(candles[candles.length-1].close).toFixed(2),
+                                type: 'CROSS_ABOVE',
+                                timestamp: new Date().toISOString()
                             });
                         }
                     }
                 }
             }
-            if (results.length > 0) socket.emit(EVENTS.RSI_SCANNER_RESPONSE, { success: true, data: results, isAuto: true });
+            if (results.length > 0) {
+                results.forEach(alert => {
+                    socket.emit(EVENTS.ALERT_TRIGGERED, alert);
+                });
+                socket.emit(EVENTS.RSI_SCANNER_RESPONSE, { success: true, data: results, isAuto: true });
+            }
         } catch (err) {}
     }
 }, 10000);
