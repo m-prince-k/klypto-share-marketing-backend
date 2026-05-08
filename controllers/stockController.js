@@ -1153,60 +1153,32 @@ const syncOptionsChainHistory = async (req, res) => {
         const { symbol, interval = "FIVE_MINUTE" } = req.body;
         if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
 
+        const { fetchTop200Stocks } = require('../services/stockService');
+        if (!store.nfoMasterData || store.nfoMasterData.length === 0) {
+            console.log("[OptionSync] NFO Master Data empty, fetching...");
+            await fetchTop200Stocks();
+        }
+
         const uSym = symbol.toUpperCase().trim();
         const allOptions = store.nfoMasterData.filter(o =>
             (o.name === uSym || o.symbol.startsWith(uSym)) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
         );
 
+        console.log(`[OptionSync] Found ${allOptions.length} options for ${uSym} in master data.`);
+
         if (allOptions.length === 0) {
-            return res.status(404).json({ success: false, message: `No options found for ${uSym}` });
+            return res.status(404).json({ 
+                success: false, 
+                message: `No options found for ${uSym}. Make sure master data is loaded.`,
+                masterDataSize: store.nfoMasterData.length
+            });
         }
 
         // Run in background to avoid timeout
         const startSync = async () => {
-            console.log(`[Sync-OptionChain] Starting deep history sync for ${allOptions.length} contracts of ${uSym}...`);
-            const now = new Date();
-            const oneYearAgo = new Date();
-            oneYearAgo.setFullYear(now.getFullYear() - 1);
-
-            const fromDate = formatDate(oneYearAgo, "09:15", interval);
-            const toDate = formatDate(now, "15:30", interval);
-
-            let successCount = 0;
-            for (const opt of allOptions) {
-                try {
-                    console.log(`[Sync-OptionChain] Syncing ${opt.symbol} (${opt.token})...`);
-
-                    // Format expiry to YYYY-MM-DD for database DATEONLY field
-                    const rawExp = opt.expiry; // e.g. "07MAY2026"
-                    let formattedExpiry = rawExp;
-                    if (rawExp && rawExp.length >= 9) {
-                        const day = rawExp.substring(0, 2);
-                        const monthStr = rawExp.substring(2, 5);
-                        const year = rawExp.substring(5);
-                        const monthMap = { 'JAN': '01', 'FEB': '02', 'MAR': '03', 'APR': '04', 'MAY': '05', 'JUN': '06', 'JUL': '07', 'AUG': '08', 'SEP': '09', 'OCT': '10', 'NOV': '11', 'DEC': '12' };
-                        const month = monthMap[monthStr.toUpperCase()] || '01';
-                        formattedExpiry = `${year}-${month}-${day}`;
-                    }
-
-                    const extraInfo = {
-                        underlying: uSym,
-                        strike: parseFloat(opt.strike) / 100,
-                        expiry: formattedExpiry,
-                        optionType: opt.symbol.endsWith("CE") ? "CE" : "PE"
-                    };
-
-                    await getCandlesWithCache(opt.symbol, opt.token, opt.exch_seg, interval, fromDate, toDate, extraInfo);
-                    successCount++;
-                    // Delay between contracts to respect rate limits
-                    await new Promise(r => setTimeout(r, 1500));
-                } catch (err) {
-                    console.error(`[Sync-OptionChain] Failed for ${opt.symbol}:`, err.message);
-                }
-            }
-            console.log(`[Sync-OptionChain] Completed. Successfully synced ${successCount}/${allOptions.length} contracts.`);
+            const { syncFullHistoryForSymbol } = require('../services/optionSyncService');
+            await syncFullHistoryForSymbol(uSym, 12);
         };
-
         startSync();
 
         res.json({

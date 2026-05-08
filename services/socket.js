@@ -51,6 +51,7 @@ const connectSocket = (server) => {
             try {
                 const { fetchManualHistoricalData } = require('./historicalService');
                 const result = await fetchManualHistoricalData(payload);
+                console.log(`[Socket] Emitting HISTORICAL_DATA_RESPONSE for ${payload.symbol}: ${result.data?.length || 0} candles. Last: ${result.data?.length > 0 ? new Date(result.data[result.data.length-1].timestamp).toLocaleString() : 'N/A'}`);
                 socket.emit(EVENTS.HISTORICAL_DATA_RESPONSE, result);
             } catch (err) {
                 socket.emit(EVENTS.HISTORICAL_DATA_ERROR, { success: false, error: err.message });
@@ -113,32 +114,33 @@ const connectSocket = (server) => {
 
         socket.on(EVENTS.GET_LIVE_INDICATOR, async (payload) => {
             try {
-                const { type, symbol, interval, latestTick, fromDate, toDate } = payload;
+                const { type, symbol, interval, fromDate, toDate, exchange } = payload;
                 const { prepareCandlesWithIndicators } = require('../helper');
-                const { formatDate } = require('./dbService');
-                const { getHistoricalCandle } = require('./angelOne');
+                const { getCandlesWithCache } = require('./dbService');
+                const store = require('./marketStore');
 
-                let fD = fromDate, tD = toDate;
-                if (typeof fD === 'string' && fD.length === 10) fD = formatDate(new Date(fD), "09:15");
-                if (typeof tD === 'string' && tD.length === 10) tD = formatDate(new Date(tD), "15:30");
+                const uSym = symbol.toUpperCase();
+                const finalExchange = (exchange || "NSE").toUpperCase();
+                const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
+                const finalToken = store.symbolToTokenMaster[uSym];
 
-                const cacheKey = `${symbol}_${interval}_${fD}_${tD}`;
-                let candles = candleCache.get(cacheKey);
+                if (!finalToken) throw new Error(`Token not found for ${symbol}`);
 
-                if (!candles) {
-                    candles = await getHistoricalCandle({ symbol, interval, fromDate: fD, toDate: tD });
-                    candleCache.set(cacheKey, candles);
-                }
-
-                const results = await prepareCandlesWithIndicators(type, [...candles.slice(-200), latestTick], { json: d => d, send: d => d });
+                const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, interval, fromDate, toDate);
+                const results = await prepareCandlesWithIndicators(type, result.data, { json: d => d, send: d => d });
+                
                 if (results?.length > 0) {
-                    const res = results[results.length - 1];
-                    socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, {
-                        type, symbol,
-                        data: { time: Number(res.time), value: parseFloat(res[type.toLowerCase()] || res.value || 0) }
+                    const latest = results[results.length - 1];
+                    socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, { 
+                        success: true, 
+                        symbol: uSym, 
+                        type, 
+                        data: { time: Number(latest.time), value: parseFloat(latest[type.toLowerCase()] || latest.value || 0) } 
                     });
                 }
-            } catch (err) {}
+            } catch (err) {
+                console.error("[Socket Live Indicator] Error:", err.message);
+            }
         });
 
         // --- 4. SCANNER & ALERT EVENTS ---
@@ -154,9 +156,32 @@ const connectSocket = (server) => {
                 const results = [];
 
                 for (const stock of store.stocks.slice(0, 50)) {
-                    const candles = await Candle.findAll({ where: { symbol: stock.name, interval: dbInterval }, order: [['timestamp', 'DESC']], limit: 30 });
-                    if (candles.length >= 15) { // Need at least 15 for 14-period RSI + 1 for comparison
-                        const rsiVals = await calculateRSIIndicator([...candles].reverse().map(c => ({ close: parseFloat(c.close) })), 14);
+                    const dbCandles = await Candle.findAll({ 
+                        where: { symbol: stock.name, interval: dbInterval }, 
+                        order: [['timestamp', 'DESC']], 
+                        limit: 30 
+                    });
+                    
+                    let candles = dbCandles.map(c => c.toJSON()).reverse();
+                    
+                    // Merge live candle for real-time scanner accuracy
+                    const live = store.liveCandles[stock.token];
+                    if (live && interval === "5m") { // Scanner mostly uses 5m, adjust if needed
+                        const liveTs = new Date(live.minute);
+                        const lastCandle = candles[candles.length - 1];
+                        if (!lastCandle || liveTs.getTime() > new Date(lastCandle.timestamp).getTime()) {
+                            candles.push({
+                                ...live,
+                                timestamp: liveTs,
+                                close: parseFloat(live.close)
+                            });
+                        } else if (liveTs.getTime() === new Date(lastCandle.timestamp).getTime()) {
+                            candles[candles.length - 1] = { ...lastCandle, ...live, close: parseFloat(live.close) };
+                        }
+                    }
+
+                    if (candles.length >= 15) { 
+                        const rsiVals = await calculateRSIIndicator(candles.map(c => ({ close: parseFloat(c.close) })), 14);
                         if (rsiVals.length >= 2) {
                             const currentRSI = rsiVals[rsiVals.length - 1]?.rsi;
                             const prevRSI = rsiVals[rsiVals.length - 2]?.rsi;
@@ -247,11 +272,10 @@ const startGoldBroadcast = () => {
                 if (goldData && goldData.data.length > 0) {
                     const lastCandle = goldData.data[goldData.data.length - 1];
                     // Format for chart: { time, open, high, low, close }
-                    const istOffset = 5.5 * 60 * 60; // 5 hours 30 mins in seconds
                     const formattedTickForChart = {
                         symbol: "GOLD",
                         data: {
-                            time: Math.floor(new Date(lastCandle.timestamp).getTime() / 1000) + istOffset,
+                            time: Math.floor(new Date(lastCandle.timestamp).getTime() / 1000),
                             open: parseFloat(lastCandle.open),
                             high: parseFloat(lastCandle.high),
                             low: parseFloat(lastCandle.low),

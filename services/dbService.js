@@ -1,5 +1,6 @@
-const { Candle } = require('../models');
+const { Candle, OptionChain } = require('../models');
 const { Op } = require('sequelize');
+const store = require('./marketStore');
 const smartApi = require('./smartApi');
 
 const formatDate = (date, time, interval) => {
@@ -13,19 +14,13 @@ const formatDate = (date, time, interval) => {
     if (time) {
         return `${year}-${month}-${day} ${time}`;
     }
-
-    const hours = String(d.getHours()).padStart(2, '0');
-    const minutes = String(d.getMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
+    return `${year}-${month}-${day}`;
 };
 
 
 async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null) {
     try {
-        const { Candle, OptionChain } = require('../models');
-        // Distinguish between Options and Futures in NFO/BFO
-        const isOption = (exchange === "NFO" || exchange === "BFO") && 
-                         (symbol.endsWith("CE") || symbol.endsWith("PE") || (extraInfo && extraInfo.optionType));
+        const isOption = extraInfo !== null || exchange === "NFO" || exchange === "BFO";
         const ModelToUse = isOption ? OptionChain : Candle;
         
         console.log(`[dbService] Fetching ${symbol} | Exchange: ${exchange} | isOption: ${isOption} | Model: ${ModelToUse?.name}`);
@@ -65,17 +60,57 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             const expectedCandlesPerDay = interval === "ONE_DAY" ? (5/7) : (marketHoursPerDay * 60) / intervalInMinutes;
             const expectedCount = Math.max(1, Math.floor(rangeDays * expectedCandlesPerDay) * 0.7); // 70% threshold
 
-            if (dbCandles.length >= expectedCount || (rangeDays < 0.1 && dbCandles.length > 0)) {
-                console.log(`[DB Cache] Serving ${dbCandles.length} records from ${ModelToUse.name} for ${symbol} (Expected: ~${Math.floor(expectedCount)})`);
+            const lastCandle = dbCandles[dbCandles.length - 1];
+            const lastTs = new Date(lastCandle.timestamp);
+            const targetTs = new Date(toDate);
+            const gapHours = (targetTs - lastTs) / (1000 * 60 * 60);
+
+            const isToday = targetTs.toDateString() === new Date().toDateString();
+            const gapThreshold = isToday ? 0.033 : 24; // If today, any gap > 2 mins triggers API fetch (Real-time sync)
+
+            // If we have records and they are fresh enough OR we met the count threshold
+            if ((dbCandles.length >= expectedCount && gapHours < gapThreshold) || (rangeDays < 0.1 && dbCandles.length > 0)) {
+                console.log(`[DB Cache] Serving ${dbCandles.length} records from ${ModelToUse.name} for ${symbol} (Gap: ${gapHours.toFixed(1)}h, Threshold: ${gapThreshold}h)`);
+                
+                const finalData = dbCandles.map(c => {
+                    const d = c.toJSON ? c.toJSON() : c;
+                    return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) };
+                });
+
+                // Merge live candle if available
+                if (interval === "ONE_MINUTE" && store.liveCandles[token]) {
+                    const live = store.liveCandles[token];
+                    const liveTs = new Date(live.minute);
+                    const lastD = finalData[finalData.length - 1];
+                    const lastTs = lastD ? new Date(lastD.timestamp) : null;
+
+                    if (!lastTs || liveTs.getTime() >= lastTs.getTime()) {
+                        const liveFormatted = {
+                            ...live,
+                            symbol: symbol.toUpperCase(),
+                            token: token,
+                            exchange,
+                            interval,
+                            timestamp: liveTs,
+                            time: Math.floor(liveTs.getTime() / 1000)
+                        };
+                        if (isOption && extraInfo) Object.assign(liveFormatted, extraInfo);
+
+                        if (lastTs && liveTs.getTime() === lastTs.getTime()) {
+                            finalData[finalData.length - 1] = liveFormatted;
+                        } else {
+                            finalData.push(liveFormatted);
+                        }
+                    }
+                }
+
                 return { 
                     source: "database", 
-                    data: dbCandles.map(c => {
-                        const d = c.toJSON ? c.toJSON() : c;
-                        return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) };
-                    }), 
+                    data: finalData,
                     raw_response: null 
                 };
             }
+            console.log(`[DB Cache] Gap too large (${gapHours.toFixed(1)}h) for ${symbol}. Falling back to API.`);
         }
 
         // 2. Fallback to Angel One API
@@ -88,9 +123,22 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         };
         const maxDaysPerChunk = maxDaysMap[interval] || 30;
 
+        // Optimization: Instead of fetching the whole range from fromDate, 
+        // we only fetch from the LAST available candle in our DB to fill the gap.
         let currentStartDate = new Date(fromDate);
+        if (dbCandles.length > 0) {
+            const lastTs = new Date(dbCandles[dbCandles.length - 1].timestamp);
+            currentStartDate = new Date(lastTs.getTime() + 1000); // Start 1s after the last candle
+            console.log(`[API Fallback] DB has ${dbCandles.length} records. Fetching only the gap starting from ${currentStartDate.toISOString()}`);
+        } else {
+            console.log(`[API Fallback] DB is empty. Fetching full range from ${currentStartDate.toISOString()}`);
+        }
+
         const finalEndDate = new Date(toDate);
-        let allCandles = [];
+        let allCandles = [...dbCandles.map(c => {
+            const d = c.toJSON ? c.toJSON() : c;
+            return [d.timestamp, d.open, d.high, d.low, d.close, d.volume];
+        })]; // Initialize with existing DB data
 
         while (currentStartDate < finalEndDate) {
             let currentChunkEndDate = new Date(currentStartDate);
@@ -98,8 +146,12 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             if (currentChunkEndDate > finalEndDate) currentChunkEndDate = new Date(finalEndDate);
 
             const isMCX = exchange === "MCX";
+            const isToday = currentChunkEndDate.toDateString() === new Date().toDateString();
+            const now = new Date();
+            const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            
             const fStr = formatDate(currentStartDate, isMCX ? "09:00" : "09:15", interval);
-            const tStr = formatDate(currentChunkEndDate, isMCX ? "23:55" : "15:30", interval);
+            const tStr = formatDate(currentChunkEndDate, isToday ? currentTimeStr : (isMCX ? "23:55" : "15:30"), interval);
 
             console.log(`[AngelOne API] Requesting ${symbol} (${token}) | Interval: ${interval} | From: ${fStr} | To: ${tStr}`);
             
@@ -141,22 +193,27 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 source: "database_fallback", 
                 data: dbCandles.map(c => {
                     const d = c.toJSON ? c.toJSON() : c;
-                    const istOffset = 5.5 * 60 * 60;
-                    return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) + istOffset };
+                    return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) };
                 })
             };
         }
 
         const formattedData = allCandles.map(candle => {
-            const ts = new Date(candle[0]);
-            const istOffset = 5.5 * 60 * 60;
+            let ts;
+            const rawTs = candle[0];
+            if (typeof rawTs === 'string' && !rawTs.includes('T') && !rawTs.includes('Z') && !rawTs.includes('+')) {
+                ts = new Date(rawTs + " +05:30");
+            } else {
+                ts = new Date(rawTs);
+            }
+
             const base = {
                 symbol: symbol.toUpperCase(),
                 token: token,
                 exchange,
                 interval,
                 timestamp: ts,
-                time: Math.floor(ts.getTime() / 1000) + istOffset,
+                time: Math.floor(ts.getTime() / 1000),
                 open: parseFloat(candle[1]),
                 high: parseFloat(candle[2]),
                 low: parseFloat(candle[3]),
@@ -178,6 +235,50 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
 
         const uniqueData = Array.from(new Map(formattedData.map(item => [item.timestamp.getTime(), item])).values());
         
+        // --- REAL-TIME LIVE TICK MERGE ---
+        // If we are requesting for 'Today' and at a 1-minute interval, 
+        // merge the latest unclosed candle from our store to ensure 100% live match.
+        if (interval === "ONE_MINUTE" && store.liveCandles[token]) {
+            const live = store.liveCandles[token];
+            const liveTs = new Date(live.minute);
+            
+            // If the live candle is newer or same as the last historical candle
+            const lastHist = uniqueData.length > 0 ? uniqueData[uniqueData.length - 1] : null;
+            if (!lastHist || liveTs.getTime() >= lastHist.timestamp.getTime()) {
+                const liveFormatted = {
+                    symbol: symbol.toUpperCase(),
+                    token: token,
+                    exchange,
+                    interval,
+                    timestamp: liveTs,
+                    time: Math.floor(liveTs.getTime() / 1000),
+                    open: live.open,
+                    high: live.high,
+                    low: live.low,
+                    close: live.close,
+                    volume: live.volume
+                };
+
+                if (isOption && extraInfo) {
+                    Object.assign(liveFormatted, {
+                        underlying: extraInfo.underlying,
+                        strike: extraInfo.strike,
+                        expiry: extraInfo.expiry,
+                        optionType: extraInfo.optionType
+                    });
+                }
+
+                if (lastHist && liveTs.getTime() === lastHist.timestamp.getTime()) {
+                    // Update the last candle with live data
+                    uniqueData[uniqueData.length - 1] = liveFormatted;
+                } else {
+                    // Append new running candle
+                    uniqueData.push(liveFormatted);
+                }
+            }
+        }
+        // ---------------------------------
+
         if (uniqueData.length > 0) {
             await ModelToUse.bulkCreate(uniqueData, { ignoreDuplicates: true });
             console.log(`[API Fallback] Saved ${uniqueData.length} records to ${ModelToUse.name} for ${symbol}`);

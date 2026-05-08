@@ -144,7 +144,12 @@ function startSchedulers() {
     }, 1200000);
 }
 
+const { syncPriorityOptionsHistory } = require('./optionSyncService');
+
 async function runInitialHistoricalLoad() {
+    console.log("[Initial Load] Starting Priority Options Sync (ABB, etc.)...");
+    syncPriorityOptionsHistory().catch(err => console.error("[Initial Load] Priority Sync Error:", err.message));
+
     const intervals = ['FIVE_MINUTE', 'ONE_DAY'];
     console.log(`\n[Initial Load] Starting background 1-year sync for ${store.stocks.length} stocks...`);
     

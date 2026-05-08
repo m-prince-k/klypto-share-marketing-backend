@@ -100,6 +100,29 @@ async function fetchTop200Stocks() {
             store.tokenToName[s.token] = sym;
             store.tokenToExchange[s.token] = "BSE";
         });
+        
+        // Index MCX for historical support (specifically GOLD, SILVER, etc.)
+        const commodityNames = ["GOLD", "GOLDM", "SILVER", "SILVERM", "CRUDEOIL", "NATURALGAS"];
+        const todayForMCX = new Date();
+        todayForMCX.setHours(0, 0, 0, 0);
+
+        commodityNames.forEach(name => {
+            const contracts = mcxScrips.filter(s => s.name === name && s.instrumenttype === 'FUTCOM');
+            const active = contracts.filter(c => new Date(c.expiry) >= todayForMCX);
+            if (active.length > 0) {
+                const nearest = active.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+                store.symbolToTokenMaster[name] = nearest.token;
+                store.tokenToName[nearest.token] = name;
+                store.tokenToExchange[nearest.token] = "MCX";
+            }
+        });
+
+        // Always index the full symbol for specific contract lookups
+        mcxScrips.forEach(s => {
+            store.symbolToTokenMaster[s.symbol.toUpperCase()] = s.token;
+            store.tokenToName[s.token] = s.symbol;
+            store.tokenToExchange[s.token] = "MCX";
+        });
 
         // Match user list
         for (const userSym of userSymbols) {

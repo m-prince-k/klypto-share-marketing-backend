@@ -1,20 +1,25 @@
-const { OptionChain } = require('../models');
+const store = require('../services/marketStore');
+const { login } = require('../services/authService');
+const { fetchTop200Stocks } = require('../services/stockService');
+require('dotenv').config();
 
 async function check() {
-    try {
-        const abbRecords = await OptionChain.findAll({
-            where: { underlying: 'ABB' },
-            attributes: ['timestamp', 'interval'],
-            limit: 5,
-            order: [['timestamp', 'DESC']]
-        });
-        console.log('Recent ABB timestamps:', JSON.stringify(abbRecords, null, 2));
-        
-        process.exit(0);
-    } catch (err) {
-        console.error(err);
-        process.exit(1);
+    await login();
+    await fetchTop200Stocks();
+    console.log(`Total NFO Scrips: ${store.nfoMasterData.length}`);
+    if (store.nfoMasterData.length > 0) {
+        console.log("Sample NFO Scrip:", store.nfoMasterData[0]);
+    }
+    const uSym = "ABB";
+    const filtered = store.nfoMasterData.filter(o => o.name === uSym);
+    console.log(`Found ${filtered.length} scrips with name ${uSym}`);
+    if (filtered.length > 0) {
+        console.log("Sample filtered scrip:", filtered[0]);
+    }
+    const allOptions = filtered.filter(o => (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK"));
+    if (allOptions.length > 0) {
+        console.log("Full sample option:", JSON.stringify(allOptions[0], null, 2));
     }
 }
 
-check();
+check().catch(console.error);
