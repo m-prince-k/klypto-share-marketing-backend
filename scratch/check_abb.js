@@ -1,25 +1,44 @@
-const store = require('../services/marketStore');
-const { login } = require('../services/authService');
-const { fetchTop200Stocks } = require('../services/stockService');
-require('dotenv').config();
+const { OptionChain } = require('../models');
+const { Op } = require('sequelize');
 
-async function check() {
-    await login();
-    await fetchTop200Stocks();
-    console.log(`Total NFO Scrips: ${store.nfoMasterData.length}`);
-    if (store.nfoMasterData.length > 0) {
-        console.log("Sample NFO Scrip:", store.nfoMasterData[0]);
-    }
-    const uSym = "ABB";
-    const filtered = store.nfoMasterData.filter(o => o.name === uSym);
-    console.log(`Found ${filtered.length} scrips with name ${uSym}`);
-    if (filtered.length > 0) {
-        console.log("Sample filtered scrip:", filtered[0]);
-    }
-    const allOptions = filtered.filter(o => (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK"));
-    if (allOptions.length > 0) {
-        console.log("Full sample option:", JSON.stringify(allOptions[0], null, 2));
+async function checkABB() {
+    try {
+        console.log("Checking DB for ABB options...");
+        
+        const count = await OptionChain.count({
+            where: { underlying: 'ABB' }
+        });
+        
+        const uniqueSymbols = await OptionChain.findAll({
+            attributes: ['symbol'],
+            where: { underlying: 'ABB' },
+            group: ['symbol']
+        });
+        
+        const dateRange = await OptionChain.findAll({
+            attributes: [
+                [require('sequelize').fn('MIN', require('sequelize').col('timestamp')), 'minDate'],
+                [require('sequelize').fn('MAX', require('sequelize').col('timestamp')), 'maxDate']
+            ],
+            where: { underlying: 'ABB' },
+            raw: true
+        });
+
+        console.log(`\nResults for ABB:`);
+        console.log(`Total Records: ${count}`);
+        console.log(`Unique Contracts: ${uniqueSymbols.length}`);
+        console.log(`Date Range: ${dateRange[0].minDate} to ${dateRange[0].maxDate}`);
+        
+        if (uniqueSymbols.length > 0) {
+            console.log("\nSample Contracts:");
+            uniqueSymbols.slice(0, 10).forEach(s => console.log(`- ${s.symbol}`));
+        }
+
+        process.exit(0);
+    } catch (err) {
+        console.error("Error:", err.message);
+        process.exit(1);
     }
 }
 
-check().catch(console.error);
+checkABB();

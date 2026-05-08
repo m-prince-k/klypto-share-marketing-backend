@@ -3,6 +3,7 @@ const { getHistoricalCandle } = require('./angelOne');
 const { OptionChain } = require('../models');
 const smartApi = require('./smartApi');
 const { formatDate, getCandlesWithCache } = require('./dbService');
+const { Op } = require('sequelize');
 
 async function syncPriorityOptionsHistory() {
     const symbols = [
@@ -13,9 +14,9 @@ async function syncPriorityOptionsHistory() {
     const interval = "5m";
     const toDate = new Date();
     const fromDate = new Date();
-    fromDate.setDate(toDate.getDate() - 90);
+    fromDate.setDate(toDate.getDate() - 365); // 1 Year
 
-    console.log(`[PrioritySync] Starting sync for 20 symbols, 90 days, 5m interval...`);
+    console.log(`[PrioritySync] Starting sync for 20 symbols, 365 days, 5m interval...`);
 
     for (const userSym of symbols) {
         try {
@@ -73,13 +74,14 @@ async function syncPriorityOptionsHistory() {
             const endIdx = Math.min(uniqueStrikes.length, atmIdx + 6);
             const targetStrikes = uniqueStrikes.slice(startIdx, endIdx);
 
-            // Get current monthly expiry
-            const sortedByExpiry = allOpts.sort((a, b) => new Date(a.expiry) - new Date(b.expiry));
-            const targetExpiry = sortedByExpiry[0].expiry;
+            // Get all unique expiries for this symbol
+            const allExpiries = [...new Set(allOpts.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
 
-            console.log(`[PrioritySync] Symbol: ${sym}, ATM: ${atmStrike}, Expiry: ${targetExpiry}, Strikes: ${targetStrikes.join(', ')}`);
+            console.log(`[PrioritySync] Symbol: ${sym}, ATM: ${atmStrike}, Expiries Found: ${allExpiries.length}`);
 
-            for (const strike of targetStrikes) {
+            for (const targetExpiry of allExpiries) {
+                console.log(`[PrioritySync] Processing Expiry: ${targetExpiry} for ${sym}`);
+                for (const strike of targetStrikes) {
                 for (const type of ['CE', 'PE']) {
                     const opt = allOpts.find(o => 
                         parseFloat(o.strike) / 100 === strike && 
@@ -89,10 +91,10 @@ async function syncPriorityOptionsHistory() {
 
                     if (!opt) continue;
 
-                    console.log(`[PrioritySync] Fetching ${opt.symbol} (${opt.token}) - 3 Chunks...`);
+                    console.log(`[PrioritySync] Fetching ${opt.symbol} (${opt.token}) - 12 Chunks (1 Year)...`);
                     
-                    // Fetch in 30-day chunks for 90 days total
-                    for (let i = 0; i < 3; i++) {
+                    // Fetch in 30-day chunks for 12 months total
+                    for (let i = 0; i < 12; i++) {
                         const chunkToDate = new Date();
                         chunkToDate.setDate(toDate.getDate() - (i * 30));
                         const chunkFromDate = new Date();
@@ -100,6 +102,19 @@ async function syncPriorityOptionsHistory() {
 
                         const fDateStr = chunkFromDate.toISOString().split('T')[0] + " 09:15";
                         const tDateStr = chunkToDate.toISOString().split('T')[0] + " 15:30";
+
+                        // Check if we already have data for this range to avoid re-fetching
+                        const existingCount = await OptionChain.count({
+                            where: {
+                                symbol: opt.symbol,
+                                timestamp: { [Op.between]: [chunkFromDate, chunkToDate] }
+                            }
+                        });
+
+                        if (existingCount > 1000) {
+                            console.log(`[PrioritySync] Skipping ${opt.symbol} Chunk ${i+1} - already has ${existingCount} records.`);
+                            continue;
+                        }
 
                         const candles = await getHistoricalCandle({
                             symbol: opt.symbol,
@@ -132,14 +147,15 @@ async function syncPriorityOptionsHistory() {
                             console.log(`[PrioritySync] Saved ${dbData.length} candles for ${opt.symbol} (Chunk ${i+1})`);
                         }
                         
-                        // Small delay to respect rate limits
-                        await new Promise(r => setTimeout(r, 500));
+                        // Larger delay to respect rate limits for 1-year sync
+                        await new Promise(r => setTimeout(r, 5000));
                     }
                 }
             }
+        }
 
         } catch (err) {
-            console.error(`[PrioritySync] Failed for ${sym}:`, err.message);
+            console.error(`[PrioritySync] Failed for ${userSym}:`, err.message);
         }
     }
 

@@ -142,6 +142,61 @@ function startSchedulers() {
             }
         }
     }, 1200000);
+    
+    // 6. Background Sync for Priority Options (ABB, etc.) - Every 15 minutes
+    setInterval(async () => {
+        if (!smartApi.access_token || store.nfoMasterData.length === 0) return;
+        
+        const prioritySymbols = ["ABB", "ABBPOW", "ADAENT", "ADAGRE", "ADAPOR", "ADATRA", "ADICAP", "ALKLAB", "AMBCE", "AMBEN"];
+        console.log(`[Scheduler] Continuing sync for priority options: ${prioritySymbols.join(', ')}...`);
+        
+        for (const userSym of prioritySymbols) {
+            try {
+                const stockObj = store.stocks.find(s => s.userCode === userSym);
+                const sym = stockObj ? stockObj.name : userSym;
+                const ltpData = store.latestMarketData[`${sym}:NSE`];
+                if (!ltpData || !ltpData.ltp || ltpData.ltp === "0.00") continue;
+
+                const ltp = parseFloat(ltpData.ltp);
+                const allOpts = store.nfoMasterData.filter(o => o.name === sym && (o.instrumenttype === "OPTSTK" || o.instrumenttype === "OPTIDX"));
+                if (allOpts.length === 0) continue;
+
+                const uniqueStrikes = [...new Set(allOpts.map(o => parseFloat(o.strike) / 100))].sort((a, b) => a - b);
+                const atmStrike = uniqueStrikes.reduce((prev, curr) => Math.abs(curr - ltp) < Math.abs(prev - ltp) ? curr : prev);
+                const atmIdx = uniqueStrikes.indexOf(atmStrike);
+                
+                // Get +/- 2 strikes for continuous updates
+                const targetStrikes = uniqueStrikes.slice(Math.max(0, atmIdx - 2), Math.min(uniqueStrikes.length, atmIdx + 3));
+                const targetExpiry = allOpts.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0].expiry;
+
+                for (const strike of targetStrikes) {
+                    for (const type of ['CE', 'PE']) {
+                        const opt = allOpts.find(o => parseFloat(o.strike) / 100 === strike && o.symbol.endsWith(type) && o.expiry === targetExpiry);
+                        if (!opt) continue;
+
+                        const extraInfo = { underlying: sym, strike, expiry: targetExpiry, optionType: type };
+                        await getCandlesWithCache(opt.symbol, opt.token, "NFO", "FIVE_MINUTE", null, null, extraInfo);
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+                }
+
+                // Count current records for this symbol
+                const optCount = await OptionChain.count({ where: { underlying: sym } });
+                const eqCount = await Candle.count({ where: { symbol: sym } });
+                
+                getIO().emit("syncStatus", {
+                    symbol: userSym,
+                    optionRecords: optCount,
+                    equityRecords: eqCount,
+                    timestamp: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                    message: `[Sync Alert] ${userSym} is running. Options: ${optCount}, Equity: ${eqCount}`
+                });
+
+            } catch (err) {
+                console.error(`[Sync-Priority-Options] Failed for ${userSym}:`, err.message);
+            }
+        }
+    }, 900000);
 }
 
 const { syncPriorityOptionsHistory } = require('./optionSyncService');
