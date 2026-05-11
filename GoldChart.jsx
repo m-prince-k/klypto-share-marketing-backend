@@ -107,6 +107,13 @@ const GoldChart = () => {
     };
 
     useEffect(() => {
+        // Request Notification Permission
+        if (Notification.permission === "default") {
+            Notification.requestPermission();
+        }
+    }, []);
+
+    useEffect(() => {
         if (!chartContainerRef.current) return;
 
         setIsLoading(true);
@@ -163,9 +170,20 @@ const GoldChart = () => {
         });
 
         socket.on(EVENTS.ALERT_TRIGGERED, (alertData) => {
-            setTriggeredAlerts(prev => [alertData, ...prev].slice(0, 5));
+            setTriggeredAlerts(prev => [alertData, ...prev].slice(0, 10)); // Keep last 10 alerts
             setStocks(prev => prev.map(s => s.name === alertData.symbol ? { ...s, isAlert: true } : s));
-            setTimeout(() => setTriggeredAlerts(prev => prev.filter(a => a.timestamp !== alertData.timestamp)), 10000);
+            
+            // 1. Play Sound
+            const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+            audio.play().catch(e => console.log("Sound play failed:", e));
+
+            // 2. Desktop Notification
+            if (Notification.permission === "granted") {
+                new Notification(`Klypto Alert: ${alertData.symbol}`, {
+                    body: `${alertData.type} at ${alertData.ltp} (RSI: ${alertData.rsi})`,
+                    icon: "/favicon.ico"
+                });
+            }
         });
 
         socket.on(EVENTS.SYNC_STATUS, (status) => {
@@ -174,28 +192,39 @@ const GoldChart = () => {
         });
 
         socket.on(EVENTS.HISTORICAL_DATA_RESPONSE, (payload) => {
-            if (payload.success) {
-                if (payload.data?.length > 0) {
+            try {
+                if (payload.success && payload.data?.length > 0) {
                     const istOffset = 5.5 * 60 * 60; // 5h 30m in seconds
-                    const formattedData = payload.data.map(c => ({
-                        time: Number(c.time) + istOffset,
-                        open: parseFloat(c.open), high: parseFloat(c.high),
-                        low: parseFloat(c.low), close: parseFloat(c.close),
-                    })).sort((a, b) => a.time - b.time);
+                    const formattedData = payload.data.map(c => {
+                        let t = Number(c.time);
+                        if (isNaN(t)) t = Math.floor(new Date(c.timestamp).getTime() / 1000);
+                        return {
+                            time: t + istOffset,
+                            open: parseFloat(c.open || 0), 
+                            high: parseFloat(c.high || 0),
+                            low: parseFloat(c.low || 0), 
+                            close: parseFloat(c.close || 0),
+                        };
+                    }).filter(c => !isNaN(c.time)).sort((a, b) => a.time - b.time);
 
-                    seriesRef.current.setData(formattedData);
-                    allCandlesRef.current = [...formattedData];
+                    if (formattedData.length > 0) {
+                        seriesRef.current.setData(formattedData);
+                        allCandlesRef.current = [...formattedData];
 
-                    const rsiData = calculateRSI(formattedData);
-                    rsiSeriesRef.current.setData(rsiData);
+                        const rsiData = calculateRSI(formattedData);
+                        if (rsiData.length > 0) rsiSeriesRef.current.setData(rsiData);
 
-                    const last = formattedData[formattedData.length - 1];
-                    lastBarRef.current = { ...last };
-                    setLivePrice(last.close);
-                    setOhlcv({ o: last.open, h: last.high, l: last.low, c: last.close, v: 0 });
+                        const last = formattedData[formattedData.length - 1];
+                        lastBarRef.current = { ...last };
+                        setLivePrice(last.close);
+                        setOhlcv({ o: last.open, h: last.high, l: last.low, c: last.close, v: 0 });
+                    }
                 } else {
-                    console.warn(`[Chart] Received empty historical data`);
+                    console.warn(`[Chart] Received empty or unsuccessful historical data`);
                 }
+            } catch (err) {
+                console.error("[Chart] Data processing error:", err);
+            } finally {
                 setIsLoading(false);
             }
         });
@@ -206,14 +235,25 @@ const GoldChart = () => {
         });
 
         socket.on(EVENTS.LIVE_TICK, (tick) => {
-            const isMatch = tick.symbol === selectedSymbol;
-            if (isMatch) {
-                const istOffset = 5.5 * 60 * 60;
-                const adjustedData = {
-                    ...tick.data,
-                    time: Number(tick.data.time) + istOffset
+            // Update sidebar price real-time
+            const ltp = parseFloat(tick.last_traded_price || tick.close || (tick.data && tick.data.close) || 0);
+            const close = parseFloat(tick.close_price || tick.close || (tick.data && tick.data.close) || ltp);
+
+            setStocks(prev => prev.map(s => {
+                if (s.name === tick.symbol) {
+                    let pChange = "0.00";
+                    if (close > 0) pChange = (((ltp - close) / close) * 100).toFixed(2);
+                    return { ...s, ltp: ltp.toFixed(2), percent_change: pChange, close_price: close };
+                }
+                return s;
+            }));
+
+            if (tick.symbol === selectedSymbol) {
+                const tickData = tick.data || {
+                    time: Math.floor(new Date().getTime() / 1000),
+                    open: ltp, high: ltp, low: ltp, close: ltp
                 };
-                updateChart(adjustedData);
+                updateChart(tickData);
             }
         });
 
@@ -305,11 +345,21 @@ const GoldChart = () => {
                     <h2 className="text-xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent uppercase tracking-tight">Klypto Scanner</h2>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                    {stocks.filter(s => s.name === 'GOLD' || s.isAlert).map(s => (
-                        <div key={s.name} onClick={() => setSelectedSymbol(s.name)} className={`p-4 rounded-4 cursor-pointer transition-all mb-2 ${selectedSymbol === s.name ? 'bg-primary bg-opacity-10 border border-primary border-opacity-30' : 'bg-slate-900/40 border border-slate-800/50 hover-bg-slate-800'}`}>
-                            <div className="flex justify-between items-center">
+                    {stocks
+                        .sort((a, b) => a.name.localeCompare(b.name)) // A-Z Sorting
+                        .map((s, i) => (
+                        <div key={i} onClick={() => setSelectedSymbol(s.name)} className={`p-4 rounded-4 cursor-pointer transition-all mb-2 ${selectedSymbol === s.name ? 'bg-primary bg-opacity-10 border border-primary border-opacity-30' : 'bg-slate-900/40 border border-slate-800/50 hover-bg-slate-800'}`}>
+                            <div className="flex justify-between items-center mb-1">
                                 <span className={`font-weight-black text-sm ${s.isAlert ? 'text-primary' : 'text-slate-200'}`}>{s.name} {s.isAlert && '🔥'}</span>
-                                <span className="text-[10px] text-slate-600 font-bold">{s.segment}</span>
+                                <span className="text-[11px] font-mono font-bold text-white">
+                                    ₹{isNaN(parseFloat(s.ltp)) ? "0.00" : parseFloat(s.ltp).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-[10px] text-slate-600 font-bold tracking-widest uppercase">{s.segment}</span>
+                                <span className={`text-[10px] font-weight-black ${parseFloat(s.percent_change || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                    {parseFloat(s.percent_change || 0) >= 0 ? '+' : ''}{isNaN(parseFloat(s.percent_change)) ? "0.00" : s.percent_change}%
+                                </span>
                             </div>
                         </div>
                     ))}
@@ -327,15 +377,15 @@ const GoldChart = () => {
                                 className="form-select bg-slate-900 border-slate-800 text-white rounded-3 py-2 px-3 shadow-sm font-weight-black uppercase custom-select"
                                 style={{ minWidth: '160px', appearance: 'none', backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\' fill=\'%23ffffff\'%3e%3cpath fill-rule=\'evenodd\' d=\'M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z\'/%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '16px 12px' }}
                             >
-                                {stocks.map(s => (
-                                    <option key={s.name} value={s.name} className="bg-slate-900 text-white">{s.name}</option>
+                                {stocks.map((s,i) => (
+                                    <option key={i} value={s.name} className="bg-slate-900 text-white">{s.name}</option>
                                 ))}
                             </select>
                             <div className="h5 text-success font-mono font-weight-bold m-0 tracking-tighter">₹{livePrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                         </div>
                         <div className="btn-group bg-slate-800 bg-opacity-40 p-1 rounded-4 border border-slate-700/50">
-                            {intervals.map((int) => (
-                                <button key={int.value} onClick={() => setSelectedInterval(int.value)} className={`btn btn-sm px-4 rounded-3 text-uppercase font-weight-black small ${selectedInterval === int.value ? 'btn-primary shadow-lg' : 'btn-link text-slate-400 text-decoration-none'}`}>{int.label}</button>
+                            {intervals.map((int,i) => (
+                                <button key={i} onClick={() => setSelectedInterval(int.value)} className={`btn btn-sm px-4 rounded-3 text-uppercase font-weight-black small ${selectedInterval === int.value ? 'btn-primary shadow-lg' : 'btn-link text-slate-400 text-decoration-none'}`}>{int.label}</button>
                             ))}
                         </div>
                     </div>

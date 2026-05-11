@@ -46,12 +46,25 @@ const connectSocket = (server) => {
             socket.emit(EVENTS.STOCKS_LIST, getFormattedStocks());
         });
 
+        // --- TEST ALERT TRIGGER (For USER Testing) ---
+        setTimeout(() => {
+            console.log(`[TestAlert] Emitting mock alert for TCS to ${socket.id}`);
+            socket.emit(EVENTS.ALERT_TRIGGERED, {
+                symbol: 'TCS',
+                rsi: '71.20',
+                ltp: '3850.40',
+                type: 'CROSS_ABOVE',
+                timestamp: new Date().toISOString(),
+                isTest: true
+            });
+        }, 5000);
+
         // --- 2. HISTORICAL DATA EVENTS ---
         socket.on(EVENTS.GET_HISTORICAL_DATA, async (payload) => {
             try {
                 const { fetchManualHistoricalData } = require('./historicalService');
                 const result = await fetchManualHistoricalData(payload);
-                console.log(`[Socket] Emitting HISTORICAL_DATA_RESPONSE for ${payload.symbol}: ${result.data?.length || 0} candles. Last: ${result.data?.length > 0 ? new Date(result.data[result.data.length-1].timestamp).toLocaleString() : 'N/A'}`);
+                console.log(`[Socket] Emitting HISTORICAL_DATA_RESPONSE for ${payload.symbol}: ${result.data?.length || 0} candles. Last: ${result.data?.length > 0 ? new Date(result.data[result.data.length - 1].timestamp).toLocaleString() : 'N/A'}`);
                 socket.emit(EVENTS.HISTORICAL_DATA_RESPONSE, result);
             } catch (err) {
                 socket.emit(EVENTS.HISTORICAL_DATA_ERROR, { success: false, error: err.message });
@@ -101,7 +114,7 @@ const connectSocket = (server) => {
                 if (!finalToken) throw new Error(`Token not found for ${symbol}`);
 
                 const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, fD, tD);
-                const candles = result.data;
+                const candles = result?.data;
 
                 const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d });
                 socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: results });
@@ -128,14 +141,14 @@ const connectSocket = (server) => {
 
                 const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, interval, fromDate, toDate);
                 const results = await prepareCandlesWithIndicators(type, result.data, { json: d => d, send: d => d });
-                
+
                 if (results?.length > 0) {
                     const latest = results[results.length - 1];
-                    socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, { 
-                        success: true, 
-                        symbol: uSym, 
-                        type, 
-                        data: { time: Number(latest.time), value: parseFloat(latest[type.toLowerCase()] || latest.value || 0) } 
+                    socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, {
+                        success: true,
+                        symbol: uSym,
+                        type,
+                        data: { time: Number(latest.time), value: parseFloat(latest[type.toLowerCase()] || latest.value || 0) }
                     });
                 }
             } catch (err) {
@@ -156,14 +169,14 @@ const connectSocket = (server) => {
                 const results = [];
 
                 for (const stock of store.stocks.slice(0, 50)) {
-                    const dbCandles = await Candle.findAll({ 
-                        where: { symbol: stock.name, interval: dbInterval }, 
-                        order: [['timestamp', 'DESC']], 
-                        limit: 30 
+                    const dbCandles = await Candle.findAll({
+                        where: { symbol: stock.name, interval: dbInterval },
+                        order: [['timestamp', 'DESC']],
+                        limit: 30
                     });
-                    
+
                     let candles = dbCandles.map(c => c.toJSON()).reverse();
-                    
+
                     // Merge live candle for real-time scanner accuracy
                     const live = store.liveCandles[stock.token];
                     if (live && interval === "5m") { // Scanner mostly uses 5m, adjust if needed
@@ -180,7 +193,7 @@ const connectSocket = (server) => {
                         }
                     }
 
-                    if (candles.length >= 15) { 
+                    if (candles.length >= 15) {
                         const rsiVals = await calculateRSIIndicator(candles.map(c => ({ close: parseFloat(c.close) })), 14);
                         if (rsiVals.length >= 2) {
                             const currentRSI = rsiVals[rsiVals.length - 1]?.rsi;
@@ -188,9 +201,9 @@ const connectSocket = (server) => {
                             const threshold = parseFloat(rsi_threshold);
 
                             if (currentRSI > threshold && prevRSI <= threshold) {
-                                results.push({ 
-                                    symbol: stock.name, 
-                                    rsi: currentRSI.toFixed(2), 
+                                results.push({
+                                    symbol: stock.name,
+                                    rsi: currentRSI.toFixed(2),
                                     ltp: parseFloat(candles[0].close).toFixed(2),
                                     type: 'CROSS_ABOVE'
                                 });
@@ -236,14 +249,14 @@ setInterval(async () => {
             const dbInt = { "1m": "ONE_MINUTE", "5m": "FIVE_MINUTE", "15m": "FIFTEEN_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY" }[config.interval] || "FIVE_MINUTE";
 
             for (const stock of store.stocks.slice(0, 50)) {
-                const dbCandles = await Candle.findAll({ 
-                    where: { symbol: stock.name, interval: dbInt }, 
-                    order: [['timestamp', 'DESC']], 
-                    limit: 25 
+                const dbCandles = await Candle.findAll({
+                    where: { symbol: stock.name, interval: dbInt },
+                    order: [['timestamp', 'DESC']],
+                    limit: 25
                 });
-                
+
                 let candles = dbCandles.map(c => c.toJSON()).reverse();
-                
+
                 // Merge live candle for real-time alert accuracy
                 const live = store.liveCandles[stock.token];
                 if (live && (config.interval === "1m" || config.interval === "5m")) {
@@ -268,10 +281,10 @@ setInterval(async () => {
                         const threshold = config.threshold;
 
                         if (currentRSI > threshold && prevRSI <= threshold) {
-                            results.push({ 
-                                symbol: stock.name, 
-                                rsi: currentRSI.toFixed(2), 
-                                ltp: parseFloat(candles[candles.length-1].close).toFixed(2),
+                            results.push({
+                                symbol: stock.name,
+                                rsi: currentRSI.toFixed(2),
+                                ltp: parseFloat(candles[candles.length - 1].close).toFixed(2),
                                 type: 'CROSS_ABOVE',
                                 timestamp: new Date().toISOString()
                             });
@@ -285,7 +298,7 @@ setInterval(async () => {
                 });
                 socket.emit(EVENTS.RSI_SCANNER_RESPONSE, { success: true, data: results, isAuto: true });
             }
-        } catch (err) {}
+        } catch (err) { }
     }
 }, 10000);
 
