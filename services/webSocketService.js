@@ -2,6 +2,7 @@ const { WebSocketV2 } = require("smartapi-javascript");
 const store = require("./marketStore");
 const EVENTS = require("../constants/socketEvents");
 const alertService = require("./alertService");
+const optionChainService = require("./optionChainService");
 
 
 function formatTickData(data) {
@@ -146,7 +147,13 @@ async function startWebSocketConnection(loginData, io) {
         if (!nearestGold[contract.name]) nearestGold[contract.name] = contract;
         else if (new Date(contract.expiry) < new Date(nearestGold[contract.name].expiry)) nearestGold[contract.name] = contract;
     }
-    const mcxTokens = Object.values(nearestGold).map(c => c.token);
+    const mcxTokens = [];
+    Object.values(nearestGold).forEach(c => {
+        mcxTokens.push(c.token);
+        store.tokenToName[c.token] = c.name; // e.g. "GOLD"
+        store.tokenToExchange[c.token] = "MCX";
+    });
+
     if (mcxTokens.length > 0) {
         console.log(`Subscribing to ${mcxTokens.length} MCX Gold Futures...`);
         store.wsClient.fetchData({
@@ -161,6 +168,9 @@ async function startWebSocketConnection(loginData, io) {
         if (formatted) {
             // Process alerts in real-time
             alertService.checkAlerts(formatted);
+            
+            // Update live option chain subscribers
+            optionChainService.handleTick(formatted);
 
             // Key by Symbol:Exchange to avoid collisions
             const key = `${formatted.symbol}:${formatted.exchange}`;

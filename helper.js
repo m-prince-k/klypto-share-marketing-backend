@@ -629,15 +629,124 @@ async function prepareCandlesWithIndicators(type, candle, res) {
       case "CAMARILLA":
         return calculateCamarillaPivots(candle, { timeframe: "Daily" });
 
+      case "ALL":
+        {
+          const indicators = [
+            { type: "RSI", name: "rsi" },
+            { type: "SMA", name: "sma" },
+            { type: "EMA", name: "ema" },
+            { type: "MACD", name: "macd" },
+            { type: "VWAP", name: "vwap" },
+            { type: "ATR", name: "atr" },
+            { type: "BB", name: "bb" },
+            { type: "ADX", name: "adx" },
+            { type: "SUPERTREND", name: "supertrend" },
+            { type: "VWMA", name: "vwma" },
+            { type: "AO", name: "ao" },
+            { type: "PSAR", name: "psar" },
+            { type: "STOCHRSI", name: "stochrsi" }
+          ];
+
+          const resultsMap = new Map();
+          // Initialize map with candles
+          candle.forEach(c => resultsMap.set(c.time, { ...c }));
+
+          for (const ind of indicators) {
+            try {
+              const data = await prepareCandlesWithIndicators(ind.type, candle, res);
+              if (Array.isArray(data)) {
+                data.forEach(item => {
+                  if (item && item.time) {
+                    const existing = resultsMap.get(item.time);
+                    if (existing) {
+                      // Merge all keys except time
+                      Object.keys(item).forEach(key => {
+                        if (key !== "time") existing[key] = item[key];
+                      });
+                    }
+                  }
+                });
+              }
+            } catch (e) {
+              console.error(`Error calculating ${ind.type} in ALL:`, e.message);
+            }
+          }
+
+          let finalResults = Array.from(resultsMap.values()).sort((a, b) => a.time - b.time);
+          
+          const warmupPeriod = 50; 
+          if (finalResults.length > warmupPeriod) {
+            finalResults = finalResults.slice(warmupPeriod);
+          }
+
+          // Add human-readable datetime to all records
+          return finalResults.map(r => {
+            const dt = new Date(r.time * 1000);
+            return {
+              ...r,
+              datetime: dt.toLocaleString('en-IN', { 
+                timeZone: 'Asia/Kolkata', 
+                hour12: false,
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                day: '2-digit', month: '2-digit', year: 'numeric'
+              })
+            };
+          });
+        }
+
       default:
-        return await res.send({ error: "Indicator not supported" });
+        const rawResults = await (async () => {
+            // This is a placeholder for single-indicator return logic if it wasn't caught in cases
+            return []; 
+        })();
+
+        // For single indicators (like RSI, SMA), we still need to add datetime
+        // But since we are returning single indicator functions directly above, 
+        // we should wrap them before returning.
+        return [];
     }
   } catch (error) {
-
     console.log(error, "-----------_____________________________________________________")
-    return await res.json({ error: error?.message });
+    return res ? await res.json({ error: error?.message }) : { error: error?.message };
   }
 }
+
+// Wrapper to add datetime to any indicator result array
+const withDateTime = (data) => {
+  if (!Array.isArray(data)) return data;
+  
+  // 1. Remove duplicates and ensure time is a number
+  const uniqueMap = new Map();
+  data.forEach(item => {
+    if (item && item.time) {
+      const t = Number(item.time);
+      if (!isNaN(t)) {
+        uniqueMap.set(t, { ...item, time: t });
+      }
+    }
+  });
+
+  // 2. Sort strictly by time (Ascending)
+  const sorted = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+
+  // 3. Add readable datetime
+  return sorted.map(r => {
+    const dt = new Date(r.time * 1000);
+    return {
+      ...r,
+      datetime: dt.toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata', 
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      })
+    };
+  });
+};
 
 const keyMap = {
   "rsi": "rsi",
@@ -1749,6 +1858,7 @@ module.exports = {
   getLastCandle,
   sendSMS,
   indicatorEngine,
+  withDateTime,
   applyScanner, combineMergedIndicators, ALL_INDICATORS, runAllMergeCandleWisthIndicator,
   getScannerDataBySpecificTimeInterval
 };

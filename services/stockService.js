@@ -47,7 +47,17 @@ const manualMap = {
     "TECMAH": "TECHM", "TITIND": "TITAN", "TORPHA": "TORNTPHARM", "TORPOW": "TORNTPOWER",
     "TRENT": "TRENT", "TUBIN": "TIINDIA", "TVSMOT": "TVSMOTOR", "UNISPI": "UNITDSPR",
     "VARBEV": "VBL", "VEDLIM": "VEDL", "VOLTAS": "VOLTAS", "WAAENE": "WAREEENER",
-    "ZOMLIM": "ZOMATO", "INDUSTOWER": "INDUSTOWER", "ABB": "ABB"
+    "ZOMLIM": "ZOMATO", "INDUSTOWER": "INDUSTOWER", "ABB": "ABB",
+    "TATMOT": "TATAMOTORS", "TATPOW": "TATAPOWER", "YESBAN": "YESBANK",
+    "ASHLEY": "ASHOKLEY", "COALIN": "COALINDIA", "DLFLIM": "DLF",
+    "FEDBAN": "FEDERALBNK", "GLEPHA": "GLENMARK", "GMRINF": "GMRINFRA",
+    "JUBFOO": "JUBILANT", "NIITEC": "NIITTECH", "OBEREA": "OBEROIRLTY",
+    "TATCON": "TATACONSUM", "UNIBAN": "UNIONBANK", "ZOMLIM": "ZOMATO",
+    "APLAPO": "APOLLOTYRE", "ASIPAI": "ASIANPAINT", "ASTPOL": "ASTRAL",
+    "BANBAR": "BANKBARODA", "BANIND": "BANKINDIA", "CANBAN": "CANBK",
+    "DABIND": "DABUR", "EXIIND": "EXIDEIND", "HDFSTA": "HDFCLIFE",
+    "INDOIL": "IOC", "JSWSTE": "JSWSTEEL", "LICHF": "LICHSGFIN",
+    "LTFINA": "L&TFH", "RELIND": "RELIANCE"
 };
 
 async function fetchTop200Stocks() {
@@ -138,6 +148,11 @@ async function fetchTop200Stocks() {
             if (bseS) {
                 const sym = bseS.symbol.replace("-EQ", "");
                 currentStocks.push({ name: sym, userCode: userSym, token: bseS.token, actualSymbol: bseS.symbol, fullName: bseS.name, segment: 'BSE' });
+            }
+
+            if (!nseS && !bseS) {
+                // Keep track of missing ones to fix mapping later
+                // console.log(`[MasterScrip] Missing: ${userSym} (Searched as: ${searchSym})`);
             }
 
             // Identify Futures for this symbol (NSE ONLY - NFO)

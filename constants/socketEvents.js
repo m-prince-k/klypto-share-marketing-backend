@@ -12,6 +12,8 @@ module.exports = {
     GET_RSI_SCANNER: "getRsiScanner",               // Trigger manual RSI scan
     SET_RSI_ALERT: "setRsiAlert",                   // Set background monitoring threshold
     GET_ALL_STOCKS: "getAllStocks",                 // Request initial stock list
+    SUBSCRIBE_OPTION_CHAIN: "subscribeOptionChain", // Subscribe to live option chain updates
+    UNSUBSCRIBE_OPTION_CHAIN: "unsubscribeOptionChain",
     
     // --- OUTPUT EVENTS (Server to Client) ---
     HISTORICAL_DATA_RESPONSE: "historicalDataResponse",
@@ -31,5 +33,7 @@ module.exports = {
     
     GOLD_UPDATE: "goldUpdate",
     ALERT_TRIGGERED: "ALERT_TRIGGERED",
-    SYNC_STATUS: "syncStatus"
+    SYNC_STATUS: "syncStatus",
+    OPTION_CHAIN_UPDATE: "optionChainUpdate",       // Real-time option chain data
+    OPTION_CHAIN_ERROR: "optionChainError"
 };
