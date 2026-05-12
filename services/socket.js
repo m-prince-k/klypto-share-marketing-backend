@@ -1,5 +1,6 @@
 const { Server } = require("socket.io");
 const EVENTS = require('../constants/socketEvents');
+const optionChainService = require('./optionChainService');
 
 let io;
 const socketAlerts = new Map();
@@ -12,6 +13,8 @@ const connectSocket = (server) => {
         cors: { origin: "*" },
         maxHttpBufferSize: 1e7 // 10MB for large historical data
     });
+
+    optionChainService.init(io);
 
     io.on("connection", (socket) => {
         console.log("Client connected:", socket.id);
@@ -78,7 +81,7 @@ const connectSocket = (server) => {
             const start = Date.now();
             try {
                 const { type, symbol, interval, fromDate, toDate, exchange } = payload;
-                const { prepareCandlesWithIndicators } = require('../helper');
+                const { prepareCandlesWithIndicators, withDateTime } = require('../helper');
                 const { formatDate, getCandlesWithCache } = require('./dbService');
                 const store = require('./marketStore');
 
@@ -96,18 +99,20 @@ const connectSocket = (server) => {
 
                 // Normalize dates
                 let fD = fromDate, tD = toDate;
-                if (typeof fD === 'string' && fD.length === 10) fD = formatDate(new Date(fD), "09:15", finalInterval);
-                if (typeof tD === 'string' && tD.length === 10) tD = formatDate(new Date(tD), "15:30", finalInterval);
+                if (typeof fD === 'string' && fD.length === 10) fD = formatDate(new Date(fD), isCommodity ? "09:00" : "09:15", finalInterval);
+                if (typeof tD === 'string' && tD.length === 10) tD = formatDate(new Date(tD), isCommodity ? "23:55" : "15:30", finalInterval);
 
                 const uSym = symbol.toUpperCase();
                 const topStocksMap = {
                     "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
                     "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
                     "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499"
+                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
+                    "GOLD": "234454", "SILVER": "234455"
                 };
 
-                const finalExchange = (exchange || "NSE").toUpperCase();
+                const isCommodity = uSym === "GOLD" || uSym === "SILVER";
+                const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
                 const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
 
                 let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
@@ -117,42 +122,136 @@ const connectSocket = (server) => {
                 const candles = result?.data;
 
                 const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d });
-                socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: results });
+                const finalResults = withDateTime(results);
+                socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: finalResults });
                 console.log(`[Socket] ${type} calc: ${Date.now() - start}ms`);
             } catch (err) {
                 console.error("[Socket Indicator] Error:", err.message);
                 socket.emit(EVENTS.INDICATOR_DETAILS_ERROR, { success: false, error: err.message });
             }
         });
-
+        
+        //THIS IS USED FOR LIVE EXACT CURRENT DATE INDICATGOR PLOTTING
         socket.on(EVENTS.GET_LIVE_INDICATOR, async (payload) => {
             try {
-                const { type, symbol, interval, fromDate, toDate, exchange } = payload;
+                const { type, symbol, interval, exchange } = payload; // Ignore dates for history
                 const { prepareCandlesWithIndicators } = require('../helper');
                 const { getCandlesWithCache } = require('./dbService');
                 const store = require('./marketStore');
 
+                const intervalMap = {
+                    "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+                    "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+                    "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+                    "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+                    "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+                    "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+                    "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+                    "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+                };
+                const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
+
                 const uSym = symbol.toUpperCase();
-                const finalExchange = (exchange || "NSE").toUpperCase();
+                const topStocksMap = {
+                    "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
+                    "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
+                    "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
+                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
+                    "GOLD": "234454", "SILVER": "234455"
+                };
+
+                const isCommodity = uSym === "GOLD" || uSym === "SILVER";
+                const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
                 const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
-                const finalToken = store.symbolToTokenMaster[uSym];
+                const finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
 
                 if (!finalToken) throw new Error(`Token not found for ${symbol}`);
 
-                const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, interval, fromDate, toDate);
-                const results = await prepareCandlesWithIndicators(type, result.data, { json: d => d, send: d => d });
+                // For live indicators, we MUST have history for warmup
+                const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, null, null);
+                let candles = result?.data || [];
+                
+                if (candles.length < 20) {
+                    throw new Error(`Insufficient data for ${symbol}. Got ${candles.length} candles.`);
+                }
+
+                // --- MERGE LIVE CANDLE ---
+                // This ensures the value matches TradingView's "forming" candle
+                const live = store.liveCandles[finalToken] || store.liveCandles[uSym];
+                if (live) {
+                    const liveTs = new Date(live.minute || Date.now());
+                    const lastCandle = candles[candles.length - 1];
+                    const lastTs = new Date(lastCandle.timestamp);
+
+                    // If live candle is newer, append it. If same minute, update the last one.
+                    if (liveTs.getTime() > lastTs.getTime()) {
+                        candles.push({
+                            timestamp: liveTs.toISOString(),
+                            time: Math.floor(liveTs.getTime() / 1000),
+                            open: parseFloat(live.open),
+                            high: parseFloat(live.high),
+                            low: parseFloat(live.low),
+                            close: parseFloat(live.close),
+                            volume: parseFloat(live.volume || 0)
+                        });
+                    } else if (liveTs.getTime() === lastTs.getTime()) {
+                        candles[candles.length - 1] = {
+                            ...lastCandle,
+                            close: parseFloat(live.close),
+                            high: Math.max(lastCandle.high, parseFloat(live.high)),
+                            low: Math.min(lastCandle.low, parseFloat(live.low)),
+                        };
+                    }
+                }
+
+                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d });
 
                 if (results?.length > 0) {
-                    const latest = results[results.length - 1];
+                    const indKey = type.toLowerCase();
+                    
+                    // Search for the last record that actually has a calculated value
+                    const validResult = [...results].reverse().find(r => 
+                        (r[indKey] !== null && r[indKey] !== undefined) || 
+                        (r[type] !== null && r[type] !== undefined) ||
+                        (r.value !== null && r.value !== undefined)
+                    );
+
+                    const latest = validResult || results[results.length - 1];
+                    
+                    let val = latest[indKey];
+                    if (val === undefined || val === null) val = latest[type];
+                    if (val === undefined || val === null) val = latest.value;
+                    
+                    if (val === undefined || val === null) {
+                        console.warn(`[LiveIndicator] ${uSym} ${type} is null even after searching history.`);
+                        val = 0;
+                    }
+
+                    console.log(`[LiveIndicator] ${uSym} ${type} final value: ${val.toFixed(2)} (IST: ${new Date(latest.time * 1000).toLocaleTimeString()})`);
+
                     socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, {
                         success: true,
                         symbol: uSym,
                         type,
-                        data: { time: Number(latest.time), value: parseFloat(latest[type.toLowerCase()] || latest.value || 0) }
+                        data: [{ 
+                            time: Number(latest.time), 
+                            value: parseFloat(val || 0),
+                            [indKey]: parseFloat(val || 0),
+                            [type]: parseFloat(val || 0),
+                            datetime: new Date(latest.time * 1000).toLocaleString('en-IN', { 
+                                timeZone: 'Asia/Kolkata', 
+                                hour12: false,
+                                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                                day: '2-digit', month: '2-digit', year: 'numeric'
+                            })
+                        }]
                     });
+                } else {
+                    throw new Error(`Calculation failed for ${type} on ${symbol}`);
                 }
             } catch (err) {
                 console.error("[Socket Live Indicator] Error:", err.message);
+                socket.emit(EVENTS.INDICATOR_DETAILS_ERROR, { success: false, error: err.message });
             }
         });
 
@@ -222,9 +321,19 @@ const connectSocket = (server) => {
             console.log(`[Alert] Active for ${socket.id}`);
         });
 
-        // --- 5. CLEANUP ---
+        // --- 5. OPTION CHAIN EVENTS ---
+        socket.on(EVENTS.SUBSCRIBE_OPTION_CHAIN, (payload) => {
+            optionChainService.subscribe(socket, payload);
+        });
+
+        socket.on(EVENTS.UNSUBSCRIBE_OPTION_CHAIN, () => {
+            optionChainService.unsubscribe(socket.id);
+        });
+
+        // --- 6. CLEANUP ---
         socket.on("disconnect", () => {
             socketAlerts.delete(socket.id);
+            optionChainService.unsubscribe(socket.id);
             console.log("Client disconnected:", socket.id);
         });
     });
@@ -325,24 +434,44 @@ const startGoldBroadcast = () => {
                         }
                     };
                     io.emit(EVENTS.GOLD_UPDATE, formattedTickForChart);
-
-                    // Update store so AlertService can see the live candle
-                    store.liveCandles["GOLD"] = {
+ 
+                    // Update store so AlertService and dbService can see the live candle
+                    const goldToken = goldData.token;
+                    const liveData = {
                         open: parseFloat(lastCandle.open),
                         high: parseFloat(lastCandle.high),
                         low: parseFloat(lastCandle.low),
                         close: parseFloat(lastCandle.close),
-                        volume: 0
+                        volume: 0,
+                        minute: lastCandle.timestamp
                     };
+                    store.liveCandles["GOLD"] = liveData;
+                    store.liveCandles[goldToken] = liveData;
 
                     // Trigger Alert Scanner with real numeric token
                     const alertService = require('./alertService');
-                    const goldStock = store.stocks.find(s => s.name === "GOLD");
                     alertService.checkAlerts({
-                        token: goldStock ? goldStock.token : "GOLD",
+                        token: goldToken,
                         symbol: "GOLD",
                         last_traded_price: Number(lastCandle.close)
                     });
+
+                    // Persistent Save to DB so Indicator Engine can see it
+                    try {
+                        const { Candle } = require('../models');
+                        await Candle.upsert({
+                            symbol: "GOLD",
+                            token: goldToken,
+                            exchange: "MCX",
+                            interval: "ONE_MINUTE",
+                            timestamp: new Date(lastCandle.timestamp),
+                            open: parseFloat(lastCandle.open),
+                            high: parseFloat(lastCandle.high),
+                            low: parseFloat(lastCandle.low),
+                            close: parseFloat(lastCandle.close),
+                            volume: 0
+                        });
+                    } catch (dbErr) { }
                 }
             }
         } catch (err) {

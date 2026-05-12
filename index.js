@@ -3,7 +3,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 require('dotenv').config();
 
-const { connectSocket, getIO } = require('./services/socket');
+const { connectSocket, getIO, startGoldBroadcast } = require('./services/socket');
 const { sequelize } = require('./models');
 const store = require('./services/marketStore');
 const { login } = require('./services/authService');
@@ -73,6 +73,7 @@ async function bootstrap() {
             alertService.loadAlerts();
             startSchedulers();
             runInitialHistoricalLoad();
+            startGoldBroadcast();
         });
     } catch (err) {
         console.error("Bootstrap error:", err);

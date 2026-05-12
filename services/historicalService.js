@@ -40,18 +40,20 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
             formattedToDate = formatDate(new Date(cleanedToDate), "15:30", finalInterval);
         }
 
-        const finalExchange = (exchange || segment || "NSE").toUpperCase();
+        const uSym = symbol.toUpperCase();
+        const isCommodity = uSym === "GOLD" || uSym === "SILVER" || uSym === "CRUDEOIL" || uSym === "NATURALGAS";
+
+        const finalExchange = (exchange || segment || (isCommodity ? "MCX" : "NSE")).toUpperCase();
         const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
 
 
         // Explicit Token Resolution with Hardcoded Map for Top Stocks
-        const uSym = symbol.toUpperCase();
-        
         const topStocksMap = {
             "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
             "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
             "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-            "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499"
+            "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
+            "GOLD": "234454", "SILVER": "234455"
         };
 
         let finalToken = topStocksMap[uSym] || 

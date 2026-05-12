@@ -24,6 +24,9 @@ router.post("/updateIndicator", stockController.updateIndicator);
 
 router.post("/getTimeframes", stockController.getTimeFrames);
 router.post("/getIndicators", stockController.getIndicators);
+router.get("/triggerSnapshot", stockController.triggerOptionSnapshot);
+router.get("/debugStore", stockController.debugStore);
+router.get("/getFormattedOptionChain", stockController.getFormattedOptionChain);
 
 
 router.post("/dispatchOrder", verifyToken, angelAuthMiddleware, stockController.orderDispatch); // New route for order dispatching  

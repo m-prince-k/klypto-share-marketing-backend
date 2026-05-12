@@ -89,9 +89,9 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                     }
                 });
 
-                // Merge live candle if available
-                if (interval === "ONE_MINUTE" && store.liveCandles[token]) {
-                    const live = store.liveCandles[token];
+            // Merge live candle if available
+            const live = store.liveCandles[token] || store.liveCandles[symbol.toUpperCase()];
+            if (interval === "ONE_MINUTE" && live) {
                     const liveTs = new Date(live.minute);
                     
                     // Also filter the live candle if it's outside market hours
@@ -159,7 +159,10 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         let allCandles = [...dbCandles.map(c => {
             const d = c.toJSON ? c.toJSON() : c;
             return [d.timestamp, d.open, d.high, d.low, d.close, d.volume];
-        })]; // Initialize with existing DB data
+        })]; 
+        
+        // Ensure initial data is sorted
+        allCandles.sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime());
 
         while (currentStartDate < finalEndDate) {
             let currentChunkEndDate = new Date(currentStartDate);
@@ -254,7 +257,12 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             return base;
         });
 
-        const uniqueData = Array.from(new Map(formattedData.map(item => [item.timestamp.getTime(), item])).values());
+        // Use a Map to ensure uniqueness by timestamp AND sort them
+        const uniqueData = Array.from(new Map(
+            formattedData
+                .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+                .map(item => [item.timestamp.getTime(), item])
+        ).values());
         
         // --- REAL-TIME LIVE TICK MERGE ---
         // If we are requesting for 'Today' and at a 1-minute interval, 
@@ -300,8 +308,10 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         }
         // ---------------------------------
 
-        // --- MARKET HOURS FILTERING ---
-        const filteredData = uniqueData.filter(c => {
+        // --- SORT AND MARKET HOURS FILTERING ---
+        const sortedData = uniqueData.sort((a, b) => a.timestamp - b.timestamp);
+
+        const filteredData = sortedData.filter(c => {
             const ts = new Date(c.timestamp);
             const hours = ts.getHours();
             const minutes = ts.getMinutes();

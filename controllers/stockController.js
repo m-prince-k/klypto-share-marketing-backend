@@ -1,4 +1,5 @@
-const { prepareCandlesWithIndicators, dispatchOrder, indicatorEngine } = require('../helper');
+const { prepareCandlesWithIndicators, dispatchOrder, indicatorEngine, withDateTime } = require('../helper');
+const optionChainService = require('../services/optionChainService');
 const { getHistoricalCandle } = require('../services/angelOne');
 const store = require('../services/marketStore');
 const { syncLivePrices, syncCandleData } = require('../services/stockService');
@@ -295,10 +296,10 @@ const indicatorDetails = async (req, res) => {
         let formattedToDate = finalToDate;
 
         if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-            formattedFromDate = formatDate(new Date(finalFromDate), "09:15", finalInterval);
+            formattedFromDate = formatDate(new Date(finalFromDate), isCommodity ? "09:00" : "09:15", finalInterval);
         }
         if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-            formattedToDate = formatDate(new Date(finalToDate), "15:30", finalInterval);
+            formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
         }
 
         const uSym = symbol.toUpperCase();
@@ -306,10 +307,12 @@ const indicatorDetails = async (req, res) => {
             "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
             "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
             "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-            "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499"
+            "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
+            "GOLD": "234454", "SILVER": "234455"
         };
 
-        const finalExchange = (exchange || "NSE").toUpperCase();
+        const isCommodity = uSym === "GOLD" || uSym === "SILVER";
+        const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
         const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
 
         let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
@@ -318,8 +321,10 @@ const indicatorDetails = async (req, res) => {
         const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate);
         const candles = result.data;
 
+        const { withDateTime } = require('../helper');
         let values = await prepareCandlesWithIndicators(type, candles, res);
-        return await res.json({ message: `Indicator fetched by ${type}`, statusCode: 200, data: values });
+        const finalData = withDateTime(values);
+        return await res.json({ message: `Indicator fetched by ${type}`, statusCode: 200, data: finalData });
 
     } catch (error) {
         console.error("[IndicatorDetails] Error:", error.message);
@@ -359,10 +364,10 @@ const updateIndicator = async (req, res) => {
             let formattedToDate = finalToDate;
 
             if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-                formattedFromDate = formatDate(new Date(finalFromDate), "09:15", finalInterval);
+                formattedFromDate = formatDate(new Date(finalFromDate), isCommodity ? "09:00" : "09:15", finalInterval);
             }
             if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-                formattedToDate = formatDate(new Date(finalToDate), "15:30", finalInterval);
+                formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
             }
 
             const uSym = symbol.toUpperCase();
@@ -370,10 +375,12 @@ const updateIndicator = async (req, res) => {
                 "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
                 "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
                 "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-                "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499"
+                "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
+                "GOLD": "234454", "SILVER": "234455"
             };
 
-            const finalExchange = (exchange || "NSE").toUpperCase();
+            const isCommodity = uSym === "GOLD" || uSym === "SILVER";
+            const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
             const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
 
             let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
@@ -1604,6 +1611,55 @@ const getLiveGold = async (req, res) => {
     }
 };
 
+const debugStore = (req, res) => {
+    return res.json({
+        nfoMasterCount: store.nfoMasterData.length,
+        stocksCount: store.stocks.length,
+        latestPriceKeys: Object.keys(store.latestMarketData).slice(0, 10),
+        sampleMaster: store.nfoMasterData.slice(0, 2).map(o => ({ name: o.name, symbol: o.symbol, instrument: o.instrumenttype }))
+    });
+};
+
+const triggerOptionSnapshot = async (req, res) => {
+    try {
+        const { symbols } = req.query;
+        let symList;
+        
+        if (symbols) {
+            symList = symbols.split(',');
+        } else {
+            // Default to ALL Indices + ALL Loaded Stocks
+            const stockNames = store.stocks.map(s => s.name);
+            const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
+            symList = [...new Set([...indices, ...stockNames])];
+        }
+
+        // Fire and forget so request doesn't timeout
+        optionChainService.saveDailySnapshot(symList);
+        
+        return res.json({ 
+            success: true, 
+            message: `Option chain snapshot triggered for ${symList.length} symbols.`,
+            symbols: symList.slice(0, 10).concat("...")
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+const getFormattedOptionChain = async (req, res) => {
+    try {
+        const { symbol, expiry } = req.query;
+        if (!symbol) {
+            return res.status(400).json({ success: false, error: "Symbol is required." });
+        }
+        const data = await optionChainService.getFormattedOptionChain(symbol, expiry);
+        return res.json(data);
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 module.exports = {
     fetchOrders,
     getOptionsChain,
@@ -1624,5 +1680,8 @@ module.exports = {
     getStockOverview,
     getFuturesSymbols,
     getRSIScanner,
-    getLiveGold
+    getLiveGold,
+    triggerOptionSnapshot,
+    debugStore,
+    getFormattedOptionChain
 };

@@ -2,6 +2,7 @@ const { Candle } = require('../models');
 const store = require('./marketStore');
 const smartApi = require('./smartApi');
 const { getCandlesWithCache, formatDate } = require('./dbService');
+const optionChainService = require('./optionChainService');
 
 function startSchedulers() {
     // 1. Save Aggregated Candles to DB every 60 seconds
@@ -197,6 +198,33 @@ function startSchedulers() {
             }
         }
     }, 900000);
+
+    // 7. Daily Option Chain Snapshot (Every 1 hour during market hours, Mon-Fri)
+    setInterval(async () => {
+        const now = new Date();
+        const day = now.getDay(); // 0: Sun, 1: Mon, ..., 6: Sat
+        const hours = now.getHours();
+        const minutes = now.getMinutes();
+        const currentTime = hours * 100 + minutes;
+
+        // 1. Only Monday to Friday (1-5)
+        // 2. Only between 09:15 and 15:45
+        if (day >= 1 && day <= 5 && currentTime >= 915 && currentTime <= 1545) {
+            // We want to trigger it roughly at the start of every hour
+            // But since setInterval is 1hr, it will trigger once per hour anyway.
+            console.log(`[Scheduler] ${new Date().toISOString()} - Triggering periodic Option Chain snapshot for Indices and Stocks...`);
+            
+            try {
+                const stockNames = store.stocks.map(s => s.name);
+                const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
+                const allSymbols = [...new Set([...indices, ...stockNames])];
+                
+                await optionChainService.saveDailySnapshot(allSymbols);
+            } catch (err) {
+                console.error("[Scheduler] Snapshot Error:", err.message);
+            }
+        }
+    }, 3600000); // Check every 1 hour
 }
 
 const { syncPriorityOptionsHistory } = require('./optionSyncService');

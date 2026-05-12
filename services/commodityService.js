@@ -11,15 +11,22 @@ const fetchGoldHistory = async (interval = "1m", days = 30) => {
 
         if (goldContracts.length === 0) return [];
 
-        // Pick nearest expiry
+        // Pick nearest active expiry
         const nearestContracts = {};
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
         for (const contract of goldContracts) {
+            const expiryDate = new Date(contract.expiry);
+            if (expiryDate < today) continue; // Skip expired
+
             if (!nearestContracts[contract.name]) {
                 nearestContracts[contract.name] = contract;
             } else {
                 const currentExpiry = new Date(nearestContracts[contract.name].expiry);
-                const newExpiry = new Date(contract.expiry);
-                if (newExpiry < currentExpiry) nearestContracts[contract.name] = contract;
+                if (expiryDate < currentExpiry) {
+                    nearestContracts[contract.name] = contract;
+                }
             }
         }
 
