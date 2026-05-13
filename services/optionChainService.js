@@ -392,7 +392,9 @@ class OptionChainService {
                 if (dbData.length > 0) {
                     console.log(`[Snapshot] Saving ${dbData.length} records for ${uSym} to DB...`);
                     try {
-                        const result = await DailyOptionData.bulkCreate(dbData, { ignoreDuplicates: true });
+                        const result = await DailyOptionData.bulkCreate(dbData, { 
+                            updateOnDuplicate: ['ltp', 'open', 'high', 'low', 'close', 'oi', 'oiChange', 'iv', 'netChange', 'bidPrice', 'bidQty', 'askPrice', 'askQty', 'volume'] 
+                        });
                         console.log(`[Snapshot] SUCCESS: Saved ${result.length} records for ${uSym}.`);
                     } catch (dbErr) {
                         console.error(`[Snapshot] DB ERROR for ${uSym}:`, dbErr.message);

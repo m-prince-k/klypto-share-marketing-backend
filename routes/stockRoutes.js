@@ -22,6 +22,7 @@ router.get('/commodity/gold/live', stockController.getLiveGold);
 // ---------------------------indicator routes---------------------------
 router.post("/indicatorDetails", stockController.indicatorDetails);
 router.post("/updateIndicator", stockController.updateIndicator);
+router.get("/updateIndicator", stockController.updateIndicator); // Added GET support so direct browser URLs work
 
 router.post("/getTimeframes", stockController.getTimeFrames);
 router.post("/getIndicators", stockController.getIndicators);

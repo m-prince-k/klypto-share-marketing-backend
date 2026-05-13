@@ -14,8 +14,12 @@ module.exports = {
     GET_ALL_STOCKS: "getAllStocks",                 // Request initial stock list
     SUBSCRIBE_OPTION_CHAIN: "subscribeOptionChain", // Subscribe to live option chain updates
     UNSUBSCRIBE_OPTION_CHAIN: "unsubscribeOptionChain",
+    GET_MASTER_WATCHLIST: "getMasterWatchlist",     // Request master watchlist data
+    UPDATE_INDICATOR: "updateIndicator",            // Request dynamic indicator values
     
     // --- OUTPUT EVENTS (Server to Client) ---
+    UPDATE_INDICATOR_RESPONSE: "updateIndicatorResponse",
+    MASTER_WATCHLIST_RESPONSE: "masterWatchlistResponse",
     HISTORICAL_DATA_RESPONSE: "historicalDataResponse",
     HISTORICAL_DATA_ERROR: "historicalDataError",
     

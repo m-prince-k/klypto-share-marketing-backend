@@ -25,9 +25,15 @@ function formatTickData(data) {
     formatted.exchange = store.tokenToExchange[cleanToken] || "NSE";
     formatted.symbol = store.tokenToName[cleanToken] || cleanToken || "Unknown";
 
-    const priceFields = ['last_traded_price', 'open_price_day', 'high_price_day', 'low_price_day', 'close_price', 'avg_price', 'net_change'];
+    const priceFields = [
+        'last_traded_price', 'open_price_day', 'high_price_day', 'low_price_day', 
+        'close_price', 'avg_traded_price', 'avg_price', 'net_change', 
+        'upper_circuit', 'lower_circuit', 'fiftytwo_week_high', 'fiftytwo_week_low'
+    ];
     priceFields.forEach(field => {
-        if (formatted[field]) formatted[field] = (formatted[field] / 100).toFixed(2);
+        if (formatted[field]) {
+            formatted[field] = (parseFloat(formatted[field]) / 100).toFixed(2);
+        }
     });
 
     formatted.sentiment = (data.last_traded_price > data.close_price) ? "bullish" : "bearish";
@@ -44,7 +50,9 @@ function formatTickData(data) {
 
     if (!store.liveCandles[cleanToken]) {
         store.liveCandles[cleanToken] = {
-            open: ltp, high: ltp, low: ltp, close: ltp, volume: volume, minute: currentMinute
+            open: ltp, high: ltp, low: ltp, close: ltp, volume: volume, minute: currentMinute,
+            tickTime: formatted.exchange_timestamp,
+            readableTickTime: formatted.readable_timestamp
         };
     } else {
         const candle = store.liveCandles[cleanToken];
@@ -53,9 +61,13 @@ function formatTickData(data) {
             candle.low = Math.min(candle.low, ltp);
             candle.close = ltp;
             candle.volume = volume;
+            candle.tickTime = formatted.exchange_timestamp;
+            candle.readableTickTime = formatted.readable_timestamp;
         } else {
             store.liveCandles[cleanToken] = {
-                open: ltp, high: ltp, low: ltp, close: ltp, volume: volume, minute: currentMinute
+                open: ltp, high: ltp, low: ltp, close: ltp, volume: volume, minute: currentMinute,
+                tickTime: formatted.exchange_timestamp,
+                readableTickTime: formatted.readable_timestamp
             };
         }
     }
@@ -186,14 +198,30 @@ async function startWebSocketConnection(loginData, io) {
     }
 
     store.wsClient.on("tick", (data) => {
+        // Log raw tokens to see what's arriving
+        if (Math.random() < 0.1) {
+            const cleanToken = data.token ? data.token.replace(/\"/g, "").trim() : null;
+            const sym = store.tokenToName[cleanToken] || cleanToken;
+            console.log(`[WS Tick] Received tick for ${sym} (Token: ${data.token})`);
+        }
+        
         const formatted = formatTickData(data);
         if (formatted) {
-            // Process alerts in real-time
-            alertService.checkAlerts(formatted);
+            // Trigger Live Indicator Broadcast if anyone is listening
+            try {
+                const { handleIndicatorBroadcast } = require('./socket');
+                handleIndicatorBroadcast(formatted);
+            } catch (e) {}
+
+            // Handle Option Chain Logic
+            const optionChainService = require('./optionChainService');
             
             // Update live option chain subscribers
             optionChainService.handleTick(formatted);
 
+            // Process alerts in real-time
+            alertService.checkAlerts(formatted);
+            
             // Key by Symbol:Exchange to avoid collisions
             const key = `${formatted.symbol}:${formatted.exchange}`;
             store.latestMarketData[key] = formatted;
@@ -218,27 +246,48 @@ async function startWebSocketConnection(loginData, io) {
                     sentiment: formatted.sentiment || "neutral"
                 };
 
-                // Emit individual stock update
+                // Emit individual stock update (Sidebar)
                 io.emit(EVENTS.STOCK_UPDATE, stockUpdate);
+            }
 
-                // Add Live Tick for Chart (NSE)
-                const cleanToken = formatted.token ? formatted.token.replace(/\"/g, "").trim() : null;
-                const candle = store.liveCandles[cleanToken];
-                if (candle) {
-                    io.emit(EVENTS.LIVE_TICK, {
-                        token: cleanToken,
-                        symbol: formatted.symbol,
-                        exchange: formatted.exchange,
-                        data: {
-                            time: Math.floor(candle.minute / 1000),
-                            open: candle.open,
-                            high: candle.high,
-                            low: candle.low,
-                            close: candle.close,
-                            volume: candle.volume
-                        }
-                    });
+            // --- GLOBAL LIVE TICK BROADCAST FOR CHARTS ---
+            const cleanToken = (formatted.token || "").replace(/\"/g, "").trim();
+            const candle = store.liveCandles[cleanToken];
+            if (candle) {
+
+
+                // Log only for options or every 100th tick to avoid spam
+                if (formatted.symbol.length > 10 || Math.random() < 0.01) {
+                    console.log(`[WebSocket] Emitting LIVE_TICK for ${formatted.symbol} (${cleanToken}) | Close: ${candle.close}`);
                 }
+                const tickPayload = {
+                    token: cleanToken,
+                    symbol: formatted.symbol,
+                    exchange: formatted.exchange,
+                    receivedAt: new Date().toISOString(),
+                    data: {
+                        time: Math.floor(candle.minute / 1000),
+                        tickTime: formatted.exchange_timestamp,
+                        readableTickTime: formatted.readable_timestamp,
+                        open: candle.open,
+                        high: candle.high,
+                        low: candle.low,
+                        close: candle.close,
+                        last_traded_price: formatted.last_traded_price,
+                        volume: candle.volume
+                    }
+                };
+
+                // BROADCAST to 'liveTick'
+                io.emit(EVENTS.LIVE_TICK, tickPayload);
+
+                // BROADCAST to 'liveticks' for plural event support
+                io.emit('liveticks', tickPayload);
+
+                // Console log for confirmation
+                // if (formatted.symbol === "NIFTY 19MAY2026 23450 CE") {
+                //     console.log(`[SocketEmit] Emitted tick for ${formatted.symbol} | LTP: ${candle.close} | Time: ${tickPayload.receivedAt}`);
+                // }
             }
 
             if (formatted.exchange === "MCX") {
@@ -299,4 +348,4 @@ async function manageWebSocket(loginData, io) {
     await startWebSocketConnection(loginData, io);
 }
 
-module.exports = { startWebSocketConnection, manageWebSocket };
+module.exports = { startWebSocketConnection, manageWebSocket, isMarketOpen };

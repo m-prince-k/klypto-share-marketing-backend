@@ -242,9 +242,12 @@ async function syncLivePrices() {
             ...(store.futures || [])
         ];
 
-        if (allItems.length === 0) return;
+        if (allItems.length === 0) {
+            console.log("[LiveSync] No items in store to sync.");
+            return;
+        }
 
-        console.log(`[LiveSync] Performing initial LTP sync for ${allItems.length} items (Stocks, Indices, Futures)...`);
+        console.log(`[LiveSync] Performing LTP sync for ${allItems.length} items...`);
         
         const chunks = [];
         for (let i = 0; i < allItems.length; i += 50) {
@@ -253,39 +256,26 @@ async function syncLivePrices() {
 
         for (const chunk of chunks) {
             try {
-                const payload = {
-                    "exchangeTokens": {
-                        "NSE": chunk.filter(s => s.segment === "NSE").map(s => s.token),
-                        "NFO": chunk.filter(s => s.segment === "NFO").map(s => s.token)
-                    }
-                };
-
-                if (payload.exchangeTokens.NSE?.length === 0) delete payload.exchangeTokens.NSE;
-                if (payload.exchangeTokens.NFO?.length === 0) delete payload.exchangeTokens.NFO;
-
-                if (!payload.exchangeTokens || Object.keys(payload.exchangeTokens).length === 0) continue;
-
-                const response = await axios.post('https://apiconnect.angelbroking.com/rest/secure/angelbroking/market/v1/quote/', {
-                    mode: "FULL",
-                    exchangeTokens: payload.exchangeTokens
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${store.loginData.jwtToken}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'X-UserType': 'USER',
-                        'X-SourceID': 'WEB',
-                        'X-ClientLocalIP': '127.0.0.1',
-                        'X-ClientPublicIP': '127.0.0.1',
-                        'X-MACAddress': 'MAC',
-                        'X-PrivateKey': smartApi.api_key || 'AsZssQ9i'
-                    }
+                const exchangeTokens = {};
+                chunk.forEach(item => {
+                    const seg = item.segment || (item.exch_seg) || "NSE";
+                    if (!exchangeTokens[seg]) exchangeTokens[seg] = [];
+                    exchangeTokens[seg].push(item.token);
                 });
 
-                if (response && response.data && response.data.status && response.data.data && response.data.data.fetched) {
-                    response.data.data.fetched.forEach(item => {
-                        const name = store.tokenToName[item.symbolToken] || item.tradingSymbol;
-                        const segment = item.exchange;
+                if (Object.keys(exchangeTokens).length === 0) continue;
+
+                // Use smartApi instead of raw axios for session persistence
+                const response = await smartApi.marketData({
+                    mode: "FULL",
+                    exchangeTokens: exchangeTokens
+                });
+
+                if (response && response.status && response.data && response.data.fetched) {
+                    response.data.fetched.forEach(item => {
+                        const token = String(item.symbolToken || item.token);
+                        const name = store.tokenToName[token] || item.tradingSymbol || item.symbol;
+                        const segment = item.exchange || "NSE";
                         const key = `${name}:${segment}`;
 
                         const ltp = parseFloat(item.ltp || 0);
@@ -295,19 +285,26 @@ async function syncLivePrices() {
 
                         store.latestMarketData[key] = {
                             symbol: name,
+                            token: token,
+                            exchange: segment,
                             last_traded_price: ltp.toFixed(2),
                             close_price: close.toFixed(2),
                             change: (rawChange > 0 ? "+" : "") + rawChange.toFixed(2),
                             percent_change: pChange,
-                            last_update_time: new Date().toISOString()
+                            last_update_time: new Date().toISOString(),
+                            status: "live"
                         };
                     });
+                } else {
+                    console.warn(`[LiveSync] Unexpected API response format:`, JSON.stringify(response));
                 }
             } catch (chunkError) {
                 console.error(`[LiveSync] Chunk Sync Failed:`, chunkError.message);
             }
+            // Small delay to respect rate limits
+            await new Promise(r => setTimeout(r, 200));
         }
-        console.log("[LiveSync] Initial LTP sync completed.");
+        console.log("[LiveSync] LTP sync completed.");
     } catch (err) {
         console.error("syncLivePrices Error:", err.message);
     }

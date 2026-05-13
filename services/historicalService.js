@@ -4,6 +4,7 @@ const { getHistoricalCandle } = require('./angelOne');
 const { formatDate, getCandlesWithCache } = require('./dbService');
 
 async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, exchange, segment }) {
+    let extraInfo = null;
     try {
         const intervalMap = {
             "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
@@ -43,8 +44,14 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
         const uSym = symbol.toUpperCase();
         const isCommodity = uSym === "GOLD" || uSym === "SILVER" || uSym === "CRUDEOIL" || uSym === "NATURALGAS";
 
-        const finalExchange = (exchange || segment || (isCommodity ? "MCX" : "NSE")).toUpperCase();
-        const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
+        let finalExchange = (exchange || segment || (isCommodity ? "MCX" : "NSE")).toUpperCase();
+        
+        // Auto-detect NFO for options if exchange is NSE but symbol is clearly an option
+        if (finalExchange === "NSE" && (uSym.endsWith("CE") || uSym.endsWith("PE") || uSym.includes("FUT"))) {
+            finalExchange = "NFO";
+        }
+        
+        const mappedExchange = finalExchange; 
 
 
         // Explicit Token Resolution with Hardcoded Map for Top Stocks
@@ -89,14 +96,43 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
             }
         }
 
-
-
-        if (!finalToken) {
-            throw new Error(`Token not found for symbol: ${symbol}`);
+        // Robust resolution for NFO contracts (even if token is cached, we need extraInfo for DB)
+        const isNFO = mappedExchange === "NFO" || uSym.endsWith("CE") || uSym.endsWith("PE") || uSym.includes("FUT");
+        
+        if (isNFO) {
+            const noSpaceSym = uSym.replace(/\s+/g, '');
+            const shortYearSym = noSpaceSym.replace(/20([2-3][0-9])/, '$1');
+            const nfoMatch = (store.nfoMasterData || []).find(s => {
+                const t = s.symbol.toUpperCase();
+                const tr = s.tradingSymbol?.toUpperCase();
+                return t === uSym || t === noSpaceSym || t === shortYearSym ||
+                        tr === uSym || tr === noSpaceSym || tr === shortYearSym;
+            });
+            if (nfoMatch) {
+                finalToken = nfoMatch.token;
+                // Populate metadata for OptionChain table
+                extraInfo = {
+                    underlying: nfoMatch.name,
+                    strike: parseFloat(nfoMatch.strike) / 100,
+                    expiry: nfoMatch.expiry,
+                    optionType: nfoMatch.symbol.endsWith("CE") ? "CE" : "PE"
+                };
+                // Cache for future use
+                store.tokenToName[finalToken] = uSym;
+                store.tokenToExchange[finalToken] = mappedExchange;
+            }
         }
 
-        // Auto-Add Tracking for Live Updates
-        if (store.wsClient && !store.stocks.some(s => s.token === finalToken)) {
+        if (!finalToken) throw new Error(`Token not found for symbol: ${symbol}`);
+            
+            // Subscribe via Angel One WebSocket
+        // Add to tracked stocks if not present
+        if (!store.stocks.some(s => s.token === finalToken)) {
+            store.stocks.push({ name: uSym, token: finalToken, segment: mappedExchange });
+        }
+
+        // Always attempt to subscribe/re-subscribe via Angel One WebSocket
+        if (store.wsClient) {
             const exchangeTypeMap = { "NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5 };
             const exchType = exchangeTypeMap[mappedExchange] || 1;
             
@@ -104,21 +140,18 @@ async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, e
             store.tokenToName[finalToken] = uSym;
             store.tokenToExchange[finalToken] = mappedExchange;
 
-            // Add to tracked stocks
-            store.stocks.push({ name: uSym, token: finalToken, segment: mappedExchange });
-            
-            // Subscribe via Angel One WebSocket
+            // Subscribe via Angel One WebSocket (Mode 3 for Full Data/OHLC)
             store.wsClient.fetchData({ 
                 correlationID: `auto_add_${uSym}`, 
                 action: 1, 
-                mode: 2, 
+                mode: 3, 
                 exchangeType: exchType, 
                 tokens: [finalToken] 
             });
-            console.log(`[HistoricalService] Auto-subscribed to ${uSym} (${finalToken}) on ${mappedExchange} for live updates.`);
+            console.log(`[HistoricalService] Force-subscribed ${uSym} (${finalToken}) on ${mappedExchange} (Mode: 3)`);
         }
 
-        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate);
+        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate, extraInfo);
         
         return {
             success: true,
