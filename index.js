@@ -7,8 +7,8 @@ const { connectSocket, getIO, startGoldBroadcast } = require('./services/socket'
 const { sequelize } = require('./models');
 const store = require('./services/marketStore');
 const { login } = require('./services/authService');
-const { fetchTop200Stocks } = require('./services/stockService');
-const { startWebSocketConnection } = require('./services/webSocketService');
+const { fetchTop200Stocks, syncLivePrices } = require('./services/stockService');
+const { startWebSocketConnection, manageWebSocket } = require('./services/webSocketService');
 const { startSchedulers, runInitialHistoricalLoad } = require('./services/schedulerService');
 
 const cors = require('cors');
@@ -17,6 +17,7 @@ const optionsRoutes = require('./routes/optionsRoutes');
 const futuresRoutes = require('./routes/futuresRoutes');
 const authRoutes = require('./routes/authRoutes');
 const alertRoutes = require('./routes/alertRoutes');
+const indicatorRoutes = require('./routes/indicatorRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -41,6 +42,7 @@ app.use('/equity', stockRoutes);
 app.use('/options', optionsRoutes);
 app.use('/futures', futuresRoutes);
 app.use('/alerts', alertRoutes);
+app.use('/api/indicator', indicatorRoutes);
 
 
 // Socket logic is now managed in services/socket.js
@@ -59,6 +61,11 @@ async function bootstrap() {
             return;
         }
 
+        store.loginData = loginData.data;
+
+        // Fetch initial LTP for all stocks to prevent 0.00 display
+        await syncLivePrices();
+
         server.listen(PORT, () => {
             console.log(`\n=================================================`);
             console.log(`🚀 SERVER RUNNING AT: http://localhost:${PORT}`);
@@ -69,10 +76,10 @@ async function bootstrap() {
             console.log(`🔮 FUTURES LIVE:     http://localhost:${PORT}/futures/live`);
             console.log(`=================================================\n`);
 
-            startWebSocketConnection(loginData, io);
+            manageWebSocket(loginData, io);
             alertService.loadAlerts();
             startSchedulers();
-            runInitialHistoricalLoad();
+            // runInitialHistoricalLoad(); // Disabling temporarily to prevent server stall
             startGoldBroadcast();
         });
     } catch (err) {

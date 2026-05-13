@@ -4,60 +4,68 @@ const { Stock, LivePrice, Candle, Future } = require('../models');
 const smartApi = require('./smartApi');
 const { formatDate } = require('./dbService');
 
-const userSymbols = ["ABB","ABBPOW","ADAENT","ADAGRE","ADAPOR","ADATRA","ADICAP","ALKLAB","AMBCE","AMBEN","ANGBRO","APLAPO","APOHOS","ASHLEY","ASIPAI","ASTPOL","AURPHA","AUSMA","AVESUP","AXIBAN","BAAUTO","BAFINS",
-    "BAJFI","BAJHOL","BANBAN","BANBAR","BANIND","BHAAIR","BHADYN","BHAELE","BHAFOR","BHAINF","BHAPET","BHEL","BIOCON","BLUSTA","BOSLIM","BRIIND","BSE","CADHEA","CANBAN","CDSL","CHOINV","CIPLA","CNXBAN",
-    "COALIN","COLPAL","COMAGE","CONCOR","CROGR","CROGRE","CUMIND","DABIND","DELLIM","DIVLAB","DIXTEC","DLFLIM","DRREDD","EICMOT","EXIIND","FEDBAN","FORHEA","FSNECO","GAIL","GLEPHA","GMRINF","GODCON",
-    "GODPRO","GRASIM","HAVIND","HCLTEC","HDFAMC","HDFBAN","HDFSTA","HERHON","HINAER","HINDAL","HINLEV","HINPET","HINZIN","HUDCO","ICIBAN","ICILOM","ICIPRU","IDECEL","IDFBAN","IIFWEA","INDBA","INDEN",
-    "INDHO","INDHOT","INDIBA","INDOIL","INDR","INDREN","INFEDG","INFTEC","INOWIN","INTAVI","ITC","JINSP","JIOFIN","JSWENE","JSWSTE","JUBFOO","KALJEW","KAYTEC","KEIIND","KFITEC","KOTMAH","KPITE","LARTOU",
-    "LAULAB","LIC","LICHF","LTFINA","LTINFO","LUPIN","MACDEV","MAHMAH","MANAFI","MAPHA","MARLIM","MARUTI","MAXFIN","MAXHEA","MAZDOC","MCX","MININD","MOTSUM","MPHLIM","MUTFIN","NATALU","NATMIN","NBCC",
-    "NESIND","NHPC","NIFFIN","NIFNEX","NIFSEL","NIFTY","NIITEC","NTPC","NUVWEA","OBEREA","ODICEM","OILIND","ONE97","ONGC","ORAFIN","PAGIND","PBFINT","PERSYS","PETLNG","PGELEC","PHOMIL","PIDIND","PIIND",
-    "PIRPHA","PNBHOU","POLI","POWFIN","POWGRI","PREENR","PREEST","PUNBAN","RAIVIK","RBLBAN","RELIND","RUCSOY","RURELE","SAIL","SBICAR","SBILIF","SHRCEM","SHRTRA","SIEMEN","SOLIN","SONBLW","SRF","STABAN",
-    "SUNPHA","SUPIND","SUZENE","SWILIM","SYNINT","TATELX","TATGLO","TATMOT","TATPOW","TATSTE","TATTEC","TCS","TECMAH","TITIND","TORPHA","TORPOW","TRENT","TUBIN","TVSMOT","ULTCEM","UNIBAN","UNIP",
-    "UNISPI","VARBEV","VEDLIM","VOLTAS","WAAENE","WIPRO","YESBAN","ZOMLIM"];
+const userSymbols = ["ABB", "ABBPOW", "ADAENT", "ADAGRE", "ADAPOR", "ADATRA", "ADICAP", "ALKLAB", "AMBCE", "AMBEN", "ANGBRO", "APLAPO", "APOHOS", "ASHLEY", "ASIPAI", "ASTPOL", "AURPHA", "AUSMA", "AVESUP", "AXIBAN", "BAAUTO", "BAFINS",
+    "BAJFI", "BAJHOL", "BANBAN", "BANBAR", "BANIND", "BHAAIR", "BHADYN", "BHAELE", "BHAFOR", "BHAINF", "BHAPET", "BHEL", "BIOCON", "BLUSTA", "BOSLIM", "BRIIND", "BSE", "CADHEA", "CANBAN", "CDSL", "CHOINV", "CIPLA", "CNXBAN",
+    "COALIN", "COLPAL", "COMAGE", "CONCOR", "CROGR", "CROGRE", "CUMIND", "DABIND", "DELLIM", "DIVLAB", "DIXTEC", "DLFLIM", "DRREDD", "EICMOT", "EXIIND", "FEDBAN", "FORHEA", "FSNECO", "GAIL", "GLEPHA", "GMRINF", "GODCON",
+    "GODPRO", "GRASIM", "HAVIND", "HCLTEC", "HDFAMC", "HDFBAN", "HDFSTA", "HERHON", "HINAER", "HINDAL", "HINLEV", "HINPET", "HINZIN", "HUDCO", "ICIBAN", "ICILOM", "ICIPRU", "IDECEL", "IDFBAN", "IIFWEA", "INDBA", "INDEN",
+    "INDHO", "INDHOT", "INDIBA", "INDOIL", "INDR", "INDREN", "INFEDG", "INFTEC", "INOWIN", "INTAVI", "ITC", "JINSP", "JIOFIN", "JSWENE", "JSWSTE", "JUBFOO", "KALJEW", "KAYTEC", "KEIIND", "KFITEC", "KOTMAH", "KPITE", "LARTOU",
+    "LAULAB", "LIC", "LICHF", "LTFINA", "LTINFO", "LUPIN", "MACDEV", "MAHMAH", "MANAFI", "MAPHA", "MARLIM", "MARUTI", "MAXFIN", "MAXHEA", "MAZDOC", "MCX", "MININD", "MOTSUM", "MPHLIM", "MUTFIN", "NATALU", "NATMIN", "NBCC",
+    "NESIND", "NHPC", "NIFFIN", "NIFNEX", "NIFSEL", "NIFTY", "NIITEC", "NTPC", "NUVWEA", "OBEREA", "ODICEM", "OILIND", "ONE97", "ONGC", "ORAFIN", "PAGIND", "PBFINT", "PERSYS", "PETLNG", "PGELEC", "PHOMIL", "PIDIND", "PIIND",
+    "PIRPHA", "PNBHOU", "POLI", "POWFIN", "POWGRI", "PREENR", "PREEST", "PUNBAN", "RAIVIK", "RBLBAN", "RELIND", "RUCSOY", "RURELE", "SAIL", "SBICAR", "SBILIF", "SHRCEM", "SHRTRA", "SIEMEN", "SOLIN", "SONBLW", "SRF", "STABAN",
+    "SUNPHA", "SUPIND", "SUZENE", "SWILIM", "SYNINT", "TATELX", "TATGLO", "TATMOT", "TATPOW", "TATSTE", "TATTEC", "TCS", "TECMAH", "TITIND", "TORPHA", "TORPOW", "TRENT", "TUBIN", "TVSMOT", "ULTCEM", "UNIBAN", "UNIP",
+    "UNISPI", "VARBEV", "VEDLIM", "VOLTAS", "WAAENE", "WIPRO", "YESBAN", "ZOMLIM"];
 
 const manualMap = {
-    "RELIND": "RELIANCE", "STABAN": "SBIN", "ICIBAN": "ICICIBANK", "HDFBAN": "HDFCBANK",
-    "AXIBAN": "AXISBANK", "KOTMAH": "KOTAKBANK", "BAJFI": "BAJFINANCE", "BAFINS": "BAJAJFINSV",
-    "TATSTE": "TATASTEEL", "TATMOT": "TATAMOTORS", "INFTEC": "INFY", "HCLTEC": "HCLTECH",
-    "HINLEV": "HINDUNILVR", "BHAAIR": "BHARTIARTL", "HINDAL": "HINDALCO", "JSWSTE": "JSWSTEEL",
-    "BAAUTO": "BAJAJ-AUTO", "LARSEN": "LT", "LARTOU": "LT", "MUTFIN": "MUTHOOTFIN",
-    "SUNPHA": "SUNPHARMA", "ULTCEM": "ULTRACEMCO", "ADAPOR": "ADANIPORTS", "ADAENT": "ADANIENT",
-    "ADAGRE": "ADANIGREEN", "ADATRA": "ADANIENSOL", "BHAPET": "BPCL", "HINPET": "HPCL",
-    "INDHO": "INDIANHOSP", "APOHOS": "APOLLOHOSP", "AURPHA": "AUROPHARMA", "BIOCON": "BIOCON",
-    "CADHEA": "ZYDUSLIFE", "CIPLA": "CIPLA", "DIVLAB": "DIVISLAB", "DRREDD": "DRREDDY",
-    "EICMOT": "EICHERMOT", "GRASIM": "GRASIM", "HAVIND": "HAVELLS", "HERHON": "HEROMOTOCO",
-    "HINAER": "HAL", "HINPET": "HINDPETRO", "HUDCO": "HUDCO", "ICILOM": "ICICIGI",
+    "ABB": "ABB", "ABBPOW": "ABBINDIA", "ADAENT": "ADANIENT", "ADAGRE": "ADANIGREEN", "ADAPOR": "ADANIPORTS",
+    "ADATRA": "ADANIENSOL", "ADICAP": "ABCAPITAL", "ALKLAB": "ALKEM", "AMBCE": "AMBUJACEM", "AMBEN": "AMBER",
+    "ANGBRO": "ANGELONE", "APLAPO": "APOLLOTYRE", "APOHOS": "APOLLOHOSP", "ASHLEY": "ASHOKLEY",
+    "ASIPAI": "ASIANPAINT", "ASTPOL": "ASTRAL", "AURPHA": "AUROPHARMA", "AXIBAN": "AXISBANK",
+    "BAAUTO": "BAJAJ-AUTO", "BAFINS": "BAJAJFINSV", "BAJFI": "BAJFINANCE", "BAJHOL": "BAJAJHLDNG",
+    "BANBAN": "BANDHANBNK", "BANBAR": "BANKBARODA", "BANIND": "BANKINDIA", "BHAAIR": "BHARTIARTL",
+    "BHADYN": "BDL", "BHAELE": "BEL", "BHAFOR": "BHARATFORG", "BHAINF": "INDUSTOWER",
+    "BHAPET": "BPCL", "BHEL": "BHEL", "BIOCON": "BIOCON", "BLUSTA": "BLUESTARCO",
+    "BOSLIM": "BOSCHLTD", "BRIIND": "BRITANNIA", "BSE": "BSE", "CADHEA": "ZYDUSLIFE",
+    "CANBAN": "CANBK", "CDSL": "CDSL", "CHOINV": "CHOLAFIN", "CIPLA": "CIPLA",
+    "COALIN": "COALINDIA", "COLPAL": "COLPAL", "CONCOR": "CONCOR", "CROGRE": "CGPOWER",
+    "CUMIND": "CUMMINSIND", "DABIND": "DABUR", "DELLIM": "DELHIVERY", "DIVLAB": "DIVISLAB",
+    "DIXTEC": "DIXON", "DLFLIM": "DLF", "DRREDD": "DRREDDY", "EICMOT": "EICHERMOT",
+    "EXIIND": "EXIDEIND", "FEDBAN": "FEDERALBNK", "FORHEA": "FORTIS", "FSNECO": "NYKAA",
+    "GAIL": "GAIL", "GLEPHA": "GLENMARK", "GMRINF": "GMRINFRA", "GODCON": "GODREJCP",
+    "GODPRO": "GODREJPROP", "GRASIM": "GRASIM", "HAVIND": "HAVELLS", "HCLTEC": "HCLTECH",
+    "HDFAMC": "HDFCAMC", "HDFBAN": "HDFCBANK", "HDFSTA": "HDFCLIFE", "HERHON": "HEROMOTOCO",
+    "HINAER": "HAL", "HINDAL": "HINDALCO", "HINLEV": "HINDUNILVR", "HINPET": "HINDPETRO",
+    "HINZIN": "HINDZINC", "HUDCO": "HUDCO", "ICIBAN": "ICICIBANK", "ICILOM": "ICICIGI",
     "ICIPRU": "ICICIPRULI", "IDECEL": "IDEA", "IDFBAN": "IDFCFIRSTB", "IIFWEA": "360ONE",
-    "INDHOT": "INDHOTEL", "INDIBA": "INDIABULLS", "INOWIN": "INOXWIND", "INTAVI": "INDIGO",
-    "JIOFIN": "JIOFIN", "JSWENE": "JSWENERGY", "KALJEW": "KALYANKJIL", "KAYTEC": "KAYNES",
-    "KFITEC": "KFINTECH", "KPITE": "KPITTECH", "LIC": "LICI", "LTFINA": "L&TFH",
-    "LTINFO": "LTIM", "LUPIN": "LUPIN", "MACDEV": "LODHA", "MAHMAH": "M&M",
-    "MANAFI": "MANAPPURAM", "MAPHA": "MAPMYINDIA", "MARLIM": "MARICO", "MARUTI": "MARUTI",
-    "MAXFIN": "MFSL", "MAXHEA": "MAXHEALTH", "MAZDOC": "MAZDOCK", "MOTSUM": "MOTHERSON",
-    "MPHLIM": "MPHASIS", "NBCC": "NBCC", "NESIND": "NESTLEIND", "NHPC": "NHPC",
-    "OILIND": "OIL", "ONE97": "PAYTM", "ONGC": "ONGC", "ORAFIN": "OFSS",
-    "PAGIND": "PAGEIND", "PERSYS": "PERSISTENT", "PETLNG": "PETRONET", "PGELEC": "POWERGRID",
+    "INDEN": "INDIGO", "INDHO": "INDIANHOSP", "INDHOT": "INDHOTEL", "INDIBA": "INDIABULLS",
+    "INDOIL": "IOC", "INDREN": "IREDA", "INFEDG": "NAUKRI", "INFTEC": "INFY",
+    "INOWIN": "INOXWIND", "INTAVI": "INDIGO", "ITC": "ITC", "JINSP": "JSL",
+    "JIOFIN": "JIOFIN", "JSWENE": "JSWENERGY", "JSWSTE": "JSWSTEEL", "JUBFOO": "JUBILANT",
+    "KALJEW": "KALYANKJIL", "KAYTEC": "KAYNES", "KEIIND": "KEI", "KFITEC": "KFINTECH",
+    "KOTMAH": "KOTAKBANK", "KPITE": "KPITTECH", "LARTOU": "LT", "LAULAB": "LAURUSLABS",
+    "LIC": "LICI", "LICHF": "LICHSGFIN", "LTFINA": "L&TFH", "LTINFO": "LTIM",
+    "LUPIN": "LUPIN", "MACDEV": "LODHA", "MAHMAH": "M&M", "MANAFI": "MANAPPURAM",
+    "MAPHA": "MAPMYINDIA", "MARLIM": "MARICO", "MARUTI": "MARUTI", "MAXFIN": "MFSL",
+    "MAXHEA": "MAXHEALTH", "MAZDOC": "MAZDOCK", "MCX": "MCX", "MININD": "COALINDIA",
+    "MOTSUM": "MOTHERSON", "MPHLIM": "MPHASIS", "MUTFIN": "MUTHOOTFIN", "NATALU": "NATIONALUM",
+    "NATMIN": "NMDC", "NBCC": "NBCC", "NESIND": "NESTLEIND", "NHPC": "NHPC",
+    "NIFFIN": "NIFTY FINANCIAL SERVICES", "NIITEC": "COFORGE", "NTPC": "NTPC",
+    "NUVWEA": "NUVAMA", "OBEREA": "OBEROIRLTY", "ODICEM": "ULTRACEMCO", "OILIND": "OIL",
+    "ONE97": "PAYTM", "ONGC": "ONGC", "ORAFIN": "OFSS", "PAGIND": "PAGEIND",
+    "PBFINT": "PBフィンテック", "PERSYS": "PERSISTENT", "PETLNG": "PETRONET", "PGELEC": "POWERGRID",
     "PHOMIL": "PHOENIXLTD", "PIDIND": "PIDILITIND", "PIIND": "PIIND", "PIRPHA": "PIRPHARMA",
-    "PNBHOU": "PNBHOUSING", "POLI": "POLYCAB", "POWFIN": "PFC", "PREENR": "PRESTIGE",
-    "PREEST": "PRESTIGE", "PUNBAN": "PNB", "RAIVIK": "RVNL", "RBLBAN": "RBLBANK",
-    "RUCSOY": "PATANJALI", "RURELE": "REC", "SAIL": "SAIL", "SBICAR": "SBICARD",
-    "SBILIF": "SBILIFE", "SHRCEM": "SHREECEM", "SHRTRA": "SHRIRAMFIN", "SIEMEN": "SIEMENS",
-    "SOLIN": "SOLARINDS", "SONBLW": "SONACOMS", "SRF": "SRF", "SUPIND": "SUPREMEIND",
-    "SUZENE": "SUZLON", "TATELX": "TATAELXSI", "TATGLO": "TATACONSUM", "TATTEC": "TATATECH",
-    "TECMAH": "TECHM", "TITIND": "TITAN", "TORPHA": "TORNTPHARM", "TORPOW": "TORNTPOWER",
-    "TRENT": "TRENT", "TUBIN": "TIINDIA", "TVSMOT": "TVSMOTOR", "UNISPI": "UNITDSPR",
-    "VARBEV": "VBL", "VEDLIM": "VEDL", "VOLTAS": "VOLTAS", "WAAENE": "WAREEENER",
-    "ZOMLIM": "ZOMATO", "INDUSTOWER": "INDUSTOWER", "ABB": "ABB",
-    "TATMOT": "TATAMOTORS", "TATPOW": "TATAPOWER", "YESBAN": "YESBANK",
-    "ASHLEY": "ASHOKLEY", "COALIN": "COALINDIA", "DLFLIM": "DLF",
-    "FEDBAN": "FEDERALBNK", "GLEPHA": "GLENMARK", "GMRINF": "GMRINFRA",
-    "JUBFOO": "JUBILANT", "NIITEC": "NIITTECH", "OBEREA": "OBEROIRLTY",
-    "TATCON": "TATACONSUM", "UNIBAN": "UNIONBANK", "ZOMLIM": "ZOMATO",
-    "APLAPO": "APOLLOTYRE", "ASIPAI": "ASIANPAINT", "ASTPOL": "ASTRAL",
-    "BANBAR": "BANKBARODA", "BANIND": "BANKINDIA", "CANBAN": "CANBK",
-    "DABIND": "DABUR", "EXIIND": "EXIDEIND", "HDFSTA": "HDFCLIFE",
-    "INDOIL": "IOC", "JSWSTE": "JSWSTEEL", "LICHF": "LICHSGFIN",
-    "LTFINA": "L&TFH", "RELIND": "RELIANCE"
+    "PNBHOU": "PNBHOUSING", "POLI": "POLYCAB", "POWFIN": "PFC", "POWGRI": "POWERGRID",
+    "PREENR": "PRESTIGE", "PREEST": "PRESTIGE", "PUNBAN": "PNB", "RAIVIK": "RVNL",
+    "RBLBAN": "RBLBANK", "RELIND": "RELIANCE", "RUCSOY": "PATANJALI", "RURELE": "REC",
+    "SAIL": "SAIL", "SBICAR": "SBICARD", "SBILIF": "SBILIFE", "SHRCEM": "SHREECEM",
+    "SHRTRA": "SHRIRAMFIN", "SIEMEN": "SIEMENS", "SOLIN": "SOLARINDS", "SONBLW": "SONACOMS",
+    "SRF": "SRF", "STABAN": "SBIN", "SUNPHA": "SUNPHARMA", "SUPIND": "SUPREMEIND",
+    "SUZENE": "SUZLON", "SWILIM": "SWANENERGY", "SYNINT": "SYNGENE", "TATELX": "TATAELXSI",
+    "TATGLO": "TATACONSUM", "TATMOT": "TATAMOTORS", "TATPOW": "TATAPOWER", "TATSTE": "TATASTEEL",
+    "TATTEC": "TATATECH", "TCS": "TCS", "TECMAH": "TECHM", "TITIND": "TITAN",
+    "TORPHA": "TORNTPHARM", "TORPOW": "TORNTPOWER", "TRENT": "TRENT", "TUBIN": "TIINDIA",
+    "TVSMOT": "TVSMOTOR", "ULTCEM": "ULTRACEMCO", "UNIBAN": "UNIONBANK", "UNIP": "UNIPARTS",
+    "UNISPI": "UNITDSPR", "VARBEV": "VBL", "VEDLIM": "VEDL", "VOLTAS": "VOLTAS",
+    "WAAENE": "WAREEENER", "WIPRO": "WIPRO", "YESBAN": "YESBANK", "ZOMLIM": "ZOMATO"
 };
 
 async function fetchTop200Stocks() {
@@ -65,7 +73,7 @@ async function fetchTop200Stocks() {
         console.log("Fetching Master Scrip list...");
         const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
         const allScrips = response.data;
-        
+
         const nseEquity = allScrips.filter(s => s.exch_seg === "NSE" && s.instrumenttype === "");
         const bseEquity = allScrips.filter(s => s.exch_seg === "BSE" && s.instrumenttype === "");
         const nfoScrips = allScrips.filter(s => s.exch_seg === "NFO" || s.exch_seg === "BFO");
@@ -74,25 +82,36 @@ async function fetchTop200Stocks() {
         store.nfoMasterData = nfoScrips;
         store.mcxMasterData = mcxScrips;
 
-        const currentStocks = [];
+        const uniqueStocksMap = new Map();
+        const indicesList = [];
         const currentFutures = [];
 
-        // Add Indices
+        // Process Indices
         const INDICES = [
             { name: "NIFTY", token: "26000", segment: "NSE" },
             { name: "BANKNIFTY", token: "26009", segment: "NSE" },
             { name: "FINNIFTY", token: "26037", segment: "NSE" },
-            { name: "MIDCPNIFTY", token: "26035", segment: "NSE" },
-            { name: "SENSEX", token: "99919000", segment: "BSE" }
+            { name: "MIDCPNIFTY", token: "26035", segment: "NSE" }
         ];
 
         INDICES.forEach(idx => {
             store.symbolToTokenMaster[idx.name] = idx.token;
             store.tokenToName[idx.token] = idx.name;
             store.tokenToExchange[idx.token] = idx.segment;
-            currentStocks.push({
-                name: idx.name, userCode: idx.name, token: idx.token,
-                actualSymbol: idx.name, fullName: idx.name, segment: idx.segment
+
+            // Get nearest 3 expiries for Index Futures
+            const idxFuts = nfoScrips.filter(f => f.name === idx.name && f.instrumenttype === "FUTIDX");
+            const expiries = [...new Set(idxFuts.map(f => f.expiry))].sort((a, b) => new Date(a) - new Date(b)).slice(0, 3);
+
+            indicesList.push({
+                name: idx.name,
+                userCode: idx.name,
+                token: idx.token,
+                actualSymbol: idx.name,
+                fullName: idx.name,
+                segment: idx.segment,
+                expiry: expiries[0] || null,
+                expiries: expiries
             });
         });
 
@@ -110,7 +129,7 @@ async function fetchTop200Stocks() {
             store.tokenToName[s.token] = sym;
             store.tokenToExchange[s.token] = "BSE";
         });
-        
+
         // Index MCX for historical support (specifically GOLD, SILVER, etc.)
         const commodityNames = ["GOLD", "GOLDM", "SILVER", "SILVERM", "CRUDEOIL", "NATURALGAS"];
         const todayForMCX = new Date();
@@ -134,37 +153,54 @@ async function fetchTop200Stocks() {
             store.tokenToExchange[s.token] = "MCX";
         });
 
-        // Match user list
+        // Match user list (Only NSE Equity)
         for (const userSym of userSymbols) {
             const cleanUserSym = userSym.toUpperCase().trim();
             const searchSym = manualMap[cleanUserSym] || cleanUserSym;
 
-            const nseS = nseEquity.find(s => s.symbol === `${searchSym}-EQ` || s.symbol === searchSym);
-            if (nseS) {
-                const sym = nseS.symbol.replace("-EQ", "");
-                currentStocks.push({ name: sym, userCode: userSym, token: nseS.token, actualSymbol: nseS.symbol, fullName: nseS.name, segment: 'NSE' });
-            }
-            const bseS = bseEquity.find(s => s.symbol === `${searchSym}-EQ` || s.symbol === searchSym);
-            if (bseS) {
-                const sym = bseS.symbol.replace("-EQ", "");
-                currentStocks.push({ name: sym, userCode: userSym, token: bseS.token, actualSymbol: bseS.symbol, fullName: bseS.name, segment: 'BSE' });
+            // Try exact match first
+            let nseS = nseEquity.find(s => s.symbol === `${searchSym}-EQ` || s.symbol === searchSym);
+
+            // Try startsWith if not found
+            if (!nseS) {
+                nseS = nseEquity.find(s => s.symbol.startsWith(`${searchSym}-`));
             }
 
-            if (!nseS && !bseS) {
-                // Keep track of missing ones to fix mapping later
-                // console.log(`[MasterScrip] Missing: ${userSym} (Searched as: ${searchSym})`);
+            if (!nseS) {
+                console.log(`[MasterSync] Missing symbol: ${userSym}`);
+                continue;
+            }
+
+            // Get expiries for this symbol's futures
+            const symFuts = nfoScrips.filter(f => f.name === searchSym && (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX"));
+            const expiries = [...new Set(symFuts.map(f => f.expiry))].sort((a, b) => new Date(a) - new Date(b)).slice(0, 3);
+
+            if (!INDICES.some(i => i.name === cleanUserSym)) {
+                const sym = nseS.symbol.replace("-EQ", "");
+                uniqueStocksMap.set(nseS.token, {
+                    name: sym,
+                    userCode: userSym,
+                    token: nseS.token,
+                    actualSymbol: nseS.symbol,
+                    fullName: nseS.name,
+                    segment: 'NSE',
+                    expiry: expiries[0] || null,
+                    expiries: expiries
+                });
             }
 
             // Identify Futures for this symbol (NSE ONLY - NFO)
-            const symFutures = nfoScrips.filter(f => 
-                f.name === searchSym && 
-                f.exch_seg === "NFO" && 
+            const symFutures = nfoScrips.filter(f =>
+                f.name === searchSym &&
+                f.exch_seg === "NFO" &&
                 (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX")
             );
-            
+
             symFutures.forEach(f => {
+                store.tokenToName[f.token] = f.symbol; // Use trading symbol for unique key
+                store.tokenToExchange[f.token] = "NFO";
                 currentFutures.push({
-                    name: f.name,
+                    name: f.symbol, // Use symbol as name for display/lookup consistency
                     fullName: f.name,
                     symbol: f.symbol,
                     userCode: userSym,
@@ -176,12 +212,15 @@ async function fetchTop200Stocks() {
             });
         }
 
-        console.log(`[MasterScrip] Matched ${currentStocks.length} stocks and ${currentFutures.length} futures.`);
-        store.stocks = currentStocks;
+        const finalStocks = Array.from(uniqueStocksMap.values());
+        console.log(`[MasterScrip] Matched ${finalStocks.length} unique NSE Equity stocks, ${indicesList.length} indices, and ${currentFutures.length} futures.`);
+        store.stocks = finalStocks;
+        store.indices = indicesList;
+        store.futures = currentFutures;
 
-        // Sync to DB (Truncate first to ensure only NSE futures remain)
-        Stock.bulkCreate(currentStocks, { ignoreDuplicates: true }).catch(e => console.error("DB Sync Error (Stocks):", e.message));
-        
+        // Sync to DB (Only NSE Stocks)
+        Stock.bulkCreate(finalStocks, { ignoreDuplicates: true }).catch(e => console.error("DB Sync Error (Stocks):", e.message));
+
         Future.destroy({ where: {}, truncate: true })
             .then(() => Future.bulkCreate(currentFutures, { ignoreDuplicates: true }))
             .catch(e => console.error("DB Sync Error (Futures):", e.message));
@@ -196,7 +235,82 @@ async function syncMasterScrips() {
 }
 
 async function syncLivePrices() {
-    // Implementation for syncing live prices to DB if needed
+    try {
+        const allItems = [
+            ...(store.stocks || []),
+            ...(store.indices || []),
+            ...(store.futures || [])
+        ];
+
+        if (allItems.length === 0) return;
+
+        console.log(`[LiveSync] Performing initial LTP sync for ${allItems.length} items (Stocks, Indices, Futures)...`);
+        
+        const chunks = [];
+        for (let i = 0; i < allItems.length; i += 50) {
+            chunks.push(allItems.slice(i, i + 50));
+        }
+
+        for (const chunk of chunks) {
+            try {
+                const payload = {
+                    "exchangeTokens": {
+                        "NSE": chunk.filter(s => s.segment === "NSE").map(s => s.token),
+                        "NFO": chunk.filter(s => s.segment === "NFO").map(s => s.token)
+                    }
+                };
+
+                if (payload.exchangeTokens.NSE?.length === 0) delete payload.exchangeTokens.NSE;
+                if (payload.exchangeTokens.NFO?.length === 0) delete payload.exchangeTokens.NFO;
+
+                if (!payload.exchangeTokens || Object.keys(payload.exchangeTokens).length === 0) continue;
+
+                const response = await axios.post('https://apiconnect.angelbroking.com/rest/secure/angelbroking/market/v1/quote/', {
+                    mode: "FULL",
+                    exchangeTokens: payload.exchangeTokens
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${store.loginData.jwtToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-UserType': 'USER',
+                        'X-SourceID': 'WEB',
+                        'X-ClientLocalIP': '127.0.0.1',
+                        'X-ClientPublicIP': '127.0.0.1',
+                        'X-MACAddress': 'MAC',
+                        'X-PrivateKey': smartApi.api_key || 'AsZssQ9i'
+                    }
+                });
+
+                if (response && response.data && response.data.status && response.data.data && response.data.data.fetched) {
+                    response.data.data.fetched.forEach(item => {
+                        const name = store.tokenToName[item.symbolToken] || item.tradingSymbol;
+                        const segment = item.exchange;
+                        const key = `${name}:${segment}`;
+
+                        const ltp = parseFloat(item.ltp || 0);
+                        const close = parseFloat(item.close || 0);
+                        const rawChange = ltp - close;
+                        const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
+
+                        store.latestMarketData[key] = {
+                            symbol: name,
+                            last_traded_price: ltp.toFixed(2),
+                            close_price: close.toFixed(2),
+                            change: (rawChange > 0 ? "+" : "") + rawChange.toFixed(2),
+                            percent_change: pChange,
+                            last_update_time: new Date().toISOString()
+                        };
+                    });
+                }
+            } catch (chunkError) {
+                console.error(`[LiveSync] Chunk Sync Failed:`, chunkError.message);
+            }
+        }
+        console.log("[LiveSync] Initial LTP sync completed.");
+    } catch (err) {
+        console.error("syncLivePrices Error:", err.message);
+    }
 }
 
 async function syncCandleData() {

@@ -7,6 +7,7 @@ const { verifyToken } = require('../middleware/verifyToken');
 
 router.get('/stocks', stockController.getStocks);
 router.get('/indices', stockController.getIndices);
+router.get('/master-watchlist', stockController.getMasterWatchlist);
 router.get('/live', stockController.getLiveEquity);
 router.get('/sync-live', stockController.syncLiveEquityToDB); //means live abhi ki jaankaari milegi 
 router.get('/sync-data', stockController.syncDynamicCandleData);// means pichle 24 hour ki poori jaankaari history of previous 24 hours 

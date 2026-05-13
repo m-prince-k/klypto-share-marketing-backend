@@ -34,6 +34,7 @@ const { calculateTEMA } = require("./Indicators/TEMA.js");
 const { calculateSupertrend } = require("./Indicators/Supertrend.js");
 const { calculateStdev } = require("./Indicators/Standard_Deviation.js");
 const { calculateClassicPivots } = require("./Indicators/Classic Pivot Points.js");
+const { calculateSSLHybrid } = require("./Indicators/ssl-hybrid.js");
 
 const { calculatePVO } = require("./Indicators/Percentage_Volume_Oscillator_PVO.js");
 const { calculateKlingerOscillator } = require("./Indicators/Klinger-Oscillator.js");
@@ -427,6 +428,10 @@ async function indicatorEngine(candles, config) {
         output = calculateCamarillaPivots(candles, config);
         break;
 
+      case "SSL_HYBRID":
+        output = await calculateSSLHybrid(candles, config);
+        break;
+
       default:
         output = { message: "Indicator not supported" };
     }
@@ -626,6 +631,9 @@ async function prepareCandlesWithIndicators(type, candle, res) {
       case "ZIGZAG":
         return calculateZigZag(candle, { deviation: 5, depth: 10 });
 
+      case "SSL_HYBRID":
+        return calculateSSLHybrid(candle, { ssl1Len: 60, ssl2Len: 5, ssl3Len: 15, baseLen: 60, atrLen: 14, atrMult: 1 });
+
       case "CAMARILLA":
         return calculateCamarillaPivots(candle, { timeframe: "Daily" });
 
@@ -636,7 +644,7 @@ async function prepareCandlesWithIndicators(type, candle, res) {
             { type: "SMA", name: "sma" },
             { type: "EMA", name: "ema" },
             { type: "MACD", name: "macd" },
-            { type: "VWAP", name: "vwap" },
+            { type: "VWAP", name: "vwap" }, 
             { type: "ATR", name: "atr" },
             { type: "BB", name: "bb" },
             { type: "ADX", name: "adx" },
@@ -644,7 +652,8 @@ async function prepareCandlesWithIndicators(type, candle, res) {
             { type: "VWMA", name: "vwma" },
             { type: "AO", name: "ao" },
             { type: "PSAR", name: "psar" },
-            { type: "STOCHRSI", name: "stochrsi" }
+            { type: "STOCHRSI", name: "stochrsi" },
+            { type: "SSL_HYBRID", name: "ssl_hybrid" }
           ];
 
           const resultsMap = new Map();
@@ -764,7 +773,8 @@ const keyMap = {
   "super trend": "supertrend",
   "dema": "dema",
   "tema": "tema",
-  "hma": "hma"
+  "hma": "hma",
+  "ssl hybrid": "ssl_hybrid"
 };
 
 // ================= OPERATORS =================

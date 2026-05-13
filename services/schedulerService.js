@@ -200,31 +200,41 @@ function startSchedulers() {
     }, 900000);
 
     // 7. Daily Option Chain Snapshot (Every 1 hour during market hours, Mon-Fri)
-    setInterval(async () => {
+    const runOptionSnapshot = async () => {
         const now = new Date();
-        const day = now.getDay(); // 0: Sun, 1: Mon, ..., 6: Sat
+        const day = now.getDay();
         const hours = now.getHours();
         const minutes = now.getMinutes();
         const currentTime = hours * 100 + minutes;
 
+        console.log(`[Scheduler-Cron] Checking snapshot schedule: Day=${day}, Time=${currentTime}`);
+
         // 1. Only Monday to Friday (1-5)
-        // 2. Only between 09:15 and 15:45
-        if (day >= 1 && day <= 5 && currentTime >= 915 && currentTime <= 1545) {
-            // We want to trigger it roughly at the start of every hour
-            // But since setInterval is 1hr, it will trigger once per hour anyway.
-            console.log(`[Scheduler] ${new Date().toISOString()} - Triggering periodic Option Chain snapshot for Indices and Stocks...`);
+        // 2. Only between 09:15 and 15:55
+        if (day >= 1 && day <= 5 && currentTime >= 915 && currentTime <= 1555) {
+            console.log(`[Scheduler] ${new Date().toISOString()} - TRIGGERING OPTION SNAPSHOT...`);
             
             try {
                 const stockNames = store.stocks.map(s => s.name);
                 const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
                 const allSymbols = [...new Set([...indices, ...stockNames])];
                 
+                console.log(`[Scheduler] Snapshot for ${allSymbols.length} symbols started.`);
                 await optionChainService.saveDailySnapshot(allSymbols);
+                console.log(`[Scheduler] Snapshot completed successfully.`);
             } catch (err) {
                 console.error("[Scheduler] Snapshot Error:", err.message);
             }
+        } else {
+            console.log(`[Scheduler] Outside market hours, skipping snapshot.`);
         }
-    }, 3600000); // Check every 1 hour
+    };
+
+    // Run first snapshot 2 minutes after startup (to let master data load), then every 1 hour
+    setTimeout(() => {
+        runOptionSnapshot();
+        setInterval(runOptionSnapshot, 3600000);
+    }, 120000);
 }
 
 const { syncPriorityOptionsHistory } = require('./optionSyncService');
@@ -251,6 +261,10 @@ async function runInitialHistoricalLoad() {
                 // Fetch in 30-day chunks for 12 months
                 for (let i = 0; i < 12; i++) {
                     const now = new Date();
+                    const day = now.getDay();
+                    const hours = now.getHours();
+                    const isMarketHours = day >= 1 && day <= 5 && hours >= 9 && hours <= 16;
+
                     const toDateObj = new Date();
                     toDateObj.setDate(now.getDate() - (i * 30));
                     const fromDateObj = new Date();
@@ -261,8 +275,9 @@ async function runInitialHistoricalLoad() {
 
                     await getCandlesWithCache(stock.name, stock.token, stock.segment || "NSE", interval, fDate, tDate);
                     
-                    // Small delay to respect rate limits
-                    await new Promise(r => setTimeout(r, 1000));
+                    // Throttle heavily during market hours to prevent "server stuck"
+                    const delay = isMarketHours ? 5000 : 1000;
+                    await new Promise(r => setTimeout(r, delay));
                 }
             } catch (err) {
                 console.error(`[Initial Load] Failed for ${stock.name} (${interval}):`, err.message);
