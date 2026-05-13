@@ -120,6 +120,9 @@ async function calculateRSIIndicator(candles, options) {
     }
 
     const validCloses = closes.filter(value => value !== null);
+    if (validCloses.length < rsiLength + 1) {
+        // console.warn(`[RSI] Insufficient data: ${validCloses.length} closes for period ${rsiLength}`);
+    }
     const calculatedRsi = RSI.calculate({ values: validCloses, period: rsiLength });
     const rsi = Array(candles.length).fill(null);
 
@@ -128,8 +131,8 @@ async function calculateRSIIndicator(candles, options) {
         if (closes[i] === null) continue;
         // RSI (period) needs 'period' number of values. 
         // So at index 'period-1', we have 'period' values.
-        if (i < rsiLength - 1) continue; 
-        
+        if (i < rsiLength - 1) continue;
+
         if (outputIndex < calculatedRsi.length) {
             rsi[i] = Number(calculatedRsi[outputIndex++].toFixed(2));
         }
@@ -170,16 +173,19 @@ async function calculateRSIIndicator(candles, options) {
         }
     }
 
-    if (!Array.isArray(candles)) return [];
-
-    return candles.map((c, i) => ({
-        time: c.time,
-        rsi: rsi[i],
-        smoothingMA: smoothingMA[i],
-        bbUpper: bbUpper[i],
-        bbLower: bbLower[i],
-        status: true
-    }));
+    return candles.map((c, i) => {
+        const dt = new Date(c.time * 1000);
+        return {
+            time: c.time,
+            datetime: dt.toLocaleString("en-IN", { timeZone: 'Asia/Kolkata' }),
+            isoDate: dt.toISOString().split('T')[0],
+            rsi: rsi[i],
+            smoothingMA: smoothingMA[i],
+            bbUpper: bbUpper[i],
+            bbLower: bbLower[i],
+            status: true
+        };
+    });
 }
 
 /**

@@ -125,6 +125,19 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                     }
                 }
 
+                // --- APPLY LIVE TICK TO LAST CANDLE FOR REAL-TIME INDICATOR MATCHING ---
+                const liveData = store.latestMarketData[`${symbol.toUpperCase()}:${exchange}`];
+                if (liveData && liveData.last_traded_price && finalData.length > 0) {
+                    const lastCandle = finalData[finalData.length - 1];
+                    const ltp = parseFloat(liveData.last_traded_price || liveData.ltp);
+                    if (!isNaN(ltp) && ltp > 0) {
+                        lastCandle.close = ltp;
+                        if (ltp > lastCandle.high) lastCandle.high = ltp;
+                        if (ltp < lastCandle.low) lastCandle.low = ltp;
+                    }
+                }
+                // -----------------------------------------------------------------------
+
                 return { 
                     source: "database", 
                     data: finalData,
@@ -138,11 +151,11 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         console.log(`[API Fallback] Fetching ${symbol} from Angel One (${exchange})... Threshold not met (Got ${dbCandles.length}, need ~${Math.floor(((new Date(toDate) - new Date(fromDate)) / (1000 * 60 * 60 * 24)) * (interval === "ONE_DAY" ? 5/7 : 1) * 0.7)})`);
         
         const maxDaysMap = {
-            "ONE_MINUTE": 30, "THREE_MINUTE": 45, "FIVE_MINUTE": 60,
-            "TEN_MINUTE": 60, "FIFTEEN_MINUTE": 90, "THIRTY_MINUTE": 120,
-            "ONE_HOUR": 200, "ONE_DAY": 2000
+            "ONE_MINUTE": 5, "THREE_MINUTE": 10, "FIVE_MINUTE": 15,
+            "TEN_MINUTE": 30, "FIFTEEN_MINUTE": 60, "THIRTY_MINUTE": 90,
+            "ONE_HOUR": 150, "ONE_DAY": 2000
         };
-        const maxDaysPerChunk = maxDaysMap[interval] || 30;
+        const maxDaysPerChunk = maxDaysMap[interval] || 5;
 
         // Optimization: Instead of fetching the whole range from fromDate, 
         // we only fetch from the LAST available candle in our DB to fill the gap.
@@ -180,13 +193,20 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             console.log(`[AngelOne API] Requesting ${symbol} (${token}) | Interval: ${interval} | From: ${fStr} | To: ${tStr}`);
             
             try {
-                const response = await smartApi.getCandleData({
+                // Wrap API call in a timeout to prevent hanging
+                const apiPromise = smartApi.getCandleData({
                     exchange,
                     symboltoken: token,
                     interval: interval,
                     fromdate: fStr,
                     todate: tStr
                 });
+
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error("Angel One API Timeout")), 12000)
+                );
+
+                const response = await Promise.race([apiPromise, timeoutPromise]);
 
                 if (response && response.status && response.data) {
                     console.log(`[AngelOne API] Success for ${symbol}: Received ${response.data.length} candles.`);
@@ -200,12 +220,13 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 }
             } catch (err) {
                 console.error(`[API Chunk] Error fetching ${symbol}:`, err.message);
-                break;
+                // If it's a timeout or serious error, stop further chunks for this request
+                if (err.message.includes("Timeout") || err.message.includes("429")) break;
             }
 
-            currentStartDate = currentChunkEndDate;
+            currentStartDate = new Date(currentChunkEndDate.getTime() + 1000); // Ensure we move forward
             if (currentStartDate >= finalEndDate) break;
-            await new Promise(resolve => setTimeout(resolve, 1200)); 
+            await new Promise(resolve => setTimeout(resolve, 800)); // Reduced delay slightly
         }
 
         // 3. Save to DB and Return
@@ -330,6 +351,19 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             await ModelToUse.bulkCreate(filteredData, { ignoreDuplicates: true });
             console.log(`[API Fallback] Saved ${filteredData.length} records to ${ModelToUse.name} for ${symbol}`);
         }
+
+        // --- APPLY LIVE TICK TO LAST CANDLE FOR REAL-TIME INDICATOR MATCHING ---
+        const liveDataAPI = store.latestMarketData[`${symbol.toUpperCase()}:${exchange}`];
+        if (liveDataAPI && liveDataAPI.last_traded_price && filteredData.length > 0) {
+            const lastCandle = filteredData[filteredData.length - 1];
+            const ltp = parseFloat(liveDataAPI.last_traded_price || liveDataAPI.ltp);
+            if (!isNaN(ltp) && ltp > 0) {
+                lastCandle.close = ltp;
+                if (ltp > lastCandle.high) lastCandle.high = ltp;
+                if (ltp < lastCandle.low) lastCandle.low = ltp;
+            }
+        }
+        // -----------------------------------------------------------------------
 
         return { source: "api_chunked", data: filteredData, raw_response: null };
     } catch (err) {

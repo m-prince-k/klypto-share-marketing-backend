@@ -10,5 +10,6 @@ module.exports = {
     mcxMasterData: [], // Store MCX scripts for lookup
     bseMasterData: [], // Store BSE scripts for lookup
     liveCandles: {}, // Real-time candle aggregation { [token]: { open, high, low, close, volume, minute } }
-    alerts: [] // Real-time indicator alerts
+    alerts: [], // Real-time indicator alerts
+    indicatorSubscriptions: new Map() // Map<socketId, { symbol, type, interval, exchange }>
 };

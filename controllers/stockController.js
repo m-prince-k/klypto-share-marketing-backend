@@ -1751,18 +1751,36 @@ const getFormattedOptionChain = async (req, res) => {
     }
 };
 
-const getMasterWatchlist = async (req, res) => {
+const generateMasterWatchlistData = async () => {
     try {
         const formatItem = (item, isIndex = false) => {
-            const key = isIndex ? `${item.name}:NSE` : `${item.name}:${item.segment}`;
-            const liveData = store.latestMarketData[key] || {};
-            const ltpVal = liveData.last_traded_price || "0.00";
-            const closeVal = liveData.close_price || "0.00";
+            const exchange = isIndex ? "NSE" : (item.segment || "NSE");
+            const key = `${item.name}:${exchange}`;
+            
+            // Try key-based lookup first
+            let liveData = store.latestMarketData[key];
+            
+            // Fallback: search by token if key lookup fails
+            if (!liveData && item.token) {
+                liveData = Object.values(store.latestMarketData).find(d => String(d.token) === String(item.token));
+            }
+            
+            if (!liveData) liveData = {};
+
+            const ltpVal = liveData.last_traded_price || liveData.ltp || "0.00";
+            const closeVal = liveData.close_price || liveData.close || "0.00";
             const ltp = parseFloat(ltpVal);
             const close = parseFloat(closeVal);
 
-            const changeStr = liveData.change || (close > 0 ? ((ltp - close) > 0 ? "+" : "") + (ltp - close).toFixed(2) : "0.00");
-            const pChange = liveData.percent_change || (close > 0 ? (((ltp - close) / close) * 100).toFixed(2) : "0.00");
+            let changeStr = liveData.change || "0.00";
+            let pChange = liveData.percent_change || liveData.pChange || "0.00";
+
+            // Recalculate if we have LTP and Close but no change (happens on some API responses)
+            if (ltp !== 0 && close !== 0 && (changeStr === "0.00" || changeStr === "0")) {
+                const diff = ltp - close;
+                changeStr = (diff >= 0 ? "+" : "") + diff.toFixed(2);
+                pChange = ((diff / close) * 100).toFixed(2);
+            }
 
             return {
                 name: item.name,
@@ -1856,15 +1874,24 @@ const getMasterWatchlist = async (req, res) => {
             ...(await getInternalTrending("MIDCPNIFTY"))
         ];
 
+        return {
+            indices,
+            equity,
+            futures,
+            trendingOptions
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+const getMasterWatchlist = async (req, res) => {
+    try {
+        const data = await generateMasterWatchlistData();
         res.json({
             success: true,
             timestamp: new Date().toISOString(),
-            data: {
-                indices,
-                equity,
-                futures,
-                trendingOptions
-            }
+            data
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -1881,6 +1908,7 @@ module.exports = {
     getIndices,
     syncOptionsChainHistory,
     getHistoricalOptionChain,
+    generateMasterWatchlistData,
     getStockOverview,
     getFuturesSymbols,
     getRSIScanner,

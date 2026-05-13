@@ -1,4 +1,5 @@
-const { Candle } = require('../models');
+const { Candle, OptionChain } = require('../models');
+const { getIO } = require('./socket');
 const store = require('./marketStore');
 const smartApi = require('./smartApi');
 const { getCandlesWithCache, formatDate } = require('./dbService');
@@ -235,6 +236,15 @@ function startSchedulers() {
         runOptionSnapshot();
         setInterval(runOptionSnapshot, 3600000);
     }, 120000);
+    // 6. Background LTP Sync (Every 5 minutes) to ensure watchlist stays accurate
+    setInterval(async () => {
+        const { syncLivePrices } = require('./stockService');
+        const { isMarketOpen } = require('./webSocketService');
+        if (isMarketOpen()) {
+            console.log("[Scheduler] Triggering periodic LTP sync for watchlist...");
+            await syncLivePrices();
+        }
+    }, 300000);
 }
 
 const { syncPriorityOptionsHistory } = require('./optionSyncService');
