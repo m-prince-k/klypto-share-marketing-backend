@@ -13,25 +13,22 @@ const getStocks = (req, res) => {
         const key = `${s.name}:${s.segment}`;
         const liveData = store.latestMarketData[key] || {};
 
-        const ltp = parseFloat(liveData.last_traded_price || 0);
-        const close = parseFloat(liveData.close_price || 0);
+        const ltpVal = liveData.last_traded_price || "0.00";
+        const closeVal = liveData.close_price || "0.00";
+        const ltp = parseFloat(ltpVal);
+        const close = parseFloat(closeVal);
 
-        // Manual calculation to ensure accuracy
-        const rawChange = ltp - close;
-        const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
-        const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
+        const changeStr = liveData.change || (close > 0 ? ((ltp - close) > 0 ? "+" : "") + (ltp - close).toFixed(2) : "0.00");
+        const pChange = liveData.percent_change || (close > 0 ? (((ltp - close) / close) * 100).toFixed(2) : "0.00");
 
         return {
             ...s,
-            ltp: liveData.last_traded_price || "0.00",
+            ltp: ltpVal,
             change: changeStr,
             percent_change: pChange,
-            sentiment: liveData.sentiment || "neutral"
+            sentiment: liveData.sentiment || (ltp > close ? "bullish" : ltp < close ? "bearish" : "neutral")
         };
     });
-
-
-
 
     res.json({
         success: true,
@@ -41,32 +38,27 @@ const getStocks = (req, res) => {
 };
 
 const getIndices = (req, res) => {
-    // Indices usually have tokens starting with 999 or are in this specific list
-    const mainIndices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX", "NIFTYNEXT50", "NIFTY100", "NIFTY200", "NIFTY500"];
+    const indicesData = store.indices.map(s => {
+        const key = `${s.name}:${s.segment}`;
+        const liveData = store.latestMarketData[key] || store.latestMarketData[s.name] || {};
 
-    const indicesData = store.stocks
-        .filter(s => mainIndices.includes(s.name) || s.name.startsWith("NIFTY_") || s.token.startsWith("999"))
-        .map(s => {
-            const key = `${s.name}:${s.segment}`;
-            const liveData = store.latestMarketData[key] || store.latestMarketData[s.name] || {};
+        const ltpVal = liveData.last_traded_price || liveData.ltp || "0.00";
+        const closeVal = liveData.close_price || liveData.close || "0.00";
 
-            const ltpVal = liveData.last_traded_price || liveData.ltp || "0.00";
-            const closeVal = liveData.close_price || liveData.close || "0.00";
+        const ltp = parseFloat(ltpVal);
+        const close = parseFloat(closeVal);
+        const rawChange = ltp - close;
+        const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
+        const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
 
-            const ltp = parseFloat(ltpVal);
-            const close = parseFloat(closeVal);
-            const rawChange = ltp - close;
-            const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
-            const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
-
-            return {
-                ...s,
-                ltp: ltpVal,
-                change: changeStr,
-                percent_change: pChange,
-                sentiment: liveData.sentiment || "neutral"
-            };
-        });
+        return {
+            ...s,
+            ltp: ltpVal,
+            change: changeStr,
+            percent_change: pChange,
+            sentiment: liveData.sentiment || "neutral"
+        };
+    });
 
     res.json({
         success: true,
@@ -1050,17 +1042,26 @@ const getOptionsChain = async (req, res) => {
         const underlyingData = store.latestMarketData[underlyingKey] || store.latestMarketData[uSym] || {};
         const underlyingLtp = parseFloat(underlyingData.last_traded_price || underlyingData.ltp || 0);
 
-        // 2. Filter Master Data for this symbol's options (Flexible match)
+        // 2. Filter Master Data for this symbol's options (Exact name match)
         const allOptions = store.nfoMasterData.filter(o =>
-            (o.name === uSym || o.symbol.startsWith(uSym)) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
+            (o.name === uSym) && (o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTSTK")
         );
 
         if (allOptions.length === 0) {
             return res.status(404).json({ success: false, message: `No options found for ${uSym}` });
         }
 
-        // 3. Get Expiries and choose one
-        const uniqueExpiries = [...new Set(allOptions.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
+        // 3. Get Expiries and choose one (Filter out past expiries)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const uniqueExpiries = [...new Set(allOptions.map(o => o.expiry))]
+            .filter(e => {
+                const expDate = new Date(e);
+                return expDate >= today;
+            })
+            .sort((a, b) => new Date(a) - new Date(b))
+            .slice(0, 4); // Show only top 4 near-term expiries (Near, Next, Far + 1)
         const selectedExpiry = expiry || uniqueExpiries[0];
 
         // 4. Filter for selected expiry and group by strike
@@ -1647,6 +1648,96 @@ const triggerOptionSnapshot = async (req, res) => {
     }
 };
 
+const getTrendingOptions = async (req, res) => {
+    try {
+        let { symbol = "NIFTY", type = "CALL" } = req.query;
+        symbol = symbol.toUpperCase();
+        type = type.toUpperCase();
+
+        const suffix = type === "CALL" ? "CE" : "PE";
+        
+        // 1. Get Underlying LTP
+        const underlyingToken = store.symbolToTokenMaster[symbol];
+        const underlyingKey = `${symbol}:${store.tokenToExchange[underlyingToken] || "NSE"}`;
+        const underlyingLtp = parseFloat(store.latestMarketData[underlyingKey]?.last_traded_price || 0);
+
+        if (underlyingLtp === 0) {
+            return res.status(404).json({ success: false, error: `Live price for ${symbol} not found.` });
+        }
+
+        // 2. Filter Master Data for this symbol and type
+        const contracts = store.nfoMasterData.filter(o => o.name === symbol && o.symbol.endsWith(suffix));
+        
+        if (contracts.length === 0) {
+            return res.status(404).json({ success: false, error: `No ${type} options found for ${symbol}.` });
+        }
+
+        // 3. Find unique expiries and pick the nearest one
+        const expiries = [...new Set(contracts.map(c => c.expiry))].sort((a, b) => new Date(a) - new Date(b));
+        const nearestExpiry = expiries[0];
+
+        // 4. Filter for nearest expiry and find strikes near ATM
+        const nearExpiryContracts = contracts.filter(c => c.expiry === nearestExpiry);
+        
+        // Sort by strike to find ATM
+        nearExpiryContracts.sort((a, b) => parseFloat(a.strike) - parseFloat(b.strike));
+
+        // Find ATM index
+        let atmIndex = nearExpiryContracts.findIndex(c => parseFloat(c.strike) >= underlyingLtp);
+        if (atmIndex === -1) atmIndex = nearExpiryContracts.length - 1;
+
+        // Take 3-5 strikes near ATM
+        const start = Math.max(0, atmIndex - 2);
+        const selectedContracts = nearExpiryContracts.slice(start, start + 5);
+
+        // 5. Fetch Live Data for these tokens
+        const tokens = selectedContracts.map(c => c.token);
+        const livePrices = await optionChainService.getLivePricesForTokens(tokens);
+
+        // 6. Format Response
+        const data = selectedContracts.map(c => {
+            const live = livePrices[c.token] || {};
+            const ltp = parseFloat(live.last_traded_price || 0);
+            const close = parseFloat(live.close_price || 0);
+            const rawChange = ltp - close;
+            const changeStr = close > 0 ? (rawChange > 0 ? "+" : "") + rawChange.toFixed(2) : "0.00";
+            const pChange = close > 0 ? ((rawChange / close) * 100).toFixed(2) : "0.00";
+
+            // Format date for display: 12MAY2026 -> 12 May 2026
+            const day = c.expiry.substring(0, 2);
+            const mon = c.expiry.substring(2, 5).toLowerCase();
+            const year = c.expiry.substring(5);
+            const months = { jan: 'Jan', feb: 'Feb', mar: 'Mar', apr: 'Apr', may: 'May', jun: 'Jun', jul: 'Jul', aug: 'Aug', sep: 'Sep', oct: 'Oct', nov: 'Nov', dec: 'Dec' };
+            const formattedDate = `${day} ${months[mon]} ${year}`;
+
+            return {
+                displayName: `${c.name} ${formattedDate} ${parseFloat(c.strike)} ${suffix}`,
+                symbol: c.symbol,
+                token: c.token,
+                exchange: "NSE FO",
+                ltp: ltp.toFixed(2),
+                change: changeStr,
+                pChange: pChange,
+                strike: c.strike,
+                optionType: suffix
+            };
+        });
+
+        res.json({
+            success: true,
+            symbol,
+            type,
+            expiry: nearestExpiry,
+            data
+        });
+
+    } catch (error) {
+        console.error("getTrendingOptions Error:", error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+
 const getFormattedOptionChain = async (req, res) => {
     try {
         const { symbol, expiry } = req.query;
@@ -1660,14 +1751,127 @@ const getFormattedOptionChain = async (req, res) => {
     }
 };
 
+const getMasterWatchlist = async (req, res) => {
+    try {
+        const formatItem = (item, isIndex = false) => {
+            const key = isIndex ? `${item.name}:NSE` : `${item.name}:${item.segment}`;
+            const liveData = store.latestMarketData[key] || {};
+            const ltpVal = liveData.last_traded_price || "0.00";
+            const closeVal = liveData.close_price || "0.00";
+            const ltp = parseFloat(ltpVal);
+            const close = parseFloat(closeVal);
+
+            const changeStr = liveData.change || (close > 0 ? ((ltp - close) > 0 ? "+" : "") + (ltp - close).toFixed(2) : "0.00");
+            const pChange = liveData.percent_change || (close > 0 ? (((ltp - close) / close) * 100).toFixed(2) : "0.00");
+
+            return {
+                name: item.name,
+                token: item.token,
+                ltp: ltpVal,
+                change: changeStr,
+                pChange: pChange,
+                segment: item.segment || "NSE",
+                isOptionable: !isIndex && store.nfoMasterData.some(o => o.name === item.name)
+            };
+        };
+
+        const indices = (store.indices || []).map(i => formatItem(i, true));
+        const equity = (store.stocks || []).map(s => formatItem(s));
+        const futures = (store.futures || []).map(f => {
+            const liveData = store.latestMarketData[`${f.symbol}:NFO`] || {};
+            return {
+                name: f.symbol,
+                token: f.token,
+                expiry: f.expiry,
+                ltp: liveData.last_traded_price || "0.00",
+                change: liveData.change || "0.00",
+                pChange: liveData.percent_change || "0.00"
+            };
+        });
+
+        // Helper to get trending options internally
+        const getInternalTrending = async (symbol) => {
+            try {
+                const underlyingToken = store.symbolToTokenMaster[symbol];
+                const underlyingKey = `${symbol}:${store.tokenToExchange[underlyingToken] || "NSE"}`;
+                const underlyingLtp = parseFloat(store.latestMarketData[underlyingKey]?.last_traded_price || 0);
+                if (underlyingLtp === 0) return [];
+
+                const contracts = store.nfoMasterData.filter(o => o.name === symbol && (o.symbol.endsWith("CE") || o.symbol.endsWith("PE")));
+                const expiries = [...new Set(contracts.map(c => c.expiry))].sort((a, b) => new Date(a) - new Date(b));
+                const nearestExpiry = expiries[0];
+
+                const nearExpiryContracts = contracts.filter(c => c.expiry === nearestExpiry);
+                nearExpiryContracts.sort((a, b) => parseFloat(a.strike) - parseFloat(b.strike));
+
+                // Get unique strikes and find ATM
+                const uniqueStrikes = [...new Set(nearExpiryContracts.map(c => parseFloat(c.strike) / 100))].sort((a, b) => a - b);
+                const atmStrike = uniqueStrikes.reduce((prev, curr) => Math.abs(curr - underlyingLtp) < Math.abs(prev - underlyingLtp) ? curr : prev);
+                const atmIdx = uniqueStrikes.indexOf(atmStrike);
+
+                // Take ATM, 1 strike above, and 1 strike below (Total 3 strikes)
+                const targetStrikes = uniqueStrikes.slice(Math.max(0, atmIdx - 1), Math.min(uniqueStrikes.length, atmIdx + 2));
+                
+                const selected = [];
+                targetStrikes.forEach(strike => {
+                    const ce = nearExpiryContracts.find(c => parseFloat(c.strike) / 100 === strike && c.symbol.endsWith("CE"));
+                    const pe = nearExpiryContracts.find(c => parseFloat(c.strike) / 100 === strike && c.symbol.endsWith("PE"));
+                    if (ce) selected.push(ce);
+                    if (pe) selected.push(pe);
+                });
+
+                const tokens = selected.map(c => c.token);
+                const livePrices = await optionChainService.getLivePricesForTokens(tokens);
+
+                // Auto-subscribe to these options for WebSocket updates if market is open
+                if (store.wsClient && tokens.length > 0) {
+                    store.wsClient.fetchData({
+                        correlationID: `trending_opts_sub_${symbol}`,
+                        action: 1, mode: 2, exchangeType: 2, // 2 is NFO
+                        tokens: tokens
+                    });
+                }
+
+                return selected.map(c => {
+                    const live = livePrices[c.token] || {};
+                    const ltp = live.ltp || live.last_traded_price || "0.00";
+                    const change = live.netChange || live.net_change || live.change || "0.00";
+                    const pChange = live.percentChange || live.pChange || "0.00";
+
+                    return {
+                        name: `${c.name} ${c.expiry} ${parseFloat(c.strike) / 100} ${c.symbol.endsWith("CE") ? "CE" : "PE"}`,
+                        token: c.token,
+                        ltp: ltp,
+                        change: (parseFloat(change) > 0 ? "+" : "") + parseFloat(change).toFixed(2),
+                        pChange: parseFloat(pChange).toFixed(2)
+                    };
+                });
+            } catch (e) { return []; }
+        };
+
+        const trendingOptions = [
+            ...(await getInternalTrending("NIFTY")),
+            ...(await getInternalTrending("BANKNIFTY")),
+            ...(await getInternalTrending("FINNIFTY")),
+            ...(await getInternalTrending("MIDCPNIFTY"))
+        ];
+
+        res.json({
+            success: true,
+            timestamp: new Date().toISOString(),
+            data: {
+                indices,
+                equity,
+                futures,
+                trendingOptions
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 module.exports = {
-    fetchOrders,
-    getOptionsChain,
-    orderDispatch,
-    getIndicators,
-    getTimeFrames,
-    updateIndicator,
-    indicatorDetails,
     getStocks,
     getLiveEquity,
     syncLiveEquityToDB,
@@ -1683,5 +1887,14 @@ module.exports = {
     getLiveGold,
     triggerOptionSnapshot,
     debugStore,
-    getFormattedOptionChain
+    getFormattedOptionChain,
+    getTrendingOptions,
+    getMasterWatchlist,
+    indicatorDetails,
+    updateIndicator,
+    getTimeFrames,
+    getIndicators,
+    orderDispatch,
+    fetchOrders,
+    getOptionsChain
 };

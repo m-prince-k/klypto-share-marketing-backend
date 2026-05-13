@@ -4,6 +4,18 @@ const EVENTS = require("../constants/socketEvents");
 const alertService = require("./alertService");
 const optionChainService = require("./optionChainService");
 
+function isMarketOpen() {
+    const now = new Date();
+    const day = now.getDay(); // 0 = Sun, 6 = Sat
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const currentTime = hours * 100 + minutes;
+
+    // Monday (1) to Friday (5)
+    // 09:15 AM (915) to 03:30 PM (1530)
+    return day >= 1 && day <= 5 && currentTime >= 915 && currentTime <= 1530;
+}
+
 
 function formatTickData(data) {
     if (!data || data === "pong") return null;
@@ -61,6 +73,13 @@ function formatTickData(data) {
 async function startWebSocketConnection(loginData, io) {
     if (!loginData || !loginData.data) return;
 
+    if (!isMarketOpen()) {
+        console.log(`[WebSocket] Market is currently CLOSED (09:15-15:30). Connection deferred.`);
+        return;
+    }
+
+    if (store.wsClient) return;
+
     store.wsClient = new WebSocketV2({
         jwttoken: loginData.data.jwtToken,
         apikey: "AsZssQ9i",
@@ -71,8 +90,11 @@ async function startWebSocketConnection(loginData, io) {
     await store.wsClient.connect();
     console.log(`WebSocket Connected. Subscribing to Equity and Futures...`);
 
-    // 1. Subscribe to Equity (NSE)
-    const nseTokens = store.stocks.filter(s => s.segment === "NSE").map(s => s.token);
+    // 1. Subscribe to Equity & Indices (NSE)
+    const nseTokens = [
+        ...store.stocks.filter(s => s.segment === "NSE").map(s => s.token),
+        ...store.indices.filter(i => i.segment === "NSE").map(i => i.token)
+    ];
     if (nseTokens.length > 0) {
         store.wsClient.fetchData({
             correlationID: "nse_subscription",
@@ -250,4 +272,31 @@ async function startWebSocketConnection(loginData, io) {
     store.wsClient.on("error", (err) => console.log("WS Error:", err));
 }
 
-module.exports = { startWebSocketConnection };
+/**
+ * Periodically monitor market hours and manage connection
+ */
+async function manageWebSocket(loginData, io) {
+    if (!loginData || !loginData.data) return;
+
+    // Start monitor loop
+    setInterval(async () => {
+        const open = isMarketOpen();
+        const hasClient = store.wsClient !== null;
+
+        if (open && !hasClient) {
+            console.log("[MarketMonitor] Market is OPEN. Reconnecting WebSocket...");
+            await startWebSocketConnection(loginData, io);
+        } else if (!open && hasClient) {
+            console.log("[MarketMonitor] Market is CLOSED. Disconnecting WebSocket...");
+            try {
+                // Terminate connection during off-hours
+                store.wsClient = null;
+            } catch (e) {}
+        }
+    }, 60000); // Check every minute
+
+    // Initial check
+    await startWebSocketConnection(loginData, io);
+}
+
+module.exports = { startWebSocketConnection, manageWebSocket };

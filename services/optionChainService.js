@@ -135,7 +135,9 @@ class OptionChainService {
                 symbol: uSym, 
                 expiry: targetExpiry, 
                 tokens: tokensToSubscribe,
-                strikes: selectedContracts
+                strikes: selectedContracts,
+                spotPrice: ltp,
+                atmStrike: atmStrike
             });
 
             const roomName = `option_chain_${uSym}_${targetExpiry}`.trim();
@@ -169,11 +171,13 @@ class OptionChainService {
                                 const key = `${row[side].symbol}:NFO`;
                                 store.latestMarketData[key] = { ...store.latestMarketData[key], ...item, last_traded_price: item.ltp };
                                 
-                                this.io.to(roomName).emit(EVENTS.OPTION_CHAIN_UPDATE, {
+                                // Emit FULL update even for background fetch
+                                socket.emit(EVENTS.OPTION_CHAIN_UPDATE, {
                                     symbol: uSym,
-                                    token: String(item.token),
-                                    ltp: item.ltp || 0,
-                                    oi: item.oi || 0
+                                    expiry: targetExpiry,
+                                    spotPrice: ltp,
+                                    atmStrike: atmStrike,
+                                    chain: selectedContracts
                                 });
                             }
                         });
@@ -215,28 +219,53 @@ class OptionChainService {
         const cleanTickToken = String(tick.token).trim();
 
         for (const [socketId, sub] of this.activeSubscriptions.entries()) {
-            const roomName = `option_chain_${sub.symbol}_${sub.expiry}`.trim();
+            let shouldEmit = false;
 
             // Case A: This tick is for the underlying asset (Spot Price)
-            if (tick.symbol === sub.symbol && (tick.exchange === "NSE" || tick.exchange === "BSE")) {
-                const spotPrice = tick.last_traded_price || tick.lp || tick.ltp || 0;
-                this.io.to(roomName).emit(EVENTS.OPTION_CHAIN_UPDATE, {
-                    symbol: sub.symbol,
-                    spotPrice: spotPrice
-                });
+            const isSpotTick = tick.symbol === sub.symbol && (tick.exchange === "NSE" || tick.exchange === "BSE" || tick.exchange === "MCX");
+            
+            if (isSpotTick) {
+                const spotPrice = parseFloat(tick.last_traded_price || tick.lp || tick.ltp || 0);
+                sub.spotPrice = spotPrice;
+                
+                // Recalculate ATM Strike based on existing strikes in the chain
+                const uniqueStrikes = sub.strikes.map(s => s.strike);
+                if (uniqueStrikes.length > 0) {
+                    sub.atmStrike = uniqueStrikes.reduce((prev, curr) => 
+                        Math.abs(curr - spotPrice) < Math.abs(prev - spotPrice) ? curr : prev
+                    );
+                }
+                shouldEmit = true;
             }
 
             // Case B: This tick is for an option contract in the chain
-            if (tick.exchange === "NFO" && sub.tokens.some(t => String(t).trim() === cleanTickToken)) {
-                const ltpValue = tick.last_traded_price || tick.lp || tick.ltp || 0;
-                const oiValue = tick.oi || tick.open_interest || tick.openinterest || 0;
+            const isOptionTick = tick.exchange === "NFO" && sub.tokens.some(t => String(t).trim() === cleanTickToken);
+            
+            if (isOptionTick) {
+                const ltpValue = parseFloat(tick.last_traded_price || tick.lp || tick.ltp || 0);
+                const oiValue = parseInt(tick.oi || tick.open_interest || tick.openinterest || 0);
 
-                this.io.to(roomName).emit(EVENTS.OPTION_CHAIN_UPDATE, {
+                // Update the specific contract in the strikes array
+                sub.strikes.forEach(row => {
+                    if (row.ce && String(row.ce.token).trim() === cleanTickToken) {
+                        row.ce.ltp = ltpValue.toFixed(2);
+                        row.ce.oi = oiValue;
+                    }
+                    if (row.pe && String(row.pe.token).trim() === cleanTickToken) {
+                        row.pe.ltp = ltpValue.toFixed(2);
+                        row.pe.oi = oiValue;
+                    }
+                });
+                shouldEmit = true;
+            }
+
+            if (shouldEmit) {
+                this.io.to(socketId).emit(EVENTS.OPTION_CHAIN_UPDATE, {
                     symbol: sub.symbol,
-                    token: cleanTickToken,
-                    ltp: ltpValue,
-                    oi: oiValue,
-                    net_change: tick.net_change || 0
+                    expiry: sub.expiry,
+                    spotPrice: sub.spotPrice,
+                    atmStrike: sub.atmStrike,
+                    chain: sub.strikes
                 });
             }
         }
@@ -363,13 +392,13 @@ class OptionChainService {
                 if (dbData.length > 0) {
                     console.log(`[Snapshot] Saving ${dbData.length} records for ${uSym} to DB...`);
                     try {
-                        await DailyOptionData.bulkCreate(dbData, { ignoreDuplicates: true });
-                        console.log(`[Snapshot] SUCCESS: Saved data for ${uSym}.`);
+                        const result = await DailyOptionData.bulkCreate(dbData, { ignoreDuplicates: true });
+                        console.log(`[Snapshot] SUCCESS: Saved ${result.length} records for ${uSym}.`);
                     } catch (dbErr) {
                         console.error(`[Snapshot] DB ERROR for ${uSym}:`, dbErr.message);
                     }
                 } else {
-                    console.log(`[Snapshot] No data prepared for ${uSym} (dbData is empty). Check if marketDataMap is empty or tokensToFetch was empty.`);
+                    console.log(`[Snapshot] No data prepared for ${uSym} (dbData is empty).`);
                 }
 
             } catch (err) {
@@ -398,8 +427,17 @@ class OptionChainService {
 
             if (allOpts.length === 0) return { success: false, message: `No options found for symbol ${uSym}` };
 
-            // Get unique expiries to help user if match fails
-            const uniqueExpiries = [...new Set(allOpts.map(o => o.expiry))].sort((a, b) => new Date(a) - new Date(b));
+            // Get unique expiries to help user if match fails (Filter out past expiries)
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            const uniqueExpiries = [...new Set(allOpts.map(o => o.expiry))]
+                .filter(e => {
+                    const expDate = new Date(e);
+                    return expDate >= today;
+                })
+                .sort((a, b) => new Date(a) - new Date(b))
+                .slice(0, 4); // Show only top 4 near-term expiries (Near, Next, Far + 1)
 
             // 3. Match expiry (Flexible matching)
             const targetExpiry = expiry ? expiry.toUpperCase().trim() : uniqueExpiries[0];
@@ -453,6 +491,37 @@ class OptionChainService {
         } catch (error) {
             console.error("[getFormattedOptionChain] Error:", error.message);
             throw error;
+        }
+    }
+
+    /**
+     * Get live prices for a list of tokens via REST
+     */
+    async getLivePricesForTokens(tokens = []) {
+        if (!tokens || tokens.length === 0) return {};
+        
+        try {
+            const results = {};
+            const batchSize = 50;
+            
+            for (let i = 0; i < tokens.length; i += batchSize) {
+                const batch = tokens.slice(i, i + batchSize);
+                const resp = await smartApi.marketData({
+                    mode: "FULL",
+                    exchangeTokens: { "NFO": batch }
+                });
+                
+                if (resp && resp.data && resp.data.fetched) {
+                    resp.data.fetched.forEach(d => {
+                        const tkn = d.symbolToken || d.token;
+                        if (tkn) results[tkn] = d;
+                    });
+                }
+            }
+            return results;
+        } catch (err) {
+            console.error("[getLivePricesForTokens] Error:", err.message);
+            return {};
         }
     }
 }
