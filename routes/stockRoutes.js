@@ -25,7 +25,7 @@ router.post("/updateIndicator", stockController.updateIndicator);
 router.get("/updateIndicator", stockController.updateIndicator); // Added GET support so direct browser URLs work
 
 router.post("/getTimeframes", stockController.getTimeFrames);
-router.post("/getIndicators", stockController.getIndicators);
+router.post("/getIndicators", stockController.getIndicators);angelAuthMiddleware
 router.get("/triggerSnapshot", stockController.triggerOptionSnapshot);
 router.get("/debugStore", stockController.debugStore);
 router.get("/getFormattedOptionChain", stockController.getFormattedOptionChain);
@@ -33,5 +33,8 @@ router.get("/getFormattedOptionChain", stockController.getFormattedOptionChain);
 
 router.post("/dispatchOrder", verifyToken, angelAuthMiddleware, stockController.orderDispatch); // New route for order dispatching  
 router.get("/orders", verifyToken, stockController.fetchOrders); // Fetch all orders for a user
+
+router.post("/testing",angelAuthMiddleware,stockController.testing);
+
 
 module.exports = router;
