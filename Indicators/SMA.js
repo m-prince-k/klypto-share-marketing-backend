@@ -76,26 +76,27 @@ function stdev(data, length) {
 // ==============================
 
 async function calculateSMA(candles, options) {
+  console.log(candles, options, "***********************")
 
   const length = options?.length || 9;
   const offset = options?.offset || 0;
   const maType = options?.maType || "None";
   const maLength = options?.maLength || 14;
-  const bbMult = options?.bbStdDev || 2; 
+  const bbMult = options?.bbStdDev || 2;
   const sourceType = options?.source || "close";
 
   if (!Array.isArray(candles)) return [];
 
-  const source = await candles.map(c => {
-    switch(sourceType) {
-      case "volume": return c.volume;
-      case "high":   return c.high;
-      case "low":    return c.low;
-      case "open":   return c.open;
-      case "hl2":    return (c.high + c.low) / 2;
-      case "hlc3":   return (c.high + c.low + c.close) / 3;
-      case "ohlc4":  return (c.open + c.high + c.low + c.close) / 4;
-      default:       return c.close;
+  const source = candles.map(c => {
+    switch (sourceType) {
+      case "volume": return Number(c.volume);
+      case "high": return Number(c.high);
+      case "low": return Number(c.low);
+      case "open": return Number(c.open);
+      case "hl2": return (Number(c.high) + Number(c.low)) / 2;
+      case "hlc3": return (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+      case "ohlc4": return (Number(c.open) + Number(c.high) + Number(c.low) + Number(c.close)) / 4;
+      default: return Number(c.close);
     }
   });
 
@@ -135,19 +136,18 @@ async function calculateSMA(candles, options) {
     : null;
 
   const result = candles.map((c, i) => ({
-    time: c.time,
-    datetime: new Date(c.time * 1000).toISOString(),
+    time: c.timestamp || c.time,
     sma: baseSMAArr[i],
     smoothingMA: smoothArr ? smoothArr[i] : null,
     bbUpper: isBB
       ? (smoothArr[i] !== null && stDevArr[i] !== null
-          ? smoothArr[i] + stDevArr[i]
-          : null)
+        ? smoothArr[i] + stDevArr[i]
+        : null)
       : null,
     bbLower: isBB
       ? (smoothArr[i] !== null && stDevArr[i] !== null
-          ? smoothArr[i] - stDevArr[i]
-          : null)
+        ? smoothArr[i] - stDevArr[i]
+        : null)
       : null
   }));
 

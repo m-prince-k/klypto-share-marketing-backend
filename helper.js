@@ -450,7 +450,7 @@ async function indicatorEngine(candles, config) {
 
 
 async function prepareCandlesWithIndicators(type, candle, res) {
-  
+
   try {
 
     switch (type) {
@@ -644,7 +644,7 @@ async function prepareCandlesWithIndicators(type, candle, res) {
             { type: "SMA", name: "sma" },
             { type: "EMA", name: "ema" },
             { type: "MACD", name: "macd" },
-            { type: "VWAP", name: "vwap" }, 
+            { type: "VWAP", name: "vwap" },
             { type: "ATR", name: "atr" },
             { type: "BB", name: "bb" },
             { type: "ADX", name: "adx" },
@@ -682,8 +682,8 @@ async function prepareCandlesWithIndicators(type, candle, res) {
           }
 
           let finalResults = Array.from(resultsMap.values()).sort((a, b) => a.time - b.time);
-          
-          const warmupPeriod = 50; 
+
+          const warmupPeriod = 50;
           if (finalResults.length > warmupPeriod) {
             finalResults = finalResults.slice(warmupPeriod);
           }
@@ -693,8 +693,8 @@ async function prepareCandlesWithIndicators(type, candle, res) {
             const dt = new Date(r.time * 1000);
             return {
               ...r,
-              datetime: dt.toLocaleString('en-IN', { 
-                timeZone: 'Asia/Kolkata', 
+              datetime: dt.toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
                 hour12: false,
                 hour: '2-digit', minute: '2-digit', second: '2-digit',
                 day: '2-digit', month: '2-digit', year: 'numeric'
@@ -705,8 +705,8 @@ async function prepareCandlesWithIndicators(type, candle, res) {
 
       default:
         const rawResults = await (async () => {
-            // This is a placeholder for single-indicator return logic if it wasn't caught in cases
-            return []; 
+          // This is a placeholder for single-indicator return logic if it wasn't caught in cases
+          return [];
         })();
 
         // For single indicators (like RSI, SMA), we still need to add datetime
@@ -723,7 +723,7 @@ async function prepareCandlesWithIndicators(type, candle, res) {
 // Wrapper to add datetime to any indicator result array
 const withDateTime = (data) => {
   if (!Array.isArray(data)) return data;
-  
+
   // 1. Remove duplicates and ensure time is a number
   const uniqueMap = new Map();
   data.forEach(item => {
@@ -743,8 +743,8 @@ const withDateTime = (data) => {
     const dt = new Date(r.time * 1000);
     return {
       ...r,
-      datetime: dt.toLocaleString('en-IN', { 
-        timeZone: 'Asia/Kolkata', 
+      datetime: dt.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
         hour12: false,
         hour: '2-digit',
         minute: '2-digit',
@@ -1788,72 +1788,168 @@ const sectorMap = {
 
 
 const dispatchOrder = async (smartApi, orderInput) => {
-    try {
-        // ✅ Required fields validation
-        const requiredFields = [
-            "tradingsymbol",
-            "symboltoken",
-            "transactiontype",
-            "exchange",
-            "ordertype",
-            "producttype",
-            "quantity"
-        ];
+  try {
+    // ✅ Required fields validation
+    const requiredFields = [
+      "tradingsymbol",
+      "symboltoken",
+      "transactiontype",
+      "exchange",
+      "ordertype",
+      "producttype",
+      "quantity"
+    ];
 
-        for (const field of requiredFields) {
-            if (!orderInput[field]) {
-                throw new Error(`Missing required field: ${field}`);
-            }
-        }
-
-        // ✅ Default values (safe fallbacks)
-        const orderParams = {
-            variety: orderInput.variety || "NORMAL",
-            tradingsymbol: orderInput.tradingsymbol,
-            symboltoken: orderInput.symboltoken,
-            transactiontype: orderInput.transactiontype.toUpperCase(), // BUY / SELL
-            exchange: orderInput.exchange || "NSE",
-            ordertype: orderInput.ordertype.toUpperCase(), // MARKET / LIMIT
-            producttype: orderInput.producttype || "INTRADAY",
-            duration: orderInput.duration || "DAY",
-            price: orderInput.price || "0",
-            squareoff: orderInput.squareoff || "0",
-            stoploss: orderInput.stoploss || "0",
-            quantity: String(orderInput.quantity)
-        };
-
-        // ✅ Extra validation
-        if (orderParams.ordertype === "LIMIT" && (!orderInput.price || orderInput.price == 0)) {
-            throw new Error("LIMIT order requires valid price");
-        }
-
-        if (Number(orderParams.quantity) <= 0) {
-            throw new Error("Quantity must be greater than 0");
-        }
-
-        console.log("📤 Dispatching Order:", orderParams);
-
-        // ✅ Place order
-        const orderResponse = await smartApi.placeOrder(orderParams);
-
-        console.log("✅ Order Success:", orderResponse);
-
-        return {
-            success: true,
-            data: orderResponse
-        };
-
-    } catch (error) {
-        console.error("❌ Order Failed:", error.message);
-
-        return {
-            success: false,
-            error: error.message
-        };
+    for (const field of requiredFields) {
+      if (!orderInput[field]) {
+        throw new Error(`Missing required field: ${field}`);
+      }
     }
+
+    // ✅ Default values (safe fallbacks)
+    const orderParams = {
+      variety: orderInput.variety || "NORMAL",
+      tradingsymbol: orderInput.tradingsymbol,
+      symboltoken: orderInput.symboltoken,
+      transactiontype: orderInput.transactiontype.toUpperCase(), // BUY / SELL
+      exchange: orderInput.exchange || "NSE",
+      ordertype: orderInput.ordertype.toUpperCase(), // MARKET / LIMIT
+      producttype: orderInput.producttype || "INTRADAY",
+      duration: orderInput.duration || "DAY",
+      price: orderInput.price || "0",
+      squareoff: orderInput.squareoff || "0",
+      stoploss: orderInput.stoploss || "0",
+      quantity: String(orderInput.quantity)
+    };
+
+    // ✅ Extra validation
+    if (orderParams.ordertype === "LIMIT" && (!orderInput.price || orderInput.price == 0)) {
+      throw new Error("LIMIT order requires valid price");
+    }
+
+    if (Number(orderParams.quantity) <= 0) {
+      throw new Error("Quantity must be greater than 0");
+    }
+
+    console.log("📤 Dispatching Order:", orderParams);
+
+    // ✅ Place order
+    const orderResponse = await smartApi.placeOrder(orderParams);
+
+    console.log("✅ Order Success:", orderResponse);
+
+    return {
+      success: true,
+      data: orderResponse
+    };
+
+  } catch (error) {
+    console.error("❌ Order Failed:", error.message);
+
+    return {
+      success: false,
+      error: error.message
+    };
+  }
 }
 
+
+
+const fetchCandles = async (jwtToken) => {
+
+  try {
+
+    const now = new Date();
+
+    const fromDate = new Date(
+      now.getTime() - (200 * 60 * 1000)
+    );
+
+    const response = await axios.post(
+      "https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData",
+      {
+        exchange: "MCX",
+        symboltoken: 459277,
+        interval: "ONE_MINUTE",
+
+        fromdate: formatDate(fromDate),
+        todate: formatDate(now)
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${jwtToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "X-UserType": "USER",
+          "X-SourceID": "WEB",
+          "X-ClientLocalIP": "127.0.0.1",
+          "X-ClientPublicIP": "127.0.0.1",
+          "X-MACAddress": "00:00:00:00:00:00",
+          "X-PrivateKey": "AAAP423969"
+        }
+      }
+    );
+
+    const candles = response?.data?.data;
+
+    /**
+     * Angel Candle Format:
+     * [
+     *   time,
+     *   open,
+     *   high,
+     *   low,
+     *   close,
+     *   volume
+     * ]
+     */
+
+    return await candles.map(c => ({
+      time: c[0],
+      open: Number(c[1]),
+      high: Number(c[2]),
+      low: Number(c[3]),
+      close: Number(c[4]),
+      volume: Number(c[5])
+    }));
+
+  } catch (error) {
+
+    console.log("CANDLE ERROR");
+
+    console.log(
+      error.response?.data || error.message
+    );
+
+    return [];
+  }
+}
+
+
+function formatDate(date) {
+
+  const pad = (n) => String(n).padStart(2, "0");
+
+  return (
+    date.getFullYear() +
+    "-" +
+    pad(date.getMonth() + 1) +
+    "-" +
+    pad(date.getDate()) +
+    " " +
+    pad(date.getHours()) +
+    ":" +
+    pad(date.getMinutes())
+  );
+}
+
+
+
+
+
+
 module.exports = {
+  fetchCandles,
   dispatchOrder,
   sectorMap,
   getExit,

@@ -3,7 +3,8 @@ const optionChainService = require('../services/optionChainService');
 const { getHistoricalCandle } = require('../services/angelOne');
 const store = require('../services/marketStore');
 const { syncLivePrices, syncCandleData } = require('../services/stockService');
-const { Timeframe, Indicator, Order } = require('../models');
+const { Timeframe, Indicator, Order, Candle } = require('../models');
+const { SMA } = require('technicalindicators');
 const { Sequelize, Op } = require('sequelize');
 const { response } = require('express');
 const { getIO } = require('../services/socket');
@@ -1898,7 +1899,146 @@ const getMasterWatchlist = async (req, res) => {
     }
 };
 
+const addSMA = (candles) => {
+    const closes = candles.map(c => parseFloat(c.close));
+
+    const sma20 = SMA.calculate({ period: 20, values: closes });
+    const sma50 = SMA.calculate({ period: 50, values: closes });
+    const sma100 = SMA.calculate({ period: 100, values: closes });
+    const sma200 = SMA.calculate({ period: 200, values: closes });
+
+    return candles.map((candle, index) => ({
+        ...candle,
+        SMA_20: index >= 19 ? sma20[index - 19] : null,
+        SMA_50: index >= 49 ? sma50[index - 49] : null,
+        SMA_100: index >= 99 ? sma100[index - 99] : null,
+        SMA_200: index >= 199 ? sma200[index - 199] : null
+    }));
+}
+
+function checkSmaConditions(df, lookback = 3) {
+    if (!df || df.length < lookback + 1) {
+        return { trend: null, setup: null };
+    }
+
+    // Filter rows with all SMAs (Equivalent to dropna in Python)
+    const valid_df = df.filter(x => x.SMA_20 && x.SMA_50 && x.SMA_100 && x.SMA_200);
+    if (valid_df.length === 0) return { trend: null, setup: null };
+
+    const row = valid_df[valid_df.length - 1];
+    const o = parseFloat(row.open);
+    const c = parseFloat(row.close);
+
+    const smas = [
+        row.SMA_20,
+        row.SMA_50,
+        row.SMA_100,
+        row.SMA_200
+    ];
+
+    const max_sma = Math.max(...smas);
+    const min_sma = Math.min(...smas);
+
+    // Current candle structure
+    const above_all = c > max_sma;
+    const below_all = c < min_sma;
+
+    const cross_last_up = (o <= max_sma && max_sma <= c);
+    const cross_last_down = (c <= min_sma && min_sma <= o);
+
+    if (!(above_all || cross_last_up || below_all || cross_last_down)) {
+        return { trend: null, setup: null };
+    }
+
+    // Previous candles (Slicing same as Python df.iloc[-(lookback+1):-1])
+    const last3 = valid_df.slice(-(lookback + 1), -1);
+
+    let below_all_cnt = 0;
+    let above_all_cnt = 0;
+    let cross_any = false;
+
+    for (const prev of last3) {
+        const pc = parseFloat(prev.close);
+        const prev_smas = [
+            prev.SMA_20,
+            prev.SMA_50,
+            prev.SMA_100,
+            prev.SMA_200
+        ];
+
+        const pmax = Math.max(...prev_smas);
+        const pmin = Math.min(...prev_smas);
+
+        if (pc < pmin) {
+            below_all_cnt += 1;
+        } else if (pc > pmax) {
+            above_all_cnt += 1;
+        } else {
+            cross_any = true;
+        }
+    }
+
+    // Final decision
+    if (above_all || cross_last_up) {
+        if (cross_any) {
+            return { trend: "UP", setup: "CROSS_CONTINUATION" };
+        }
+        if (below_all_cnt === lookback) {
+            return { trend: "UP", setup: "REVERSAL" };
+        }
+    }
+
+    if (below_all || cross_last_down) {
+        if (cross_any) {
+            return { trend: "DOWN", setup: "CROSS_CONTINUATION" };
+        }
+        if (above_all_cnt === lookback) {
+            return { trend: "DOWN", setup: "REVERSAL" };
+        }
+    }
+
+    return { trend: null, setup: null };
+}
+
+const testing = async (req, res) => {
+    try {
+        const { authToken } = req.angel;
+        if (!authToken) {
+            return res.json({ success: false, message: "Login failed" });
+        }
+
+        let candles = await Candle.findAll({
+            where: {
+                symbol: 'NIFTY',
+                interval: 'ONE_MINUTE'
+            },
+            order: [['timestamp', 'DESC']],
+            limit: 200,
+            raw: true
+        });
+
+        if (!candles || candles.length === 0) {
+            return res.json({ success: false, message: "No data found" });
+        }
+
+        candles = candles.reverse();
+        candles = addSMA(candles);
+        const signal = checkSmaConditions(candles);
+
+        return res.json({
+            success: true,
+            totalCandles: candles.length,
+            latestCandle: candles[candles.length - 1],
+            signal
+        });
+    } catch (error) {
+        console.log(error);
+        return res.json({ success: false, error: error.message });
+    }
+}
+
 module.exports = {
+    testing,
     getStocks,
     getLiveEquity,
     syncLiveEquityToDB,
