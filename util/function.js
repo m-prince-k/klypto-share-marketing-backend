@@ -722,12 +722,340 @@ function updateIndicators(df) {
     return df;
 }
 
+
+// =========================================================
+// CANDLE FILTER
+// SAME TO SAME PYTHON -> JS CONVERSION
+// =========================================================
+
+function candleFilter(
+    df,
+    gapThreshold = 0.01,
+    bodyThreshold = 0.015,
+    wickRatio = 2
+) {
+
+    // -----------------------------------------
+    // INSUFFICIENT DATA
+    // -----------------------------------------
+
+    if (df.length < 2) {
+
+        return [
+            false,
+            {
+                gap_pct: null,
+                body_pct: null,
+                upper_wick: null,
+                lower_wick: null,
+                reason: "insufficient_data"
+            }
+        ];
+    }
+
+    // -----------------------------------------
+    // CURRENT + PREVIOUS CANDLE
+    // -----------------------------------------
+
+    const row =
+        df[df.length - 1];
+
+    const prev =
+        df[df.length - 2];
+
+    const open_ =
+        Number(row.open);
+
+    const close_ =
+        Number(row.close);
+
+    const high_ =
+        Number(row.high);
+
+    const low_ =
+        Number(row.low);
+
+    const prevClose =
+        Number(prev.close);
+
+    // -----------------------------------------
+    // GAP
+    // -----------------------------------------
+
+    const gapPct =
+        (open_ - prevClose) / prevClose;
+
+    const gapFlag =
+        Math.abs(gapPct) > gapThreshold;
+
+    // -----------------------------------------
+    // BODY
+    // -----------------------------------------
+
+    const body =
+        Math.abs(close_ - open_);
+
+    const bodyPct =
+        open_ !== 0
+            ? body / open_
+            : 0;
+
+    const bodyFlag =
+        bodyPct > bodyThreshold;
+
+    // -----------------------------------------
+    // WICKS
+    // -----------------------------------------
+
+    const upperWick =
+        high_ - Math.max(open_, close_);
+
+    const lowerWick =
+        Math.min(open_, close_) - low_;
+
+    const wickFlag =
+        (
+            upperWick > body * wickRatio
+        ) ||
+        (
+            lowerWick > body * wickRatio
+        );
+
+    // -----------------------------------------
+    // FINAL REJECTION
+    // -----------------------------------------
+
+    const reject =
+        gapFlag ||
+        bodyFlag ||
+        wickFlag;
+
+    // -----------------------------------------
+    // REASON
+    // -----------------------------------------
+
+    const reason = [];
+
+    if (gapFlag) {
+        reason.push("gap");
+    }
+
+    if (bodyFlag) {
+        reason.push("body");
+    }
+
+    if (wickFlag) {
+        reason.push("wick");
+    }
+
+    // -----------------------------------------
+    // RETURN
+    // -----------------------------------------
+
+    return [
+        !reject,
+        {
+            gap_pct: gapPct,
+
+            body_pct: bodyPct,
+
+            upper_wick: upperWick,
+
+            lower_wick: lowerWick,
+
+            reason:
+                reason.length > 0
+                    ? reason.join(",")
+                    : "pass"
+        }
+    ];
+}
+
+
+function checkSmaConditions(df, lookback = 3) {
+
+    if (!df || df.length < 200) {
+
+        return {
+            trend: null,
+            setup: null
+        };
+    }
+
+    const validDf = df.filter(
+        x =>
+            x.SMA_20 &&
+            x.SMA_50 &&
+            x.SMA_100 &&
+            x.SMA_200
+    );
+
+    const row = validDf[validDf.length - 1];
+
+    const o = row.open;
+    const c = row.close;
+
+    const smas = [
+        row.SMA_20,
+        row.SMA_50,
+        row.SMA_100,
+        row.SMA_200
+    ];
+
+    const maxSma = Math.max(...smas);
+    const minSma = Math.min(...smas);
+
+    const aboveAll = c > maxSma;
+
+    const belowAll = c < minSma;
+
+    const crossLastUp =
+        o <= maxSma && c >= maxSma;
+
+    const crossLastDown =
+        c <= minSma && o >= minSma;
+
+    if (
+        !(
+            aboveAll ||
+            crossLastUp ||
+            belowAll ||
+            crossLastDown
+        )
+    ) {
+
+        return {
+            trend: null,
+            setup: null
+        };
+    }
+
+    const last3 = validDf.slice(
+        -(lookback + 1),
+        -1
+    );
+
+    let belowAllCnt = 0;
+
+    let aboveAllCnt = 0;
+
+    let crossAny = false;
+
+    for (const prev of last3) {
+
+        const pc = prev.close;
+
+        const prevSmas = [
+            prev.SMA_20,
+            prev.SMA_50,
+            prev.SMA_100,
+            prev.SMA_200
+        ];
+
+        const pmax = Math.max(...prevSmas);
+
+        const pmin = Math.min(...prevSmas);
+
+        if (pc < pmin) {
+
+            belowAllCnt++;
+
+        } else if (pc > pmax) {
+
+            aboveAllCnt++;
+
+        } else {
+
+            crossAny = true;
+        }
+    }
+
+    if (aboveAll || crossLastUp) {
+
+        if (crossAny) {
+
+            return {
+                trend: "UP",
+                setup: "CROSS_CONTINUATION"
+            };
+        }
+
+        if (belowAllCnt === lookback) {
+
+            return {
+                trend: "UP",
+                setup: "REVERSAL"
+            };
+        }
+    }
+
+    if (belowAll || crossLastDown) {
+
+        if (crossAny) {
+
+            return {
+                trend: "DOWN",
+                setup: "CROSS_CONTINUATION"
+            };
+        }
+
+        if (aboveAllCnt === lookback) {
+
+            return {
+                trend: "DOWN",
+                setup: "REVERSAL"
+            };
+        }
+    }
+
+    return {
+        trend: null,
+        setup: null
+    };
+}
+
+// =========================================================
+// EXPORT
+// =========================================================
+
+
+
+// =========================================================
+// USAGE EXAMPLE
+// =========================================================
+
+/*
+
+const candles = [
+    {
+        open: 100,
+        high: 105,
+        low: 99,
+        close: 103
+    },
+    {
+        open: 104,
+        high: 108,
+        low: 102,
+        close: 107
+    }
+];
+
+const [valid, info] =
+    candleFilter(candles);
+
+console.log(valid);
+console.log(info);
+
+*/
+
 // =========================================================
 // EXPORTS
 // =========================================================
 
 module.exports = {
-
+    checkSmaConditions,
+    candleFilter,
     calculateSma,
 
     calculateRsi,
