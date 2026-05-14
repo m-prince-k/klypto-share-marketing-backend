@@ -449,23 +449,23 @@ async function indicatorEngine(candles, config) {
 }
 
 
-async function prepareCandlesWithIndicators(type, candle, res) {
+async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
 
   try {
 
     switch (type) {
       case "SMA":
-        return calculateSMA(candle, 9, { maType: "none", maLength: 14, smaLength: 9, bbMult: 2, offset: 0, source: "close" });
+        return calculateSMA(candle, config.length || 9, { ...config, maType: config.maType || "none", maLength: config.maLength || 14, smaLength: config.length || 9, bbMult: config.bbMult || 2, offset: config.offset || 0, source: config.source || "close" });
       case "STOCH":
         return calculateStochastic(candle, { kLength: 14, kSmoothing: 1, dSmoothing: 3 });
       case "EMA":
-        return calculateEMAIndicator(candle, { length: 9, maType: "none", maLength: 14, bbMult: 2, source: "close", offset: 0 });
+        return calculateEMAIndicator(candle, { length: config.length || 9, maType: config.maType || "none", maLength: config.maLength || 14, bbMult: config.bbMult || 2, source: config.source || "close", offset: config.offset || 0 });
 
       case "VWMA":
         return vwmaSeries(candle, { period: 20, priceKey: "close", volumeKey: "volume" });
 
       case "RSI":
-        return calculateRSIIndicator(candle, { length: 14, maType: "SMA + Bollinger Bands", maLength: 14, bbStdDev: 2, source: "close" });
+        return calculateRSIIndicator(candle, { length: config.length || 14, maType: config.maType || "SMA + Bollinger Bands", maLength: config.maLength || 14, bbStdDev: config.bbStdDev || 2, source: config.source || "close" });
 
       case "MACD":
         return calculateMACD(candle, { fastLength: 12, slowLength: 26, signalLength: 9, oscillatorMAType: "EMA", signalMAType: "EMA", source: "close" });

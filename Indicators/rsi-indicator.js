@@ -119,26 +119,43 @@ async function calculateRSIIndicator(candles, options) {
         return result;
     }
 
-    const validCloses = closes.filter(value => value !== null);
-    if (validCloses.length < rsiLength + 1) {
-        // console.warn(`[RSI] Insufficient data: ${validCloses.length} closes for period ${rsiLength}`);
-    }
-    const calculatedRsi = RSI.calculate({ values: validCloses, period: rsiLength });
+    // --- WILDER'S RSI CALCULATION (RMA BASED) ---
     const rsi = Array(candles.length).fill(null);
+    const validCloses = closes.filter(value => value !== null);
 
-    let validCount = 0;
-    let outputIndex = 0;
-    for (let i = 0; i < closes.length; i++) {
-        if (closes[i] === null) continue;
+    if (validCloses.length > rsiLength) {
+        let gains = [];
+        let losses = [];
+
+        for (let i = 1; i < validCloses.length; i++) {
+            const diff = validCloses[i] - validCloses[i - 1];
+            gains.push(Math.max(diff, 0));
+            losses.push(Math.max(-diff, 0));
+        }
+
+        let avgGain = gains.slice(0, rsiLength).reduce((a, b) => a + b, 0) / rsiLength;
+        let avgLoss = losses.slice(0, rsiLength).reduce((a, b) => a + b, 0) / rsiLength;
+
+        const firstValidIndex = closes.findIndex(v => v !== null);
         
-        validCount++;
-        // RSI requires `period + 1` valid values to produce the first result
-        if (validCount <= rsiLength) continue;
+        let outputIdx = firstValidIndex + rsiLength;
+        if (outputIdx < rsi.length) {
+            const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+            rsi[outputIdx] = Number((avgLoss === 0 ? 100 : 100 - (100 / (1 + rs))).toFixed(2));
 
-        if (outputIndex < calculatedRsi.length) {
-            rsi[i] = Number(calculatedRsi[outputIndex++].toFixed(2));
+            for (let i = rsiLength; i < gains.length; i++) {
+                avgGain = (avgGain * (rsiLength - 1) + gains[i]) / rsiLength;
+                avgLoss = (avgLoss * (rsiLength - 1) + losses[i]) / rsiLength;
+                
+                outputIdx++;
+                if (outputIdx < rsi.length) {
+                    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+                    rsi[outputIdx] = Number((avgLoss === 0 ? 100 : 100 - (100 / (1 + rs))).toFixed(2));
+                }
+            }
         }
     }
+    // --------------------------------------------
 
     let smoothingMA = Array(candles.length).fill(null);
     let bbUpper = Array(candles.length).fill(null);

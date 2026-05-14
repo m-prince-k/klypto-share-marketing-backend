@@ -89,54 +89,65 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                     }
                 });
 
-            // Merge live candle if available
+            // --- IMPROVED LIVE CANDLE MERGE (FOR ALL INTERVALS) ---
             const live = store.liveCandles[token] || store.liveCandles[symbol.toUpperCase()];
-            if (interval === "ONE_MINUTE" && live) {
-                    const liveTs = new Date(live.minute);
+            const liveData = store.latestMarketData[`${symbol.toUpperCase()}:${exchange}`];
+            
+            if (live || liveData) {
+                const intervalInMinutes = {
+                    "ONE_MINUTE": 1, "THREE_MINUTE": 3, "FIVE_MINUTE": 5,
+                    "TEN_MINUTE": 10, "FIFTEEN_MINUTE": 15, "THIRTY_MINUTE": 30,
+                    "ONE_HOUR": 60
+                }[interval] || 1;
+
+                const now = new Date();
+                const msPerInterval = intervalInMinutes * 60 * 1000;
+                
+                // Calculate the start time of the CURRENT forming candle for this interval
+                const currentIntervalStartTs = Math.floor(now.getTime() / msPerInterval) * msPerInterval;
+                const intervalStartTime = new Date(currentIntervalStartTs);
+
+                const lastD = finalData[finalData.length - 1];
+                const lastTs = lastD ? new Date(lastD.timestamp).getTime() : 0;
+
+                // If the forming candle is newer than our last DB candle, push it
+                // If it matches our last candle, update it.
+                if (currentIntervalStartTs >= lastTs) {
+                    let formingCandle;
                     
-                    // Also filter the live candle if it's outside market hours
-                    const lHours = liveTs.getHours();
-                    const lMinutes = liveTs.getMinutes();
-                    const lTimeVal = lHours * 100 + lMinutes;
-                    const isOutside = exchange === "MCX" ? (lTimeVal < 900 || lTimeVal > 2355) : (lTimeVal < 915 || lTimeVal > 1530);
+                    if (currentIntervalStartTs === lastTs) {
+                        formingCandle = finalData[finalData.length - 1];
+                    } else {
+                        // Create a new forming candle based on the last tick or live candle
+                        formingCandle = {
+                            symbol: symbol.toUpperCase(),
+                            token: token,
+                            exchange,
+                            interval,
+                            timestamp: intervalStartTime,
+                            time: Math.floor(currentIntervalStartTs / 1000),
+                            open: live ? parseFloat(live.open) : parseFloat(liveData?.last_traded_price || 0),
+                            high: live ? parseFloat(live.high) : parseFloat(liveData?.last_traded_price || 0),
+                            low: live ? parseFloat(live.low) : parseFloat(liveData?.last_traded_price || 0),
+                            close: liveData ? parseFloat(liveData.last_traded_price || liveData.ltp) : (live ? parseFloat(live.close) : 0),
+                            volume: live ? parseFloat(live.volume || 0) : 0
+                        };
+                        if (isOption && extraInfo) Object.assign(formingCandle, extraInfo);
+                        finalData.push(formingCandle);
+                    }
 
-                    if (!isOutside) {
-                        const lastD = finalData[finalData.length - 1];
-                        const lastTs = lastD ? new Date(lastD.timestamp) : null;
-
-                        if (!lastTs || liveTs.getTime() >= lastTs.getTime()) {
-                            const liveFormatted = {
-                                ...live,
-                                symbol: symbol.toUpperCase(),
-                                token: token,
-                                exchange,
-                                interval,
-                                timestamp: liveTs,
-                                time: Math.floor(liveTs.getTime() / 1000)
-                            };
-                            if (isOption && extraInfo) Object.assign(liveFormatted, extraInfo);
-
-                            if (lastTs && liveTs.getTime() === lastTs.getTime()) {
-                                finalData[finalData.length - 1] = liveFormatted;
-                            } else {
-                                finalData.push(liveFormatted);
-                            }
+                    // Update High/Low/Close from Live Tick
+                    if (liveData && liveData.last_traded_price) {
+                        const ltp = parseFloat(liveData.last_traded_price);
+                        if (!isNaN(ltp) && ltp > 0) {
+                            formingCandle.close = ltp;
+                            if (ltp > formingCandle.high) formingCandle.high = ltp;
+                            if (ltp < formingCandle.low) formingCandle.low = ltp;
                         }
                     }
                 }
-
-                // --- APPLY LIVE TICK TO LAST CANDLE FOR REAL-TIME INDICATOR MATCHING ---
-                const liveData = store.latestMarketData[`${symbol.toUpperCase()}:${exchange}`];
-                if (liveData && liveData.last_traded_price && finalData.length > 0) {
-                    const lastCandle = finalData[finalData.length - 1];
-                    const ltp = parseFloat(liveData.last_traded_price || liveData.ltp);
-                    if (!isNaN(ltp) && ltp > 0) {
-                        lastCandle.close = ltp;
-                        if (ltp > lastCandle.high) lastCandle.high = ltp;
-                        if (ltp < lastCandle.low) lastCandle.low = ltp;
-                    }
-                }
-                // -----------------------------------------------------------------------
+            }
+            // --------------------------------------------------------
 
                 return { 
                     source: "database", 
@@ -285,45 +296,54 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 .map(item => [item.timestamp.getTime(), item])
         ).values());
         
-        // --- REAL-TIME LIVE TICK MERGE ---
-        // If we are requesting for 'Today' and at a 1-minute interval, 
-        // merge the latest unclosed candle from our store to ensure 100% live match.
-        if (interval === "ONE_MINUTE" && store.liveCandles[token]) {
-            const live = store.liveCandles[token];
-            const liveTs = new Date(live.minute);
-            
-            // If the live candle is newer or same as the last historical candle
-            const lastHist = uniqueData.length > 0 ? uniqueData[uniqueData.length - 1] : null;
-            if (!lastHist || liveTs.getTime() >= lastHist.timestamp.getTime()) {
-                const liveFormatted = {
-                    symbol: symbol.toUpperCase(),
-                    token: token,
-                    exchange,
-                    interval,
-                    timestamp: liveTs,
-                    time: Math.floor(liveTs.getTime() / 1000),
-                    open: live.open,
-                    high: live.high,
-                    low: live.low,
-                    close: live.close,
-                    volume: live.volume
-                };
+        // --- IMPROVED LIVE CANDLE MERGE (FOR ALL INTERVALS) ---
+        const live = store.liveCandles[token] || store.liveCandles[symbol.toUpperCase()];
+        const liveDataAPI = store.latestMarketData[`${symbol.toUpperCase()}:${exchange}`];
+        
+        if (live || liveDataAPI) {
+            const intervalInMinutes = {
+                "ONE_MINUTE": 1, "THREE_MINUTE": 3, "FIVE_MINUTE": 5,
+                "TEN_MINUTE": 10, "FIFTEEN_MINUTE": 15, "THIRTY_MINUTE": 30,
+                "ONE_HOUR": 60
+            }[interval] || 1;
 
-                if (isOption && extraInfo) {
-                    Object.assign(liveFormatted, {
-                        underlying: extraInfo.underlying,
-                        strike: extraInfo.strike,
-                        expiry: extraInfo.expiry,
-                        optionType: extraInfo.optionType
-                    });
+            const now = new Date();
+            const msPerInterval = intervalInMinutes * 60 * 1000;
+            const currentIntervalStartTs = Math.floor(now.getTime() / msPerInterval) * msPerInterval;
+            const intervalStartTime = new Date(currentIntervalStartTs);
+
+            const lastHist = uniqueData.length > 0 ? uniqueData[uniqueData.length - 1] : null;
+            const lastTs = lastHist ? new Date(lastHist.timestamp).getTime() : 0;
+
+            if (currentIntervalStartTs >= lastTs) {
+                let formingCandle;
+                if (currentIntervalStartTs === lastTs) {
+                    formingCandle = uniqueData[uniqueData.length - 1];
+                } else {
+                    formingCandle = {
+                        symbol: symbol.toUpperCase(),
+                        token: token,
+                        exchange,
+                        interval,
+                        timestamp: intervalStartTime,
+                        time: Math.floor(currentIntervalStartTs / 1000),
+                        open: live ? parseFloat(live.open) : parseFloat(liveDataAPI?.last_traded_price || 0),
+                        high: live ? parseFloat(live.high) : parseFloat(liveDataAPI?.last_traded_price || 0),
+                        low: live ? parseFloat(live.low) : parseFloat(liveDataAPI?.last_traded_price || 0),
+                        close: liveDataAPI ? parseFloat(liveDataAPI.last_traded_price || liveDataAPI.ltp) : (live ? parseFloat(live.close) : 0),
+                        volume: live ? parseFloat(live.volume || 0) : 0
+                    };
+                    if (isOption && extraInfo) Object.assign(formingCandle, extraInfo);
+                    uniqueData.push(formingCandle);
                 }
 
-                if (lastHist && liveTs.getTime() === lastHist.timestamp.getTime()) {
-                    // Update the last candle with live data
-                    uniqueData[uniqueData.length - 1] = liveFormatted;
-                } else {
-                    // Append new running candle
-                    uniqueData.push(liveFormatted);
+                if (liveDataAPI && liveDataAPI.last_traded_price) {
+                    const ltp = parseFloat(liveDataAPI.last_traded_price);
+                    if (!isNaN(ltp) && ltp > 0) {
+                        formingCandle.close = ltp;
+                        if (ltp > formingCandle.high) formingCandle.high = ltp;
+                        if (ltp < formingCandle.low) formingCandle.low = ltp;
+                    }
                 }
             }
         }
@@ -352,18 +372,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             console.log(`[API Fallback] Saved ${filteredData.length} records to ${ModelToUse.name} for ${symbol}`);
         }
 
-        // --- APPLY LIVE TICK TO LAST CANDLE FOR REAL-TIME INDICATOR MATCHING ---
-        const liveDataAPI = store.latestMarketData[`${symbol.toUpperCase()}:${exchange}`];
-        if (liveDataAPI && liveDataAPI.last_traded_price && filteredData.length > 0) {
-            const lastCandle = filteredData[filteredData.length - 1];
-            const ltp = parseFloat(liveDataAPI.last_traded_price || liveDataAPI.ltp);
-            if (!isNaN(ltp) && ltp > 0) {
-                lastCandle.close = ltp;
-                if (ltp > lastCandle.high) lastCandle.high = ltp;
-                if (ltp < lastCandle.low) lastCandle.low = ltp;
-            }
-        }
-        // -----------------------------------------------------------------------
+
 
         return { source: "api_chunked", data: filteredData, raw_response: null };
     } catch (err) {

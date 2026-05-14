@@ -110,11 +110,6 @@ const connectSocket = (server) => {
                 };
                 const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
-                // Normalize dates
-                let fD = fromDate, tD = toDate;
-                if (typeof fD === 'string' && fD.length === 10) fD = formatDate(new Date(fD), isCommodity ? "09:00" : "09:15", finalInterval);
-                if (typeof tD === 'string' && tD.length === 10) tD = formatDate(new Date(tD), isCommodity ? "23:55" : "15:30", finalInterval);
-
                 const uSym = symbol.toUpperCase();
                 const isCommodity = uSym === "GOLD" || uSym === "SILVER";
                 let finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
@@ -124,6 +119,26 @@ const connectSocket = (server) => {
                     finalExchange = "NFO";
                 }
                 const mappedExchange = finalExchange;
+
+                // Normalize dates
+                let fD = fromDate, tD = toDate;
+                if (typeof fD === 'string' && fD.length === 10) fD = formatDate(new Date(fD), isCommodity ? "09:00" : "09:15", finalInterval);
+                if (typeof tD === 'string' && tD.length === 10) tD = formatDate(new Date(tD), isCommodity ? "23:55" : "15:30", finalInterval);
+
+                // --- AUTOMATIC LOOKBACK FOR WARMUP (Accurate values like TradingView/AngelOne) ---
+                let dynamicFrom = fD;
+                if (fD) {
+                    const warmupDate = new Date(fD);
+                    // For minute intervals, look back 5-10 days
+                    if (finalInterval.includes("MINUTE")) {
+                        warmupDate.setDate(warmupDate.getDate() - 7);
+                    } else if (finalInterval === "ONE_DAY") {
+                        warmupDate.setDate(warmupDate.getDate() - 100);
+                    } else {
+                        warmupDate.setDate(warmupDate.getDate() - 30);
+                    }
+                    dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
+                }
 
                 const topStocksMap = {
                     "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
@@ -144,7 +159,7 @@ const connectSocket = (server) => {
                         const t = s.symbol.toUpperCase();
                         const tr = s.tradingSymbol?.toUpperCase();
                         return t === uSym || t === noSpaceSym || t === shortYearSym ||
-                               tr === uSym || tr === noSpaceSym || tr === shortYearSym;
+                                tr === uSym || tr === noSpaceSym || tr === shortYearSym;
                     });
                     if (nfoMatch) {
                         finalToken = nfoMatch.token;
@@ -161,13 +176,21 @@ const connectSocket = (server) => {
 
                 if (!finalToken) throw new Error(`Token not found for ${symbol}`);
 
-                const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, fD, tD, extraInfo);
-                const candles = result?.data;
+                const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, tD, extraInfo);
+                const candles = result?.data || [];
 
-                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d });
+                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, payload);
                 const finalResults = withDateTime(results);
-                socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: finalResults });
-                console.log(`[Socket] ${type} calc: ${Date.now() - start}ms`);
+                
+                // If we had a warmup, slice the data back to user's requested fromDate
+                let filteredResults = finalResults;
+                if (fD && finalResults.length > 0) {
+                    const startTs = new Date(fD).getTime();
+                    filteredResults = finalResults.filter(r => (r.time * 1000) >= startTs);
+                }
+
+                socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: filteredResults });
+                console.log(`[Socket] ${type} calc with warmup: ${Date.now() - start}ms | Candles: ${candles.length} | Returned: ${filteredResults.length}`);
             } catch (err) {
                 console.error("[Socket Indicator] Error:", err.message);
                 socket.emit(EVENTS.INDICATOR_DETAILS_ERROR, { success: false, error: err.message });
@@ -216,6 +239,18 @@ const connectSocket = (server) => {
                     formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
                 }
 
+                // --- WARMUP LOOKBACK FOR UPDATE_INDICATOR ---
+                let dynamicFrom = formattedFromDate;
+                if (formattedFromDate) {
+                    const warmupDate = new Date(formattedFromDate);
+                    if (finalInterval.includes("MINUTE")) {
+                        warmupDate.setDate(warmupDate.getDate() - 7);
+                    } else if (finalInterval === "ONE_DAY") {
+                        warmupDate.setDate(warmupDate.getDate() - 100);
+                    }
+                    dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
+                }
+
                 const topStocksMap = {
                     "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
                     "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
@@ -235,7 +270,7 @@ const connectSocket = (server) => {
                         const t = s.symbol.toUpperCase();
                         const tr = s.tradingSymbol?.toUpperCase();
                         return t === uSym || t === noSpaceSym || t === shortYearSym ||
-                               tr === uSym || tr === noSpaceSym || tr === shortYearSym;
+                                tr === uSym || tr === noSpaceSym || tr === shortYearSym;
                     });
                     if (nfoMatch) {
                         finalToken = nfoMatch.token;
@@ -252,393 +287,45 @@ const connectSocket = (server) => {
 
                 if (!finalToken) throw new Error(`Token not found for ${symbol}`);
 
-                const candleResult = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate, extraInfo);
+                const candleResult = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate, extraInfo);
                 const candles = candleResult?.data || [];
 
                 const configBody = body || {};
                 const type = configBody.type || "RSI";
-                let enginePayload = { type };
+                let enginePayload = { ...configBody, type };
 
-                switch (type) {
-                    case "RSI":
-                        enginePayload = {
-                            type,
-                            source: configBody.source || "close",
-                            length: configBody.length || 14,
-                            maType: configBody.maType || "SMA",
-                            maLength: configBody.maLength || 14,
-                            bbStdDev: configBody.bbStdDev || 2
-                        };
-                        break;
-                    case "VWMA":
-                        enginePayload = {
-                            type,
-                            period: configBody.period || 20,
-                            priceKey: configBody.priceKey || "close",
-                            volumeKey: configBody.volumeKey || "volume"
-                        };
-                        break;
-                    case "EMA":
-                        enginePayload = {
-                            type,
-                            source: configBody.source || "close",
-                            length: configBody.length || 9,
-                            offset: configBody.offset || 0,
-                            maLength: configBody.maLength || 14,
-                            maType: configBody.maType || "none"
-                        };
-                        break;
-                    case "SMA":
-                        enginePayload = {
-                            type,
-                            source: configBody.source || "close",
-                            length: configBody.length || 9,
-                            offset: configBody.offset || 0,
-                            maType: configBody.maType || "none",
-                            maLength: configBody.maLength || "none",
-                            bbStdDev: configBody.bbStdDev || 2
-                        };
-                        break;
-                    case "BB":
-                        enginePayload = {
-                            type,
-                            source: configBody.source || "close",
-                            length: configBody.length || 20,
-                            maType: configBody.maType || "SMA",
-                            stdDev: configBody.stdDev || 2,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "BBW":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 20,
-                            bbMult: configBody.bbMult || 2,
-                            maType: configBody.maType || "SMA"
-                        };
-                        break;
-                    case "VWAP":
-                        enginePayload = {
-                            type,
-                            source: configBody.source || "close",
-                            anchor: configBody.anchor || "Session",
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "ATR":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            smoothing: configBody.smoothing || "RMA"
-                        };
-                        break;
-                    case "TR":
-                    case "MACD":
-                        enginePayload = {
-                            type,
-                            fastLength: configBody.fastLength || 12,
-                            slowLength: configBody.slowLength || 26,
-                            source: configBody.source || "close",
-                            signalSmoothing: configBody.signalSmoothing || 9,
-                            oscillatorMaType: configBody.oscillatorMaType || "EMA",
-                            signalLineMaType: configBody.signalLineMaType || "EMA"
-                        };
-                        break;
-                    case "SUPERTREND":
-                        enginePayload = {
-                            type,
-                            atrPeriod: configBody.atrPeriod || 10,
-                            atrMultiplier: configBody.atrMultiplier || 3
-                        };
-                        break;
-                    case "CHOP":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "DONCHIAN":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 20,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "KDJ":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 9,
-                            signal1: configBody.signal1 || 3,
-                            signal2: configBody.signal2 || 3
-                        };
-                        break;
-                    case "STOCH":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            k: configBody.k || 1,
-                            d: configBody.d || 3
-                        };
-                        break;
-                    case "ADX":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            smoothing: configBody.smoothing || 14
-                        };
-                        break;
-                    case "BOP":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "OBV":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "CCI":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 20,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "TRIX":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 18,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "UO":
-                        enginePayload = {
-                            type,
-                            short: configBody.short || 7,
-                            medium: configBody.medium || 14,
-                            long: configBody.long || 28
-                        };
-                        break;
-                    case "MFI":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "Aroon":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "ZLSMA":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 50,
-                            offset: configBody.offset || 0,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "HMA":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 9,
-                            offset: configBody.offset || 0,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "DPO":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 21,
-                            offset: configBody.offset || 0,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "Keltner":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 20,
-                            multiplier: configBody.multiplier || 1,
-                            source: configBody.source || "close",
-                            useTrueRange: configBody.useTrueRange || true
-                        };
-                        break;
-                    case "PPO":
-                        enginePayload = {
-                            type,
-                            fastLength: configBody.fastLength || 12,
-                            slowLength: configBody.slowLength || 26,
-                            signalSmoothing: configBody.signalSmoothing || 9,
-                            source: configBody.source || "close",
-                            maType: configBody.maType || "EMA"
-                        };
-                        break;
-                    case "WilliamsR":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "RVI":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 10,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "StochRSI":
-                        enginePayload = {
-                            type,
-                            lengthRSI: configBody.lengthRSI || 14,
-                            lengthStoch: configBody.lengthStoch || 14,
-                            smoothK: configBody.smoothK || 3,
-                            smoothD: configBody.smoothD || 3,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "ChandeMO":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 9,
-                            offset: configBody.offset || 0,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "CoppockCurve":
-                        enginePayload = {
-                            type,
-                            wmaLength: configBody.wmaLength || 10,
-                            rocLongLength: configBody.rocLongLength || 14,
-                            rocShortLength: configBody.rocShortLength || 11,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "ROC":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 9,
-                            offset: configBody.offset || 0,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "SSL_Hybrid":
-                        enginePayload = {
-                            type,
-                            showBaseline: configBody.showBaseline !== undefined ? configBody.showBaseline : true,
-                            showSSL1: configBody.showSSL1 !== undefined ? configBody.showSSL1 : false,
-                            showATR: configBody.showATR !== undefined ? configBody.showATR : false,
-                            maType: configBody.maType || "HMA",
-                            len: configBody.len || 60,
-                            ssl1Type: configBody.ssl1Type || "EMA",
-                            ssl1Len: configBody.ssl1Len || 5,
-                            ssl2Type: configBody.ssl2Type || "JMA",
-                            ssl2Len: configBody.ssl2Len || 5,
-                            atrLen: configBody.atrLen || 14,
-                            atrMult: configBody.atrMult || 0.2
-                        };
-                        break;
-                    case "WAVE_TREND":
-                        enginePayload = {
-                            type,
-                            channelLen: configBody.channelLen || 10,
-                            averageLen: configBody.averageLen || 21,
-                            maLength: configBody.maLength || 4
-                        };
-                        break;
-                    case "SQUEEZE":
-                        enginePayload = {
-                            type,
-                            bbLength: configBody.bbLength || 20,
-                            bbMult: configBody.bbMult || 2.0,
-                            kcLength: configBody.kcLength || 20,
-                            kcMult: configBody.kcMult || 1.5,
-                            useTrueRange: configBody.useTrueRange !== undefined ? configBody.useTrueRange : true
-                        };
-                        break;
-                    case "SMI":
-                        enginePayload = {
-                            type,
-                            percentDLength: configBody.percentDLength || 3,
-                            percentKLength: configBody.percentKLength || 5,
-                            ema1Length: configBody.ema1Length || 5,
-                            ema2Length: configBody.ema2Length || 5
-                        };
-                        break;
-                    case "MOM":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 10,
-                            offset: configBody.offset || 0,
-                            source: configBody.source || "close"
-                        };
-                        break;
-                    case "ICHI":
-                        enginePayload = {
-                            type,
-                            conversionLinePeriods: configBody.conversionLinePeriods || 9,
-                            baseLinePeriods: configBody.baseLinePeriods || 26,
-                            laggingSpan2Periods: configBody.laggingSpan2Periods || 52,
-                            displacement: configBody.displacement || 26
-                        };
-                        break;
-                    case "EFI":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 13,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "Cmf":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 20,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "EOM":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            divisor: configBody.divisor || 10000,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "Vortex":
-                        enginePayload = {
-                            type,
-                            length: configBody.length || 14,
-                            offset: configBody.offset || 0
-                        };
-                        break;
-                    case "Market_Profile":
-                        enginePayload = {
-                            type,
-                            deviation: configBody.deviation || 5,
-                            depth: configBody.depth || 10
-                        };
-                        break;
-                    default:
-                        return socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, { success: false, message: "Indicator not supported" });
-                }
-
+                // ... (existing switch logic replaced with spreading configBody for flexibility)
                 const result = await indicatorEngine(candles, enginePayload);
+                
+                // Slice result back to requested range
+                let filteredResult = result;
+                if (formattedFromDate && Array.isArray(result)) {
+                    const startTs = new Date(formattedFromDate).getTime() / 1000;
+                    filteredResult = result.filter(r => r.time >= startTs);
+                }
 
                 socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, { 
                     success: true, 
                     message: `Indicator has been updated by ${type}`, 
                     statusCode: 200, 
-                    data: result 
+                    data: filteredResult 
                 });
-                console.log(`[Socket] ${type} calc via UPDATE_INDICATOR: ${Date.now() - start}ms`);
+
+                // --- PERSIST NEW SETTINGS FOR LIVE SUBSCRIPTION ---
+                if (store.indicatorSubscriptions.has(socket.id)) {
+                    const subs = store.indicatorSubscriptions.get(socket.id);
+                    const subKey = `${uSym}_${type}_${finalInterval}`;
+                    if (subs.has(subKey)) {
+                        console.log(`[Socket] Updating live sub settings for ${subKey}`);
+                        subs.set(subKey, {
+                            ...subs.get(subKey),
+                            ...enginePayload, // Override with new parameters
+                            body: configBody  // Ensure body is preserved for indicatorEngine
+                        });
+                    }
+                }
+
+                console.log(`[Socket] ${type} update: ${Date.now() - start}ms | Result: ${filteredResult?.length}`);
             } catch (err) {
                 console.error("[Socket UpdateIndicator] Error:", err.message);
                 socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, { success: false, statusCode: 500, message: err.message });
@@ -775,7 +462,7 @@ const connectSocket = (server) => {
                     }
                 }
 
-                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d });
+                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, payload);
 
                 if (results?.length > 0) {
                     const indKey = type.toLowerCase();
@@ -828,6 +515,7 @@ const connectSocket = (server) => {
                     }
                     const socketSubs = store.indicatorSubscriptions.get(socket.id);
                     socketSubs.set(`${uSym}_${type}_${finalInterval}`, {
+                        ...payload, // Preserve all parameters (length, source, etc.)
                         symbol: uSym,
                         token: finalToken,
                         type,
@@ -1131,29 +819,10 @@ const handleIndicatorBroadcast = async (tick) => {
                         console.warn(`[LivePush] ${sub.symbol} has only ${candles.length} candles. Indicator ${sub.type} might be 0/null.`);
                     }
                     
-                    const live = store.liveCandles[sub.token] || store.liveCandles[sub.symbol];
-                    if (sub.interval === "ONE_MINUTE" && live) {
-                        const lastCandle = candles[candles.length - 1];
-                        const lastTs = lastCandle ? new Date(lastCandle.timestamp).getTime() : 0;
-                        const liveTs = new Date(live.minute).getTime();
-
-                        if (liveTs === lastTs) {
-                            candles[candles.length - 1] = { ...lastCandle, ...live };
-                        } else if (liveTs > lastTs) {
-                            candles.push({
-                                timestamp: live.minute,
-                                time: Math.floor(liveTs / 1000),
-                                open: parseFloat(live.open),
-                                high: parseFloat(live.high),
-                                low: parseFloat(live.low),
-                                close: parseFloat(live.close),
-                                volume: parseInt(live.volume)
-                            });
-                        }
-                    }
+                    // Note: Live merge is now handled internally by getCandlesWithCache in dbService.js
 
                     const indType = (sub.type || "RSI").toUpperCase();
-                    const indResults = await prepareCandlesWithIndicators(indType, candles, { json: d => d, send: d => d });
+                    const indResults = await prepareCandlesWithIndicators(indType, candles, { json: d => d, send: d => d }, sub);
                     if (indResults && indResults.length > 0) {
                         const latest = indResults[indResults.length - 1];
                         const indKey = sub.type.toLowerCase();
