@@ -114,78 +114,33 @@ function calculateRsi(df, period = 14) {
                 Number(df[i].close) -
                 Number(df[i - 1].close);
 
-            const gain =
-                Math.max(change, 0);
-
-            const loss =
-                Math.abs(Math.min(change, 0));
+            const gain = Math.max(change, 0);
+            const loss = Math.abs(Math.min(change, 0));
 
             df[i].Price_change = change;
             df[i].Gain = gain;
             df[i].Loss = loss;
 
-            // FIRST RMA
+            // WILDER'S RMA: FIRST VALUE IS SMA
             if (i === period) {
-
-                let gainSum = 0;
-                let lossSum = 0;
-
+                let sumG = 0, sumL = 0;
                 for (let j = 1; j <= period; j++) {
-
-                    gainSum += Number(df[j].Gain || 0);
-                    lossSum += Number(df[j].Loss || 0);
+                    sumG += df[j].Gain;
+                    sumL += df[j].Loss;
                 }
-
-                const avgGain = gainSum / period;
-                const avgLoss = lossSum / period;
-
-                df[i].RMA_Gain = avgGain;
-                df[i].RMA_Loss = avgLoss;
-            }
-
-            // NEXT RMA
+                df[i].RMA_Gain = sumG / period;
+                df[i].RMA_Loss = sumL / period;
+            } 
+            // SUBSEQUENT VALUES: WILDER'S FORMULA
             else if (i > period) {
-
-                const prevRmaG =
-                    Number(df[i - 1].RMA_Gain);
-
-                const prevRmaL =
-                    Number(df[i - 1].RMA_Loss);
-
-                const rmaG =
-                    ((prevRmaG * (period - 1)) + gain)
-                    / period;
-
-                const rmaL =
-                    ((prevRmaL * (period - 1)) + loss)
-                    / period;
-
-                df[i].RMA_Gain = rmaG;
-                df[i].RMA_Loss = rmaL;
+                df[i].RMA_Gain = ((df[i - 1].RMA_Gain * (period - 1)) + gain) / period;
+                df[i].RMA_Loss = ((df[i - 1].RMA_Loss * (period - 1)) + loss) / period;
             }
 
-            // RSI
             if (i >= period) {
-
-                const rmaG =
-                    df[i].RMA_Gain;
-
-                const rmaL =
-                    df[i].RMA_Loss;
-
-                if (rmaL === 0) {
-
-                    df[i].RSI = 100;
-                }
-                else {
-
-                    const rs = rmaG / rmaL;
-
-                    df[i].RS = rs;
-
-                    df[i].RSI =
-                        100 - (100 / (1 + rs));
-                }
+                const rs = df[i].RMA_Loss === 0 ? 100 : df[i].RMA_Gain / df[i].RMA_Loss;
+                df[i].RS = rs;
+                df[i].RSI = df[i].RMA_Loss === 0 ? 100 : (100 - (100 / (1 + rs)));
             }
         }
     }
@@ -199,50 +154,21 @@ function calculateRsi(df, period = 14) {
         const curr = df.length - 1;
         const prev = df.length - 2;
 
-        const change =
-            Number(df[curr].close) -
-            Number(df[prev].close);
-
-        const gain =
-            Math.max(change, 0);
-
-        const loss =
-            Math.abs(Math.min(change, 0));
+        const change = Number(df[curr].close) - Number(df[prev].close);
+        const gain = Math.max(change, 0);
+        const loss = Math.abs(Math.min(change, 0));
 
         df[curr].Price_change = change;
         df[curr].Gain = gain;
         df[curr].Loss = loss;
 
-        const prevRmaG =
-            Number(df[prev].RMA_Gain);
+        // Wilder's Smoothing Incremental
+        df[curr].RMA_Gain = ((df[prev].RMA_Gain * (period - 1)) + gain) / period;
+        df[curr].RMA_Loss = ((df[prev].RMA_Loss * (period - 1)) + loss) / period;
 
-        const prevRmaL =
-            Number(df[prev].RMA_Loss);
-
-        const rmaG =
-            ((prevRmaG * (period - 1)) + gain)
-            / period;
-
-        const rmaL =
-            ((prevRmaL * (period - 1)) + loss)
-            / period;
-
-        df[curr].RMA_Gain = rmaG;
-        df[curr].RMA_Loss = rmaL;
-
-        if (rmaL === 0) {
-
-            df[curr].RSI = 100;
-        }
-        else {
-
-            const rs = rmaG / rmaL;
-
-            df[curr].RS = rs;
-
-            df[curr].RSI =
-                100 - (100 / (1 + rs));
-        }
+        const rs = df[curr].RMA_Loss === 0 ? 100 : df[curr].RMA_Gain / df[curr].RMA_Loss;
+        df[curr].RS = rs;
+        df[curr].RSI = df[curr].RMA_Loss === 0 ? 100 : (100 - (100 / (1 + rs)));
     }
 
     return df;

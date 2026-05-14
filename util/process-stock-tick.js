@@ -1,3 +1,4 @@
+const MAX_ROWS = 1000;
 // =========================================================
 // PROCESS STOCK
 // =========================================================
@@ -34,20 +35,26 @@ async function processStockTick(stock, tick, historicalData) {
         // BUILD NEW ROW
         // ---------------------------------
 
+        // Truncate to minute to ensure uniqueMap merges ticks into the same minute candle
+        const dt = new Date(tick.datetime || Date.now());
+        if (isNaN(dt.getTime())) {
+            console.error(`[TIME ERROR] Received invalid tick datetime: ${tick.datetime}`);
+            return;
+        }
+        dt.setSeconds(0, 0);
+        dt.setMilliseconds(0);
+
         const newRow = {
-            datetime: new Date(tick.datetime),
+            datetime: dt.toISOString(),
 
             stock_code: stock,
 
-            open: parseFloat(tick.open),
-            high: parseFloat(tick.high),
-            low: parseFloat(tick.low),
-            close: parseFloat(tick.close),
+            open: parseFloat(tick.open || tick.last_traded_price || 0),
+            high: parseFloat(tick.high || tick.last_traded_price || 0),
+            low: parseFloat(tick.low || tick.last_traded_price || 0),
+            close: parseFloat(tick.close || tick.last_traded_price || 0),
 
-            volume: parseInt(tick.volume)
-
-            // open_interest: parseInt(tick.open_interest)
-            // only works for futures data
+            volume: parseInt(tick.volume || tick.v || 0)
         };
 
         // ---------------------------------
@@ -60,11 +67,33 @@ async function processStockTick(stock, tick, historicalData) {
         const uniqueMap = new Map();
 
         for (const row of df) {
+            try {
+                const rawTime = row.datetime || row.timestamp;
+                if (!rawTime) continue;
 
-            uniqueMap.set(
-                new Date(row.datetime).getTime(),
-                row
-            );
+                const rowDt = new Date(rawTime);
+                if (isNaN(rowDt.getTime())) {
+                    // console.error(`[TIME ERROR] Invalid date found: ${rawTime}`);
+                    continue;
+                }
+
+                rowDt.setSeconds(0, 0);
+                rowDt.setMilliseconds(0);
+                const key = rowDt.toISOString();
+
+                if (!uniqueMap.has(key)) {
+                    uniqueMap.set(key, { ...row, datetime: key });
+                } else {
+                    const existing = uniqueMap.get(key);
+                    existing.high = Math.max(existing.high, parseFloat(row.high || 0));
+                    existing.low = Math.min(existing.low, parseFloat(row.low || 0));
+                    existing.close = parseFloat(row.close || 0);
+                    existing.volume = parseInt(row.volume || 0);
+                }
+            } catch (e) {
+                // Silently skip if single row parsing fails
+                continue;
+            }
         }
 
         df = Array.from(uniqueMap.values());
@@ -83,7 +112,7 @@ async function processStockTick(stock, tick, historicalData) {
         // MINIMUM DATA CHECK
         // ---------------------------------
 
-        if (df.length < 200) {
+        if (df.length < 30) {
 
             stockObj.df = df;
             stockObj.last_seen = tick.datetime;
@@ -101,13 +130,109 @@ async function processStockTick(stock, tick, historicalData) {
 
         df = calculateSsl(df); //ssl
 
-        const row = df[df.length - 1];
+        // ---------------------------------
+        // VOLUME & ADDITIONAL KEYS
+        // ---------------------------------
 
-        const i = df.length - 1;
+        for (let i = 0; i < df.length; i++) {
+            const row = df[i];
+            const prev = i > 0 ? df[i - 1] : null;
 
-        console.log(
-            `[INDICATORS] ${stock} RSI=${row.RSI} SSL=${row.SSL_Trend}`
-        );
+            // Volume Changes
+            if (prev) {
+                row.Vol_chng = (row.volume || 0) - (prev.volume || 0);
+                row.Vol_pct_chng = prev.volume !== 0 ? (row.Vol_chng / prev.volume) : 0;
+            } else {
+                row.Vol_chng = 0;
+                row.Vol_pct_chng = 0;
+            }
+
+            // Ensure SSL_Exit_Trend (Example logic based on exit price)
+            if (row.SSL_Exit) {
+                row.SSL_Exit_Trend = row.close > row.SSL_Exit ? "UP" : "DOWN";
+            }
+
+            // Fill Avg Gain/Loss if available from RSI calculation (already in RMA_Gain/Loss)
+            row["Avg Gain"] = row.RMA_Gain;
+            row["Avg Loss"] = row.RMA_Loss;
+
+            // Meta
+            row.exchange_code = tick.exchange || "NSE";
+            row.stock_code = stock;
+        }
+
+        // ---------------------------------
+        // SAVE LIVE DATA (BUFFER FOR INDICATORS)
+        // ---------------------------------
+
+        const liveBuffer = df.slice(-300).map(row => {
+            const dt = new Date(row.datetime);
+            const dateStr = dt.getFullYear() + '-' + 
+                String(dt.getMonth() + 1).padStart(2, '0') + '-' + 
+                String(dt.getDate()).padStart(2, '0') + ' ' + 
+                String(dt.getHours()).padStart(2, '0') + ':' + 
+                String(dt.getMinutes()).padStart(2, '0') + ':' + 
+                String(dt.getSeconds()).padStart(2, '0');
+
+            return {
+                datetime: dateStr,
+                exchange_code: row.exchange_code,
+                stock_code: row.stock_code,
+                high: row.high,
+                low: row.low,
+                open: row.open,
+                close: row.close,
+                volume: row.volume,
+                SMA_20: row.SMA_20,
+                SMA_50: row.SMA_50,
+                SMA_100: row.SMA_100,
+                SMA_200: row.SMA_200,
+                Price_change: row.Price_change,
+                Gain: row.Gain,
+                Loss: row.Loss,
+                "Avg Gain": row["Avg Gain"],
+                "Avg Loss": row["Avg Loss"],
+                RMA_Gain: row.RMA_Gain,
+                RMA_Loss: row.RMA_Loss,
+                RS: row.RS,
+                RSI: row.RSI,
+                Baseline: row.Baseline,
+                SSL_Line: row.SSL_Line,
+                SSL_Trend: row.SSL_Trend,
+                SSL2_Line: row.SSL2_Line,
+                SSL2_Trend: row.SSL2_Trend,
+                SSL_Exit: row.SSL_Exit,
+                SSL_Exit_Trend: row.SSL_Exit_Trend,
+                ATR: row.ATR,
+                ATR_Upper: row.ATR_Upper,
+                ATR_Lower: row.ATR_Lower,
+                Vol_chng: row.Vol_chng,
+                Vol_pct_chng: row.Vol_pct_chng
+            };
+        });
+
+        const fs = require('fs');
+        const liveFilePath = require('path').join(process.cwd(), 'live-data.json');
+        fs.writeFileSync(liveFilePath, JSON.stringify(liveBuffer, null, 4));
+
+        // ---------------------------------
+        // EVALUATE TREND
+        // ---------------------------------
+        
+        stockObj.df = df;
+        stockObj.last_seen = tick.datetime;
+
+        if (df.length < 30) {
+            console.log(`[WAIT] ${stock} collecting data (${df.length}/30)`);
+            return;
+        }
+
+        const latestRow = df[df.length - 1];
+        const row = latestRow; // Alias for compatibility with below logic
+        const sslTrend = latestRow.SSL_Trend;
+        const rsiValue = latestRow.RSI;
+
+        console.log(`[INDICATORS] ${stock} RSI=${rsiValue} SSL=${sslTrend}`);
 
         // ---------------------------------
         // SMA CONDITIONS
