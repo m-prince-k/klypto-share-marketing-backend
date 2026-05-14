@@ -2,24 +2,21 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.createTable('Timeframes', {
+    await queryInterface.createTable('Users', {
       id: {
-      type: Sequelize.UUID,
-      defaultValue: Sequelize.UUIDV4, // Use UUIDV4 for client-side generation
-      primaryKey: true,
-      allowNull: false
-    },
-      category: {
-        type: Sequelize.STRING
-      },
-      label: {
-        type: Sequelize.STRING
-      },
-      value: {
-        type: Sequelize.STRING
-      },
-      seconds: {
+        allowNull: false,
+        autoIncrement: true,
+        primaryKey: true,
         type: Sequelize.INTEGER
+      },
+      firstName: {
+        type: Sequelize.STRING
+      },
+      lastName: {
+        type: Sequelize.STRING
+      },
+      email: {
+        type: Sequelize.STRING
       },
       createdAt: {
         allowNull: false,
@@ -32,6 +29,6 @@ module.exports = {
     });
   },
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable('Timeframes');
+    await queryInterface.dropTable('Users');
   }
 };
