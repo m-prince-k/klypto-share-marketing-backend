@@ -50,7 +50,10 @@ function formatTickData(data) {
 
     if (!store.liveCandles[cleanToken]) {
         store.liveCandles[cleanToken] = {
-            open: ltp, high: ltp, low: ltp, close: ltp, volume: volume, minute: currentMinute,
+            open: ltp, high: ltp, low: ltp, close: ltp, 
+            volume: 0, // Reset for new candle
+            startVolume: volume, // Store cumulative volume at start
+            minute: currentMinute,
             tickTime: formatted.exchange_timestamp,
             readableTickTime: formatted.readable_timestamp
         };
@@ -60,12 +63,17 @@ function formatTickData(data) {
             candle.high = Math.max(candle.high, ltp);
             candle.low = Math.min(candle.low, ltp);
             candle.close = ltp;
-            candle.volume = volume;
+            // Calculate incremental volume for this minute
+            candle.volume = volume - candle.startVolume;
             candle.tickTime = formatted.exchange_timestamp;
             candle.readableTickTime = formatted.readable_timestamp;
         } else {
+            // Minute changed: New candle
             store.liveCandles[cleanToken] = {
-                open: ltp, high: ltp, low: ltp, close: ltp, volume: volume, minute: currentMinute,
+                open: ltp, high: ltp, low: ltp, close: ltp, 
+                volume: 0, 
+                startVolume: volume, 
+                minute: currentMinute,
                 tickTime: formatted.exchange_timestamp,
                 readableTickTime: formatted.readable_timestamp
             };

@@ -2,7 +2,7 @@
 // PROCESS STOCK
 // =========================================================
 
-const { calculateSma, calculateRsi, calculateSsl } = require("./function");
+const { calculateSma, calculateRsi, calculateSsl, candleFilter, checkSmaConditions } = require("./function");
 
 //historicalData => historical data pass
 async function processStockTick(stock, tick, historicalData) {
@@ -350,13 +350,7 @@ async function processStockTick(stock, tick, historicalData) {
     }
 }
 
-// =========================================================
-// EXPORT
-// =========================================================
-
-module.exports = {
-    processStockTick
-};
+module.exports = { processStockTick };
 
 // =========================================================
 // USAGE EXAMPLE
