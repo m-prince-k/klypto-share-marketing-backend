@@ -126,12 +126,14 @@ async function calculateRSIIndicator(candles, options) {
     const calculatedRsi = RSI.calculate({ values: validCloses, period: rsiLength });
     const rsi = Array(candles.length).fill(null);
 
+    let validCount = 0;
     let outputIndex = 0;
     for (let i = 0; i < closes.length; i++) {
         if (closes[i] === null) continue;
-        // RSI (period) needs 'period' number of values. 
-        // So at index 'period-1', we have 'period' values.
-        if (i < rsiLength - 1) continue;
+        
+        validCount++;
+        // RSI requires `period + 1` valid values to produce the first result
+        if (validCount <= rsiLength) continue;
 
         if (outputIndex < calculatedRsi.length) {
             rsi[i] = Number(calculatedRsi[outputIndex++].toFixed(2));
