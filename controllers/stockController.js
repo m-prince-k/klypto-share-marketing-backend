@@ -9,6 +9,7 @@ const { Sequelize, Op } = require('sequelize');
 const { response } = require('express');
 const { getIO } = require('../services/socket');
 const { calculateRsi } = require('../util/function');
+const smartApi = require('../services/smartApi');
 
 const getStocks = (req, res) => {
     const stocksWithPrice = store.stocks.map(s => {
@@ -1084,26 +1085,45 @@ const getOptionsChain = async (req, res) => {
         const allTokens = expiryOptions.map(o => o.token);
         const liveMarketMap = {};
 
+        // -- DB FALLBACK FOR OFF-HOURS --
+        const { DailyOptionData } = require('../models');
+        const todayStr = new Date().toISOString().split('T')[0];
+        try {
+            const dbFallbackData = await DailyOptionData.findAll({
+                where: { token: allTokens, timestamp: todayStr },
+                raw: true
+            });
+            dbFallbackData.forEach(d => {
+                liveMarketMap[d.token] = {
+                    ltp: d.ltp,
+                    close: d.close,
+                    opnInterest: d.oi,
+                    tradeVolume: d.volume,
+                    depth: {
+                        buy: [{ price: d.bidPrice, quantity: d.bidQty }],
+                        sell: [{ price: d.askPrice, quantity: d.askQty }]
+                    }
+                };
+            });
+        } catch(e) {
+            console.error("[OptionChain REST] DB Fallback fetch failed:", e.message);
+        }
+
         const batchSize = 50;
         for (let i = 0; i < allTokens.length; i += batchSize) {
             const batch = allTokens.slice(i, i + batchSize);
             try {
+                // Check if we are inside market hours, if not and we have db data, we can skip API to save time
+                // But let's just query API anyway to be safe, it will just return empty if closed
                 const marketRes = await smartApi.marketData({
                     mode: "FULL",
                     exchangeTokens: { "NFO": batch }
                 });
 
-                console.log(`[OptionChain] Batch ${i}: status=${marketRes?.status}, fetched=${marketRes?.data?.fetched?.length || 0}, unfetched=${marketRes?.data?.unfetched?.length || 0}`);
-
                 if (marketRes?.data?.fetched) {
                     marketRes.data.fetched.forEach(item => {
-                        liveMarketMap[item.symbolToken] = item;
+                        liveMarketMap[item.symbolToken] = item; // API overwrites DB
                     });
-                }
-
-                // Log unfetched tokens for debugging
-                if (marketRes?.data?.unfetched?.length > 0) {
-                    console.log(`[OptionChain] Unfetched tokens:`, marketRes.data.unfetched.slice(0, 5));
                 }
             } catch (err) {
                 console.error(`[OptionChain] Batch ${i} failed:`, err.message);

@@ -98,17 +98,35 @@ class OptionChainService {
             const tokensToSubscribe = [];
             const exchangeTokens = { "NFO": [] };
 
+            // -- PRE-FETCH DB DATA AS FALLBACK --
+            const allTargetTokens = [];
+            targetStrikes.forEach(strike => {
+                const ce = expiryOpts.find(o => parseFloat(o.strike) / 100 === strike && o.symbol.endsWith("CE"));
+                const pe = expiryOpts.find(o => parseFloat(o.strike) / 100 === strike && o.symbol.endsWith("PE"));
+                if (ce) allTargetTokens.push(ce.token);
+                if (pe) allTargetTokens.push(pe.token);
+            });
+
+            const todayStr = new Date().toISOString().split('T')[0];
+            const dbFallbackData = await DailyOptionData.findAll({
+                where: { token: allTargetTokens, timestamp: todayStr },
+                raw: true
+            });
+            const dbMap = {};
+            dbFallbackData.forEach(d => dbMap[d.token] = d);
+
             targetStrikes.forEach(strike => {
                 const ce = expiryOpts.find(o => parseFloat(o.strike) / 100 === strike && o.symbol.endsWith("CE"));
                 const pe = expiryOpts.find(o => parseFloat(o.strike) / 100 === strike && o.symbol.endsWith("PE"));
 
                 const row = { strike };
                 if (ce) {
+                    const dbce = dbMap[ce.token] || {};
                     row.ce = { 
                         token: ce.token, 
                         symbol: ce.symbol, 
-                        ltp: store.latestMarketData[`${ce.symbol}:NFO`]?.last_traded_price || 0,
-                        oi: store.latestMarketData[`${ce.symbol}:NFO`]?.oi || store.latestMarketData[`${ce.symbol}:NFO`]?.open_interest || 0
+                        ltp: store.latestMarketData[`${ce.symbol}:NFO`]?.last_traded_price || dbce.ltp || dbce.close || 0,
+                        oi: store.latestMarketData[`${ce.symbol}:NFO`]?.oi || store.latestMarketData[`${ce.symbol}:NFO`]?.open_interest || dbce.oi || 0
                     };
                     tokensToSubscribe.push(ce.token);
                     exchangeTokens["NFO"].push(ce.token);
@@ -116,11 +134,12 @@ class OptionChainService {
                     store.tokenToExchange[ce.token] = "NFO";
                 }
                 if (pe) {
+                    const dbpe = dbMap[pe.token] || {};
                     row.pe = { 
                         token: pe.token, 
                         symbol: pe.symbol, 
-                        ltp: store.latestMarketData[`${pe.symbol}:NFO`]?.last_traded_price || 0,
-                        oi: store.latestMarketData[`${pe.symbol}:NFO`]?.oi || store.latestMarketData[`${pe.symbol}:NFO`]?.open_interest || 0
+                        ltp: store.latestMarketData[`${pe.symbol}:NFO`]?.last_traded_price || dbpe.ltp || dbpe.close || 0,
+                        oi: store.latestMarketData[`${pe.symbol}:NFO`]?.oi || store.latestMarketData[`${pe.symbol}:NFO`]?.open_interest || dbpe.oi || 0
                     };
                     tokensToSubscribe.push(pe.token);
                     exchangeTokens["NFO"].push(pe.token);

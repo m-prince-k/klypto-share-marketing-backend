@@ -77,10 +77,10 @@ async function bootstrap() {
             console.log(`=================================================\n`);
 
             manageWebSocket(loginData, io);
-            alertService.loadAlerts();
+            // alertService.loadAlerts();
             startSchedulers();
             // runInitialHistoricalLoad(); // Disabling temporarily to prevent server stall
-            startGoldBroadcast();
+            // startGoldBroadcast();
         });
     } catch (err) {
         console.error("Bootstrap error:", err);

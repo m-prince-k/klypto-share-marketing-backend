@@ -28,7 +28,7 @@ router.post('/snapshot', async (req, res) => {
     const stockNames = store.stocks.map(s => s.name);
     const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
     const allSymbols = [...new Set([...indices, ...stockNames])];
-    
+
     saveDailySnapshot(allSymbols).catch(e => console.error("Manual Snapshot failed:", e));
     res.json({ success: true, message: "Manual Option Chain Snapshot started for all symbols." });
 });

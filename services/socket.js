@@ -201,7 +201,7 @@ const connectSocket = (server) => {
             const start = Date.now();
             try {
                 const { symbol, interval, fromDate, fromdate, toDate, todate, exchange, body } = payloadData;
-                const { indicatorEngine } = require('../helper');
+                const { indicatorEngine, withDateTime } = require('../helper');
                 const { formatDate, getCandlesWithCache } = require('./dbService');
                 const store = require('./marketStore');
 
@@ -296,12 +296,13 @@ const connectSocket = (server) => {
 
                 // ... (existing switch logic replaced with spreading configBody for flexibility)
                 const result = await indicatorEngine(candles, enginePayload);
+                const finalResults = withDateTime(result);
                 
                 // Slice result back to requested range
-                let filteredResult = result;
-                if (formattedFromDate && Array.isArray(result)) {
-                    const startTs = new Date(formattedFromDate).getTime() / 1000;
-                    filteredResult = result.filter(r => r.time >= startTs);
+                let filteredResult = finalResults;
+                if (formattedFromDate && Array.isArray(finalResults)) {
+                    const startTs = new Date(formattedFromDate).getTime();
+                    filteredResult = finalResults.filter(r => (r.time * 1000) >= startTs);
                 }
 
                 socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, { 
@@ -694,6 +695,17 @@ const startGoldBroadcast = () => {
     const { fetchGoldHistory } = require('./commodityService');
     const broadcast = async () => {
         if (!io) return;
+        
+        // MCX Market Hours Check (9:00 AM to 11:30 PM/23:30)
+        const now = new Date();
+        const hr = now.getHours();
+        const min = now.getMinutes();
+        const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+        const timeVal = hr + min / 60;
+        if (isWeekend || timeVal < 9.0 || timeVal > 23.9) {
+            return; // Skip polling when MCX is closed to prevent 403 errors
+        }
+
         try {
             // Fetch last 1 day of 1m data for Gold
             const results = await fetchGoldHistory("1m", 1);
