@@ -8,6 +8,7 @@ const { SMA } = require('technicalindicators');
 const { Sequelize, Op } = require('sequelize');
 const { response } = require('express');
 const { getIO } = require('../services/socket');
+const { calculateRsi } = require('../util/function');
 
 const getStocks = (req, res) => {
     const stocksWithPrice = store.stocks.map(s => {
@@ -1176,8 +1177,8 @@ const syncOptionsChainHistory = async (req, res) => {
         console.log(`[OptionSync] Found ${allOptions.length} options for ${uSym} in master data.`);
 
         if (allOptions.length === 0) {
-            return res.status(404).json({ 
-                success: false, 
+            return res.status(404).json({
+                success: false,
                 message: `No options found for ${uSym}. Make sure master data is loaded.`,
                 masterDataSize: store.nfoMasterData.length
             });
@@ -1626,7 +1627,7 @@ const triggerOptionSnapshot = async (req, res) => {
     try {
         const { symbols } = req.query;
         let symList;
-        
+
         if (symbols) {
             symList = symbols.split(',');
         } else {
@@ -1638,9 +1639,9 @@ const triggerOptionSnapshot = async (req, res) => {
 
         // Fire and forget so request doesn't timeout
         optionChainService.saveDailySnapshot(symList);
-        
-        return res.json({ 
-            success: true, 
+
+        return res.json({
+            success: true,
             message: `Option chain snapshot triggered for ${symList.length} symbols.`,
             symbols: symList.slice(0, 10).concat("...")
         });
@@ -1656,7 +1657,7 @@ const getTrendingOptions = async (req, res) => {
         type = type.toUpperCase();
 
         const suffix = type === "CALL" ? "CE" : "PE";
-        
+
         // 1. Get Underlying LTP
         const underlyingToken = store.symbolToTokenMaster[symbol];
         const underlyingKey = `${symbol}:${store.tokenToExchange[underlyingToken] || "NSE"}`;
@@ -1668,7 +1669,7 @@ const getTrendingOptions = async (req, res) => {
 
         // 2. Filter Master Data for this symbol and type
         const contracts = store.nfoMasterData.filter(o => o.name === symbol && o.symbol.endsWith(suffix));
-        
+
         if (contracts.length === 0) {
             return res.status(404).json({ success: false, error: `No ${type} options found for ${symbol}.` });
         }
@@ -1679,7 +1680,7 @@ const getTrendingOptions = async (req, res) => {
 
         // 4. Filter for nearest expiry and find strikes near ATM
         const nearExpiryContracts = contracts.filter(c => c.expiry === nearestExpiry);
-        
+
         // Sort by strike to find ATM
         nearExpiryContracts.sort((a, b) => parseFloat(a.strike) - parseFloat(b.strike));
 
@@ -1757,15 +1758,15 @@ const generateMasterWatchlistData = async () => {
         const formatItem = (item, isIndex = false) => {
             const exchange = isIndex ? "NSE" : (item.segment || "NSE");
             const key = `${item.name}:${exchange}`;
-            
+
             // Try key-based lookup first
             let liveData = store.latestMarketData[key];
-            
+
             // Fallback: search by token if key lookup fails
             if (!liveData && item.token) {
                 liveData = Object.values(store.latestMarketData).find(d => String(d.token) === String(item.token));
             }
-            
+
             if (!liveData) liveData = {};
 
             const ltpVal = liveData.last_traded_price || liveData.ltp || "0.00";
@@ -1830,7 +1831,7 @@ const generateMasterWatchlistData = async () => {
 
                 // Take ATM, 1 strike above, and 1 strike below (Total 3 strikes)
                 const targetStrikes = uniqueStrikes.slice(Math.max(0, atmIdx - 1), Math.min(uniqueStrikes.length, atmIdx + 2));
-                
+
                 const selected = [];
                 targetStrikes.forEach(strike => {
                     const ce = nearExpiryContracts.find(c => parseFloat(c.strike) / 100 === strike && c.symbol.endsWith("CE"));
@@ -2007,13 +2008,23 @@ const testing = async (req, res) => {
             return res.json({ success: false, message: "Login failed" });
         }
 
+        const { symbol, interval, fromDate, toDate } = req.query;
+
+        let where = {
+            symbol: symbol || 'NIFTY',
+            interval: interval || 'ONE_MINUTE'
+        };
+
+        if (fromDate && toDate) {
+            where.timestamp = {
+                [Op.between]: [new Date(fromDate), new Date(toDate)]
+            };
+        }
+
         let candles = await Candle.findAll({
-            where: {
-                symbol: 'NIFTY',
-                interval: 'ONE_MINUTE'
-            },
+            where: where,
             order: [['timestamp', 'DESC']],
-            limit: 200,
+            limit: 500,
             raw: true
         });
 
@@ -2021,15 +2032,143 @@ const testing = async (req, res) => {
             return res.json({ success: false, message: "No data found" });
         }
 
+        // --- MERGE LIVE CANDLE ---
+        const uSym = (symbol || 'NIFTY').toUpperCase();
+        let token = store.symbolToTokenMaster[uSym];
+        if (!token) {
+            const stock = store.stocks.find(s => s.name === uSym);
+            if (stock) token = stock.token;
+        }
+
+        if (token) {
+            const live = store.liveCandles[token];
+            if (live) {
+                const lastCandle = candles[0]; // candles is DESC sorted, so 0 is latest
+                const lastTs = new Date(lastCandle.timestamp).getTime();
+                const liveTs = new Date(live.minute).getTime();
+
+                if (liveTs > lastTs) {
+                    // New live candle forming, prepend to the DESC sorted array
+                    candles.unshift({
+                        symbol: uSym,
+                        timestamp: new Date(live.minute).toISOString(),
+                        open: parseFloat(live.open),
+                        high: parseFloat(live.high),
+                        low: parseFloat(live.low),
+                        close: parseFloat(live.close),
+                        volume: parseInt(live.volume),
+                        interval: interval || 'ONE_MINUTE'
+                    });
+                } else if (liveTs === lastTs) {
+                    // Update existing latest candle
+                    candles[0] = {
+                        ...lastCandle,
+                        high: Math.max(parseFloat(lastCandle.high), parseFloat(live.high)),
+                        low: Math.min(parseFloat(lastCandle.low), parseFloat(live.low)),
+                        close: parseFloat(live.close),
+                        volume: parseInt(live.volume)
+                    };
+                }
+            }
+        }
+
         candles = candles.reverse();
-        candles = addSMA(candles);
-        const signal = checkSmaConditions(candles);
+
+        // Prepare candles for indicators (ensure all price fields are Numbers)
+        const candleData = candles.map(c => ({
+            ...c,
+            time: Math.floor(new Date(c.timestamp).getTime() / 1000),
+            open: parseFloat(c.open) || 0,
+            high: parseFloat(c.high) || 0,
+            low: parseFloat(c.low) || 0,
+            close: parseFloat(c.close) || 0,
+            volume: parseFloat(c.volume) || 0
+        }));
+
+        const indicatorTypes = [
+            "RSI", "SMA", "EMA", "MACD", "VWAP", "ATR", "BB", "ADX",
+            "SUPERTREND", "PSAR", "STOCHRSI", "SSL_HYBRID", "ICHIMOKU",
+            "AO", "CCI", "MOM", "TEMA", "DEMA", "WMA", "HMA", "KAMA",
+            "AWO", "CMO", "TRIX", "FT", "KVO", "STDDEV", "KC", "DC",
+            "HV", "CHOP", "VOL", "OBV", "PVO", "AD", "CMF", "MFI",
+            "EOM", "NVI", "PVI", "WPR", "UO", "ZIGZAG", "VWMA"
+        ];
+
+        let resultsMap = new Map();
+        candleData.forEach(c => resultsMap.set(c.time, { ...c }));
+
+        // 1. Calculate Standard Moving Averages (SMA 20, 50, 100, 200)
+        const { calculateSMA } = require('../Indicators/SMA');
+        const { calculateEMAIndicator } = require('../Indicators/EMA');
+
+        const maConfigs = [
+            { fn: calculateSMA, periods: [20, 50, 100, 200], prefix: "SMA" },
+            { fn: calculateEMAIndicator, periods: [20, 50], prefix: "EMA" }
+        ];
+
+        for (const config of maConfigs) {
+            for (const p of config.periods) {
+                try {
+                    const data = await config.fn(candleData, { length: p, source: "close" });
+                    if (Array.isArray(data)) {
+                        data.forEach(item => {
+                            // Robust time matching: Handle both unix number and ISO string
+                            const timeKey = (typeof item.time === 'number') 
+                                ? item.time 
+                                : Math.floor(new Date(item.time).getTime() / 1000);
+
+                            if (resultsMap.has(timeKey)) {
+                                const existing = resultsMap.get(timeKey);
+                                const key = `${config.prefix}_${p}`;
+                                existing[key] = item[config.prefix.toLowerCase()] || item.value;
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error(`Error calculating ${config.prefix}_${p}:`, e.message);
+                }
+            }
+        }
+
+        // 2. Calculate other indicators
+        for (const type of indicatorTypes) {
+            try {
+                // Dummy res object to prevent early returns/errors in helper
+                const dummyRes = { json: d => d, send: d => d };
+                const data = await prepareCandlesWithIndicators(type, candleData, dummyRes);
+                
+                if (Array.isArray(data)) {
+                    data.forEach(item => {
+                        if (item && item.time && resultsMap.has(item.time)) {
+                            const existing = resultsMap.get(item.time);
+                            Object.keys(item).forEach(key => {
+                                if (key !== "time") existing[key] = item[key];
+                            });
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error(`[Testing] Error calculating ${type}:`, e.message);
+            }
+        }
+
+        let finalResults = Array.from(resultsMap.values()).sort((a, b) => a.time - b.time);
+
+        // Remove warmup period (first 50 candles) so user sees valid indicator values
+        if (finalResults.length > 50) {
+            finalResults = finalResults.slice(50);
+        }
+
+        const finalCandles = finalResults.map(c => ({
+            ...c,
+            ist_time: new Date(c.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+        }));
 
         return res.json({
             success: true,
-            totalCandles: candles.length,
-            latestCandle: candles[candles.length - 1],
-            signal
+            totalCandles: finalCandles.length,
+            latestCandle: finalCandles[finalCandles.length - 1],
+            candles: finalCandles
         });
     } catch (error) {
         console.log(error);
