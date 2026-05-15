@@ -4,16 +4,24 @@ const EVENTS = require("../constants/socketEvents");
 const alertService = require("./alertService");
 const optionChainService = require("./optionChainService");
 
-function isMarketOpen() {
+function isNSEOpen() {
     const now = new Date();
-    const day = now.getDay(); // 0 = Sun, 6 = Sat
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const currentTime = hours * 100 + minutes;
-
-    // Monday (1) to Friday (5)
-    // 09:15 AM (915) to 03:30 PM (1530)
+    const day = now.getDay();
+    const currentTime = now.getHours() * 100 + now.getMinutes();
+    // Monday to Friday, 09:15 AM to 03:30 PM
     return day >= 1 && day <= 5 && currentTime >= 915 && currentTime <= 1530;
+}
+
+function isMCXOpen() {
+    const now = new Date();
+    const day = now.getDay();
+    const currentTime = now.getHours() * 100 + now.getMinutes();
+    // Monday to Friday, 09:00 AM to 03:30 PM (Restricted by user)
+    return day >= 1 && day <= 5 && currentTime >= 900 && currentTime <= 1530;
+}
+
+function isAnyMarketOpen() {
+    return isNSEOpen() || isMCXOpen();
 }
 
 
@@ -93,8 +101,8 @@ function formatTickData(data) {
 async function startWebSocketConnection(loginData, io) {
     if (!loginData || !loginData.data) return;
 
-    if (!isMarketOpen()) {
-        console.log(`[WebSocket] Market is currently CLOSED (09:15-15:30). Connection deferred.`);
+    if (!isAnyMarketOpen()) {
+        console.log(`[WebSocket] All markets are currently CLOSED. Connection deferred.`);
         return;
     }
 
@@ -111,16 +119,18 @@ async function startWebSocketConnection(loginData, io) {
     console.log(`WebSocket Connected. Subscribing to Equity and Futures...`);
 
     // 1. Subscribe to Equity & Indices (NSE)
-    const nseTokens = [
-        ...store.stocks.filter(s => s.segment === "NSE").map(s => s.token),
-        ...store.indices.filter(i => i.segment === "NSE").map(i => i.token)
-    ];
-    if (nseTokens.length > 0) {
-        store.wsClient.fetchData({
-            correlationID: "nse_subscription",
-            action: 1, mode: 2, exchangeType: 1,
-            tokens: nseTokens
-        });
+    if (isNSEOpen()) {
+        const nseTokens = [
+            ...store.stocks.filter(s => s.segment === "NSE").map(s => s.token),
+            ...store.indices.filter(i => i.segment === "NSE").map(i => i.token)
+        ];
+        if (nseTokens.length > 0) {
+            store.wsClient.fetchData({
+                correlationID: "nse_subscription",
+                action: 1, mode: 2, exchangeType: 1,
+                tokens: nseTokens
+            });
+        }
     }
 
     // 1.1 Subscribe to Equity (BSE)
@@ -180,41 +190,54 @@ async function startWebSocketConnection(loginData, io) {
     }
 
     // 3. Subscribe to MCX Gold Futures
-    const goldContracts = (store.mcxMasterData || []).filter(s => 
-        (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
-        s.instrumenttype === 'FUTCOM'
-    );
-    const nearestGold = {};
-    for (const contract of goldContracts) {
-        if (!nearestGold[contract.name]) nearestGold[contract.name] = contract;
-        else if (new Date(contract.expiry) < new Date(nearestGold[contract.name].expiry)) nearestGold[contract.name] = contract;
-    }
-    const mcxTokens = [];
-    Object.values(nearestGold).forEach(c => {
-        mcxTokens.push(c.token);
-        store.tokenToName[c.token] = c.name; // e.g. "GOLD"
-        store.tokenToExchange[c.token] = "MCX";
-    });
-
-    if (mcxTokens.length > 0) {
-        console.log(`Subscribing to ${mcxTokens.length} MCX Gold Futures...`);
-        store.wsClient.fetchData({
-            correlationID: "mcx_gold_subscription",
-            action: 1, mode: 2, exchangeType: 5, // 5 is MCX
-            tokens: mcxTokens
+    if (isMCXOpen()) {
+        const goldContracts = (store.mcxMasterData || []).filter(s => 
+            (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
+            s.instrumenttype === 'FUTCOM'
+        );
+        const nearestGold = {};
+        for (const contract of goldContracts) {
+            if (!nearestGold[contract.name]) nearestGold[contract.name] = contract;
+            else if (new Date(contract.expiry) < new Date(nearestGold[contract.name].expiry)) nearestGold[contract.name] = contract;
+        }
+        const mcxTokens = [];
+        Object.values(nearestGold).forEach(c => {
+            mcxTokens.push(c.token);
+            store.tokenToName[c.token] = c.name; // e.g. "GOLD"
+            store.tokenToExchange[c.token] = "MCX";
         });
+
+        if (mcxTokens.length > 0) {
+            console.log(`Subscribing to ${mcxTokens.length} MCX Gold Futures...`);
+            store.wsClient.fetchData({
+                correlationID: "mcx_gold_subscription",
+                action: 1, mode: 2, exchangeType: 5, // 5 is MCX
+                tokens: mcxTokens
+            });
+        }
     }
 
     store.wsClient.on("tick", (data) => {
+        const formatted = formatTickData(data);
+        if (!formatted) return;
+
+        // 🛡️ BLOCK TICKS FOR CLOSED EXCHANGES
+        const exchange = formatted.exchange;
+        if ((exchange === "NSE" || exchange === "BSE" || exchange === "NFO" || exchange === "BFO") && !isNSEOpen()) {
+            // Post-market tick, ignore
+            return;
+        }
+        if (exchange === "MCX" && !isMCXOpen()) {
+            // Late night tick, ignore
+            return;
+        }
+
         // Log raw tokens to see what's arriving
-        if (Math.random() < 0.1) {
+        if (Math.random() < 0.05) {
             const cleanToken = data.token ? data.token.replace(/\"/g, "").trim() : null;
             const sym = store.tokenToName[cleanToken] || cleanToken;
-            console.log(`[WS Tick] Received tick for ${sym} (Token: ${data.token})`);
+            console.log(`[WS Tick] Received tick for ${sym} (${exchange})`);
         }
-        
-        const formatted = formatTickData(data);
-        if (formatted) {
             // Trigger Live Indicator Broadcast if anyone is listening
             try {
                 const { handleIndicatorBroadcast } = require('./socket');
@@ -323,7 +346,6 @@ async function startWebSocketConnection(loginData, io) {
 
 
             io.emit("marketUpdate", formatted);
-        }
     });
 
     store.wsClient.on("error", (err) => console.log("WS Error:", err));
@@ -337,18 +359,23 @@ async function manageWebSocket(loginData, io) {
 
     // Start monitor loop
     setInterval(async () => {
-        const open = isMarketOpen();
+        const open = isAnyMarketOpen();
         const hasClient = store.wsClient !== null;
 
         if (open && !hasClient) {
             console.log("[MarketMonitor] Market is OPEN. Reconnecting WebSocket...");
             await startWebSocketConnection(loginData, io);
         } else if (!open && hasClient) {
-            console.log("[MarketMonitor] Market is CLOSED. Disconnecting WebSocket...");
+            console.log("[MarketMonitor] All Markets are CLOSED. Disconnecting WebSocket...");
             try {
                 // Terminate connection during off-hours
+                if (store.wsClient.terminate) store.wsClient.terminate();
+                else if (store.wsClient.close) store.wsClient.close();
                 store.wsClient = null;
-            } catch (e) {}
+            } catch (e) {
+                console.log("[MarketMonitor] Disconnect Error:", e.message);
+                store.wsClient = null;
+            }
         }
     }, 60000); // Check every minute
 
@@ -356,4 +383,4 @@ async function manageWebSocket(loginData, io) {
     await startWebSocketConnection(loginData, io);
 }
 
-module.exports = { startWebSocketConnection, manageWebSocket, isMarketOpen };
+module.exports = { startWebSocketConnection, manageWebSocket, isNSEOpen, isMCXOpen, isAnyMarketOpen };

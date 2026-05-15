@@ -8,7 +8,7 @@ const { SMA } = require('technicalindicators');
 const { Sequelize, Op } = require('sequelize');
 const { response } = require('express');
 const { getIO } = require('../services/socket');
-const { calculateRsi } = require('../util/function');
+
 const smartApi = require('../services/smartApi');
 
 const getStocks = (req, res) => {
@@ -330,7 +330,7 @@ const indicatorDetails = async (req, res) => {
         const { withDateTime } = require('../helper');
         let values = await prepareCandlesWithIndicators(type, candles, res);
         const finalData = withDateTime(values);
-        
+
         // Filter out warmup data
         const filteredData = finalData.filter(r => {
             if (!formattedFromDate) return true;
@@ -423,45 +423,47 @@ const updateIndicator = async (req, res) => {
         const candleResult = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate);
         const candles = candleResult.data;
 
-            const body = req.body || {};
-            const type = (body.type || "RSI").toUpperCase();
+        const body = req.body || {};
+        const type = (body.type || "RSI").toUpperCase();
 
-            // ✅ DYNAMIC PAYLOAD: Pass everything from body to the engine
-            let payload = { 
-                ...body, 
-                type,
-                source: body.source || "close",
-                length: Number(body.length || 14),
-                maLength: Number(body.maLength || 14),
-                bbStdDev: Number(body.bbStdDev || 2)
-            };
+        // ✅ DYNAMIC PAYLOAD: Pass everything from body to the engine
+        // This automatically handles 'fastLength', 'mult', 'source', etc. without hardcoding every case
+        let payload = {
+            ...body,
+            type,
+            source: body.source || "close",
+            length: Number(body.length || 14),
+            maLength: Number(body.maLength || 14),
+            bbStdDev: Number(body.bbStdDev || 2)
+        };
 
-            // Specific overrides for standard defaults
-            if (type === "VWAP") {
-                payload.anchorPeriod = body.anchorPeriod || "Session";
-                payload.source = body.source || "hlc3";
-            }
-            if (type === "CCI") {
-                payload.length = Number(body.length || 20);
-            }
+        // Specific overrides for standard defaults if not provided by frontend
+        if (type === "VWAP") {
+            payload.anchorPeriod = body.anchorPeriod || "Session";
+            payload.source = body.source || "hlc3";
+        }
+        if (type === "CCI") {
+            payload.length = Number(body.length || 20);
+        }
 
-            const result = await indicatorEngine(candles, payload);
+        const result = await indicatorEngine(candles, payload);
 
-            // Filter out warmup data - only return what user requested
-            const finalResult = result.filter(r => {
-                if (!formattedFromDate) return true;
-                const ts = r.time * 1000;
-                const startTs = new Date(formattedFromDate).getTime();
-                return ts >= startTs;
-            });
+        // Filter out warmup data - only return what user requested
+        const finalResult = result.filter(r => {
+            if (!formattedFromDate) return true;
+            const ts = r.time * 1000;
+            const startTs = new Date(formattedFromDate).getTime();
+            return ts >= startTs;
+        });
 
-            return await res.json({ 
-                message: `Indicator has been updated by ${req.body.type}`, 
-                statusCode: 200, 
-                data: finalResult 
-            });
+        return await res.json({
+            message: `Indicator has been updated by ${req.body.type}`,
+            statusCode: 200,
+            data: finalResult
+        });
     } catch (error) {
-        console.log(error, "---------------------------06578987546789")
+        console.error("Indicator calculation error:", error);
+        return res.status(500).json({ success: false, error: `Calculation failed for ${req.body.type} on ${req.body.symbol}` });
     }
 }
 
@@ -702,7 +704,7 @@ const getOptionsChain = async (req, res) => {
                     }
                 };
             });
-        } catch(e) {
+        } catch (e) {
             console.error("[OptionChain REST] DB Fallback fetch failed:", e.message);
         }
 

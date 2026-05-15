@@ -177,6 +177,24 @@ async function getLastCandle({
 
 function getSource(candles, source = "close") {
   return candles?.map(c => {
+    function getSourceValue(c, source) {
+        const o = Number(c?.open || c?.o || 0);
+        const h = Number(c?.high || c?.h || 0);
+        const l = Number(c?.low || c?.l || 0);
+        const cl = Number(c?.close || c?.c || 0);
+
+        switch (source) {
+            case "hl2": return (h + l) / 2;
+            case "hlc3": return (h + l + cl) / 3;
+            case "ohlc4": return (o + h + l + cl) / 4;
+            case "hlcc4": return (h + l + cl + cl) / 4;
+            case "open": return o;
+            case "high": return h;
+            case "low": return l;
+            case "close": return cl;
+            default: return Number(c[source] || cl);
+        }
+    };
     switch (source) {
       case "open": return c.open;
       case "high": return c.high;
@@ -370,10 +388,10 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
           return calculateCMF(candle, 20);
 
         case "MFI":
-          return await calculateMFI(candle, { length: 14 });
+          return await calculateMFI(candle, { length: 14, ...config });
 
         case "EOM":
-          return calculateEOM(candle, { length: 14, divisor: 10000 });
+          return calculateEOM(candle, { length: 14, divisor: 10000, ...config });
 
         case "NVI":
           return calculateNVI(candle, 255);
@@ -382,28 +400,28 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
           return calculatePVI(candle, 255);
 
         case "SUPERTREND":
-          return calculateSupertrend(candle, { atrPeriod: 10, factor: 3 });
+          return calculateSupertrend(candle, { atrPeriod: 10, factor: 3, ...config });
 
         case "PSAR":
-          return calculateParabolicSAR(candle, { start: 0.02, increment: 0.02, maximum: 0.2 });
+          return calculateParabolicSAR(candle, { start: 0.02, increment: 0.02, maximum: 0.2, ...config });
 
         case "STOCHRSI":
-          return calculateStochRSI(candle, { lengthRSI: 14, lengthStoch: 14, smoothK: 3, smoothD: 3, source: "close" });
+          return await calculateStochRSI(candle, { lengthRSI: 14, lengthStoch: 14, smoothK: 3, smoothD: 3, source: "close", ...config });
 
         case "WPR":
-          return calculateWilliamsR(candle, { length: 14, source: "close" });
+          return calculateWilliamsR(candle, { length: 14, source: "close", ...config });
 
         case "CK":
           return calculateChandeKrollStop(candle, { atrPeriod: 10, atrMultiplier: 1, stopLength: 9 });
 
         case "UO":
-          return calculateUltimateOscillator(candle, { length1: 7, length2: 14, length3: 28 });
+          return calculateUltimateOscillator(candle, { length1: 7, length2: 14, length3: 28, ...config });
 
         case "ZIGZAG":
-          return calculateZigZag(candle, { deviation: 5, depth: 10 });
+          return calculateZigZag(candle, { deviation: 5, depth: 10, ...config });
 
         case "SSL_HYBRID":
-          return calculateSSLHybrid(candle, { ssl1Len: 60, ssl2Len: 5, ssl3Len: 15, baseLen: 60, atrLen: 14, atrMult: 1 });
+          return calculateSSLHybrid(candle, { ssl1Len: 60, ssl2Len: 5, ssl3Len: 15, baseLen: 60, atrLen: 14, atrMult: 1, ...config });
 
         case "CAMARILLA":
           return calculateCamarillaPivots(candle, { timeframe: "Daily" });
@@ -1159,7 +1177,23 @@ async function runAllMergeCandleWisthIndicator(req, interval, rules, day, res) {
             break;
           case "pivot":
             allIndicatorData = await applyIndicatorToCandleData(fetchCandles, async (candles, opts) => {
-              const pivotResult = await calculateClassicPivots(candles, opts || { timeframe: "Daily" });
+              function getSourceValue(c, source) {
+        const o = Number(c?.open || c?.o || 0);
+        const h = Number(c?.high || c?.h || 0);
+        const l = Number(c?.low || c?.l || 0);
+        const cl = Number(c?.close || c?.c || 0);
+
+        switch (source) {
+            case "hl2": return (h + l) / 2;
+            case "hlc3": return (h + l + cl) / 3;
+            case "ohlc4": return (o + h + l + cl) / 4;
+            case "open": return o;
+            case "high": return h;
+            case "low": return l;
+            case "close": return cl;
+            default: return Number(c[source] || cl);
+        }
+    }          const pivotResult = await calculateClassicPivots(candles, opts || { timeframe: "Daily" });
               return candles.map(c => {
                 let activePivot = null;
                 for (let p of pivotResult) {

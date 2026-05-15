@@ -10,25 +10,21 @@ async function calculateMACD(candles, params) {
     const sourceKey = params?.source || "close";
 
     // ✅ FIX: Proper source handling (HL2, HLC3, OHLC4)
-    function getSource(candle, source) {
+    function getSource(c, source) {
+        const o = Number(c?.open || c?.o || 0);
+        const h = Number(c?.high || c?.h || 0);
+        const l = Number(c?.low || c?.l || 0);
+        const cl = Number(c?.close || c?.c || 0);
+
         switch (source) {
-            case "hl2":
-                return (Number(candle.high) + Number(candle.low)) / 2;
-
-            case "hlc3":
-                return (Number(candle.high) + Number(candle.low) + Number(candle.close)) / 3;
-
-            case "ohlc4":
-                return (Number(candle.open) + Number(candle.high) + Number(candle.low) + Number(candle.close)) / 4;
-
-            case "open":
-            case "high":
-            case "low":
-            case "close":
-                return Number(candle[source]);
-
-            default:
-                return candle.close;
+            case "hl2": return (h + l) / 2;
+            case "hlc3": return (h + l + cl) / 3;
+            case "ohlc4": return (o + h + l + cl) / 4;
+            case "open": return o;
+            case "high": return h;
+            case "low": return l;
+            case "close": return cl;
+            default: return Number(c[source] || cl);
         }
     }
     if (!Array.isArray(candles)) return [];

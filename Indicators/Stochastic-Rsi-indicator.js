@@ -1,33 +1,40 @@
 async function calculateStochRSI(candles, params = {}) {
 
     if (!candles?.length) {
-        return { message: "candles should not be empty" };
+        return [];
     }
 
-    const lengthRSI = params.lengthRSI || 14;
-    const lengthStoch = params.length || 14;
-    const smoothK = params.kSmoothing || 3;
-    const smoothD = params.dSmoothing || 3;
+    const lengthRSI = Number(params.lengthRSI || 14);
+    const lengthStoch = Number(params.length || 14);
+    const smoothK = Number(params.kSmoothing || 3);
+    const smoothD = Number(params.dSmoothing || 3);
     const sourceType = params.source || "close";
 
-    // ---------------- SOURCE ----------------
-    const src = candles.map(c => {
-        const { open, high, low, close } = c;
+    // ---------------- SOURCE RESOLVER ----------------
+    function getSourceValue(c, source) {
+        const o = Number(c?.open || c?.o || 0);
+        const h = Number(c?.high || c?.h || 0);
+        const l = Number(c?.low || c?.l || 0);
+        const cl = Number(c?.close || c?.c || 0);
 
-        switch (sourceType) {
-            case "hl2": return (high + low) / 2;
-            case "hlc3": return (high + low + close) / 3;
-            case "ohlc4": return (open + high + low + close) / 4;
-            case "open": return open;
-            case "high": return high;
-            case "low": return low;
-            default: return close;
+        switch (source) {
+            case "hl2": return (h + l) / 2;
+            case "hlc3": return (h + l + cl) / 3;
+            case "ohlc4": return (o + h + l + cl) / 4;
+            case "open": return o;
+            case "high": return h;
+            case "low": return l;
+            case "close": return cl;
+            default: return Number(c[source] || cl);
         }
-    });
+    }
+
+    const src = candles.map(c => getSourceValue(c, sourceType));
 
     // ---------------- RSI (Wilder - CORRECT) ----------------
     function calculateRSI(values, period) {
         const rsi = new Array(values.length).fill(null);
+        if (values.length <= period + 1) return rsi;
 
         let gain = 0, loss = 0;
 
@@ -61,12 +68,12 @@ async function calculateStochRSI(candles, params = {}) {
         return rsi;
     }
 
-    const rsi = calculateRSI(src, lengthRSI);
+    const rsiArray = calculateRSI(src, lengthRSI);
 
     // ---------------- STOCH RSI (STRICT WINDOW) ----------------
-    const stochRSI = new Array(rsi.length).fill(null);
+    const stochRSI = new Array(rsiArray.length).fill(null);
 
-    for (let i = 0; i < rsi.length; i++) {
+    for (let i = 0; i < rsiArray.length; i++) {
 
         if (i < lengthRSI + lengthStoch - 1) continue;
 
@@ -75,14 +82,11 @@ async function calculateStochRSI(candles, params = {}) {
         let valid = true;
 
         for (let j = i - lengthStoch + 1; j <= i; j++) {
-            const val = rsi[j];
-
-            // ❗ full window must be valid (TV behavior)
+            const val = rsiArray[j];
             if (val === null || val === undefined) {
                 valid = false;
                 break;
             }
-
             if (val < min) min = val;
             if (val > max) max = val;
         }
@@ -91,17 +95,16 @@ async function calculateStochRSI(candles, params = {}) {
 
         stochRSI[i] = max === min
             ? 0
-            : (rsi[i] - min) / (max - min); // ✅ 0–1 scale (TV)
+            : (rsiArray[i] - min) / (max - min); 
     }
 
-    // ---------------- SMA (TV STYLE SMOOTHING - matches TradingView exactly) ----------------
+    // ---------------- SMA ----------------
     function sma(values, period) {
         const result = new Array(values.length).fill(null);
 
         for (let i = 0; i < values.length; i++) {
             if (values[i] === null) continue;
 
-            // collect `period` consecutive non-null values ending at i
             let sum = 0;
             let count = 0;
             for (let j = i; j >= 0 && count < period; j--) {
@@ -114,23 +117,20 @@ async function calculateStochRSI(candles, params = {}) {
                 result[i] = sum / period;
             }
         }
-
         return result;
     }
 
-    // ---------------- K & D ----------------
     const k = sma(stochRSI, smoothK);
     const d = sma(k, smoothD);
 
-    // ---------------- OUTPUT ----------------
-    return {
-        candles: candles.map((c, i) => ({
-            time: c.time,
-            stochRsi: stochRSI[i] !== null ? stochRSI[i] * 100 : null, // display 0–100
-            stochRsiK: k[i] !== null ? k[i] * 100 : null,
-            stochRsiD: d[i] !== null ? d[i] * 100 : null,
-        }))
-    };
+    // ---------------- OUTPUT (Direct Array for Controller) ----------------
+    return candles.map((c, i) => ({
+        time: c.time,
+        value: stochRSI[i] !== null ? Number((stochRSI[i] * 100).toFixed(2)) : null,
+        stochRsi: stochRSI[i] !== null ? Number((stochRSI[i] * 100).toFixed(2)) : null,
+        stochRsiK: k[i] !== null ? Number((k[i] * 100).toFixed(2)) : null,
+        stochRsiD: d[i] !== null ? Number((d[i] * 100).toFixed(2)) : null,
+    }));
 }
 
 module.exports = { calculateStochRSI };

@@ -239,8 +239,8 @@ function startSchedulers() {
     // 6. Background LTP Sync (Every 5 minutes) to ensure watchlist stays accurate
     setInterval(async () => {
         const { syncLivePrices } = require('./stockService');
-        const { isMarketOpen } = require('./webSocketService');
-        if (isMarketOpen()) {
+        const { isAnyMarketOpen } = require('./webSocketService');
+        if (isAnyMarketOpen()) {
             console.log("[Scheduler] Triggering periodic LTP sync for watchlist...");
             await syncLivePrices();
         }

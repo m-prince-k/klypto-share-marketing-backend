@@ -16,25 +16,26 @@ async function calculateBollingerBands(candles, options) {
     const bandwidth = new Array(n).fill(null);
     const percentB = new Array(n).fill(null);
 
-    function getSource(c) {
-        const h = Number(c.high);
-        const l = Number(c.low);
-        const o = Number(c.open);
-        const cl = Number(c.close);
+    function getSourceValue(c, source) {
+        const o = Number(c?.open || c?.o || 0);
+        const h = Number(c?.high || c?.h || 0);
+        const l = Number(c?.low || c?.l || 0);
+        const cl = Number(c?.close || c?.c || 0);
 
-        switch (sourceKey) {
-            case "open": return o;
-            case "high": return h;
-            case "low": return l;
+        switch (source) {
             case "hl2": return (h + l) / 2;
             case "hlc3": return (h + l + cl) / 3;
             case "ohlc4": return (o + h + l + cl) / 4;
-            default: return cl;
+            case "open": return o;
+            case "high": return h;
+            case "low": return l;
+            case "close": return cl;
+            default: return Number(c[source] || cl);
         }
     }
 
     if (!Array.isArray(candles)) return [];
-    const src = candles.map(c => getSource(c));
+    const src = candles.map(c => getSourceValue(c, sourceKey));
 
     // Manual calculation to support different MA types (like EMA)
     function calculateBasis(values, period, type) {

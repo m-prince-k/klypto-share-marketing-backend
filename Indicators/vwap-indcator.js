@@ -39,16 +39,21 @@ async function calculateVWAP(candles, options = {}) {
   // Map each candle to a new object to force React to detect changes
   if (!Array.isArray(candles)) return [];
   const result = candles.map((candle) => {
-    const { open, high, low, close, volume, time } = candle;
-    if (volume == null) return { time, value: null, vwap: null, bands: null };
+    const o = Number(candle.open || candle.o || 0);
+    const h = Number(candle.high || candle.h || 0);
+    const l = Number(candle.low || candle.l || 0);
+    const cl = Number(candle.close || candle.c || 0);
+    const vol = Number(candle.volume || candle.v || candle.vol || 0);
+
+    if (vol === 0 && !cl) return { time: candle.time, value: null, vwap: null, bands: null };
 
     // Source price
     const price =
-      source === "close" ? Number(close) :
-      source === "open" ? Number(open) :
-      source === "hl2" ? (Number(high) + Number(low)) / 2 :
-      source === "ohlc4" ? (Number(open) + Number(high) + Number(low) + Number(close)) / 4 :
-      (Number(high) + Number(low) + Number(close)) / 3;
+      source === "close" ? cl :
+      source === "open" ? o :
+      source === "hl2" ? (h + l) / 2 :
+      source === "ohlc4" ? (o + h + l + cl) / 4 :
+      (h + l + cl) / 3;
 
     // Hide for daily+ timeframes
     if (hideOnDailyOrAbove && (timeframe.includes("d") || timeframe.includes("w") || timeframe.includes("m"))) {

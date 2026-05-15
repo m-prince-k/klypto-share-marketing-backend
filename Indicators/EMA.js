@@ -15,23 +15,21 @@ async function calculateEMAIndicator(candles, options) {
 
     // -------- Source Resolver --------
     function getSourceValue(c, source) {
+        const o = Number(c?.open || c?.o || 0);
+        const h = Number(c?.high || c?.h || 0);
+        const l = Number(c?.low || c?.l || 0);
+        const cl = Number(c?.close || c?.c || 0);
 
         switch (source) {
-
-            case "hl2":
-                return (Number(c.high) + Number(c.low)) / 2;
-
-            case "hlc3":
-                return (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
-
-            case "ohlc4":
-                return (Number(c.open) + Number(c.high) + Number(c.low) + Number(c.close)) / 4;
-
-            case "hlcc4":
-                return (Number(c.high) + Number(c.low) + Number(c.close) + Number(c.close)) / 4;
-
-            default:
-                return Number(c[source]); // close, open, high, low
+            case "hl2": return (h + l) / 2;
+            case "hlc3": return (h + l + cl) / 3;
+            case "ohlc4": return (o + h + l + cl) / 4;
+            case "hlcc4": return (h + l + cl + cl) / 4;
+            case "open": return o;
+            case "high": return h;
+            case "low": return l;
+            case "close": return cl;
+            default: return Number(c[source] || cl);
         }
     }
 

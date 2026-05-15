@@ -5,8 +5,14 @@ async function calculateEOM(candles, params) {
     const length = params?.length ?? 14;
     const divisor = params?.divisor ?? 10000;
 
-    const hl2 = candles.map(c => (c.high + c.low) / 2);
-    const volume = candles.map(c => c.volume);
+    const hl2 = candles.map(c => {
+        const h = Number(c.high || c.h || 0);
+        const l = Number(c.low || c.l || 0);
+        return (h + l) / 2;
+    });
+    const volume = candles.map(c => Number(c.volume || c.v || c.vol || 0));
+    const highs = candles.map(c => Number(c.high || c.h || 0));
+    const lows = candles.map(c => Number(c.low || c.l || 0));
 
     const eomRaw = [];
 
@@ -18,7 +24,7 @@ async function calculateEOM(candles, params) {
         }
 
         const changeHL2 = hl2[i] - hl2[i - 1];
-        const highLow = candles[i].high - candles[i].low;
+        const highLow = highs[i] - lows[i];
 
         const vol = volume[i] === 0 ? 1 : volume[i];
 

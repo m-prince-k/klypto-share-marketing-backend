@@ -8,22 +8,22 @@ async function calculateRSIIndicator(candles, options) {
     const bbMult = options?.bbStdDev || options?.bbMult || 2;
 
     const getSourceValue = (c, key) => {
-        const o = Number(c?.open);
-        const h = Number(c?.high);
-        const l = Number(c?.low);
-        const closeVal = Number(c?.close);
+        const o = Number(c?.open || c?.o || 0);
+        const h = Number(c?.high || c?.h || 0);
+        const l = Number(c?.low || c?.l || 0);
+        const cl = Number(c?.close || c?.c || 0);
 
         switch (String(key).toLowerCase()) {
             case 'open': return o;
             case 'high': return h;
             case 'low': return l;
-            case 'close': return closeVal;
+            case 'close': return cl;
             case 'hl2': return (h + l) / 2;
-            case 'hlc3': return (h + l + closeVal) / 3;
-            case 'ohlc4': return (o + h + l + closeVal) / 4;
+            case 'hlc3': return (h + l + cl) / 3;
+            case 'ohlc4': return (o + h + l + cl) / 4;
             default: 
                 const raw = Number(c?.[key]);
-                return Number.isFinite(raw) ? raw : closeVal;
+                return Number.isFinite(raw) ? raw : cl;
         }
     };
 

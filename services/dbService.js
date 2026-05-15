@@ -84,7 +84,8 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                     const timeVal = hours * 100 + minutes;
 
                     if (exchange === "MCX") {
-                        return timeVal >= 900 && timeVal <= 2355;
+                        // Restricted by user to 3:30 PM
+                        return timeVal >= 900 && timeVal <= 1530;
                     } else {
                         if (interval === "ONE_DAY") return true;
                         return timeVal >= 915 && timeVal <= 1530;
@@ -201,7 +202,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
             
             const fStr = formatDate(currentStartDate, isMCX ? "09:00" : "09:15", interval);
-            const tStr = formatDate(currentChunkEndDate, isToday ? currentTimeStr : (isMCX ? "23:55" : "15:30"), interval);
+            const tStr = formatDate(currentChunkEndDate, isToday ? currentTimeStr : (isMCX ? "15:30" : "15:30"), interval);
 
             console.log(`[AngelOne API] Requesting ${symbol} (${token}) | Interval: ${interval} | From: ${fStr} | To: ${tStr}`);
             
