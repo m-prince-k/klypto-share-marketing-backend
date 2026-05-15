@@ -36,6 +36,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 app.use(cors()); // Enable CORS for all routes
+app.use(express.static(__dirname)); // Serve static files like test_socket.html
 // Routes
 app.use('/auth', authRoutes);
 app.use('/equity', stockRoutes);

@@ -298,6 +298,8 @@ const indicatorDetails = async (req, res) => {
         }
 
         const uSym = symbol.toUpperCase();
+        const isCommodity = uSym === "GOLD" || uSym === "SILVER";
+
         const topStocksMap = {
             "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
             "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
@@ -306,20 +308,38 @@ const indicatorDetails = async (req, res) => {
             "GOLD": "234454", "SILVER": "234455"
         };
 
-        const isCommodity = uSym === "GOLD" || uSym === "SILVER";
         const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
         const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
 
         let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
         if (!finalToken) throw new Error(`Token not found for ${symbol}`);
 
-        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate);
+        // --- AUTOMATIC LOOKBACK FOR WARMUP ---
+        let dynamicFrom = formattedFromDate;
+        if (formattedFromDate) {
+            const warmupDate = new Date(formattedFromDate);
+            if (finalInterval.includes("MINUTE")) warmupDate.setDate(warmupDate.getDate() - 7);
+            else if (finalInterval === "ONE_DAY") warmupDate.setDate(warmupDate.getDate() - 100);
+            else warmupDate.setDate(warmupDate.getDate() - 30);
+            dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
+        }
+
+        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate);
         const candles = result.data;
 
         const { withDateTime } = require('../helper');
         let values = await prepareCandlesWithIndicators(type, candles, res);
         const finalData = withDateTime(values);
-        return await res.json({ message: `Indicator fetched by ${type}`, statusCode: 200, data: finalData });
+        
+        // Filter out warmup data
+        const filteredData = finalData.filter(r => {
+            if (!formattedFromDate) return true;
+            const ts = r.time * 1000;
+            const startTs = new Date(formattedFromDate).getTime();
+            return ts >= startTs;
+        });
+
+        return await res.json({ message: `Indicator fetched by ${type}`, statusCode: 200, data: filteredData });
 
     } catch (error) {
         console.error("[IndicatorDetails] Error:", error.message);
@@ -331,58 +351,77 @@ const updateIndicator = async (req, res) => {
 
     try {
 
-        if (!req.body && req.body.indicatorType) {
-            return await res.json({ statusCode: 403, message: "Type must be defined" });
-        } else {
-            const { symbol, interval, fromdate, todate, fromDate, toDate, exchange } = req.query;
+        if (!req.body) {
+            return res.status(400).json({ success: false, message: "Request body is missing" });
+        }
 
-            const intervalMap = {
-                "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
-                "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
-                "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
-                "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
-                "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
-                "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
-                "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
-                "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
-            };
-            const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
+        const { symbol, interval, fromdate, todate, fromDate, toDate, exchange } = req.query;
+        if (!symbol) {
+            return res.status(400).json({ success: false, message: "Symbol is required in query parameters" });
+        }
 
-            // Normalize parameter names
-            const finalFromDate = fromdate || fromDate;
-            const finalToDate = todate || toDate;
+        const uSym = symbol.toUpperCase().trim();
+        const isCommodity = uSym === "GOLD" || uSym === "SILVER";
 
-            const { formatDate, getCandlesWithCache } = require('../services/dbService');
+        const intervalMap = {
+            "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+            "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+            "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+            "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+            "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+            "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+            "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+            "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+        };
+        const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
 
-            // Format dates if they are just YYYY-MM-DD
-            let formattedFromDate = finalFromDate;
-            let formattedToDate = finalToDate;
+        // Normalize parameter names
+        const finalFromDate = fromdate || fromDate;
+        const finalToDate = todate || toDate;
 
-            if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-                formattedFromDate = formatDate(new Date(finalFromDate), isCommodity ? "09:00" : "09:15", finalInterval);
+        const { formatDate, getCandlesWithCache } = require('../services/dbService');
+
+        // Format dates if they are just YYYY-MM-DD
+        let formattedFromDate = finalFromDate;
+        let formattedToDate = finalToDate;
+
+        if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
+            formattedFromDate = formatDate(new Date(finalFromDate), isCommodity ? "09:00" : "09:15", finalInterval);
+        }
+        if (typeof finalToDate === 'string' && finalToDate.length === 10) {
+            formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
+        }
+
+        const topStocksMap = {
+            "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
+            "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
+            "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
+            "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
+            "GOLD": "234454", "SILVER": "234455"
+        };
+
+        const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
+        const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
+
+        let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
+        if (!finalToken) throw new Error(`Token not found for ${symbol}`);
+
+        // --- AUTOMATIC LOOKBACK FOR WARMUP (Accurate values like TradingView/AngelOne) ---
+        let dynamicFrom = formattedFromDate;
+        if (formattedFromDate) {
+            const warmupDate = new Date(formattedFromDate);
+            if (finalInterval.includes("MINUTE")) {
+                warmupDate.setDate(warmupDate.getDate() - 7);
+            } else if (finalInterval === "ONE_DAY") {
+                warmupDate.setDate(warmupDate.getDate() - 100);
+            } else {
+                warmupDate.setDate(warmupDate.getDate() - 30);
             }
-            if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-                formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
-            }
+            dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
+        }
 
-            const uSym = symbol.toUpperCase();
-            const topStocksMap = {
-                "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
-                "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
-                "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-                "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
-                "GOLD": "234454", "SILVER": "234455"
-            };
-
-            const isCommodity = uSym === "GOLD" || uSym === "SILVER";
-            const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
-            const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
-
-            let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
-            if (!finalToken) throw new Error(`Token not found for ${symbol}`);
-
-            const candleResult = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate);
-            const candles = candleResult.data;
+        const candleResult = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate);
+        const candles = candleResult.data;
 
             const body = req.body || {};
             const type = body.type || "RSI";
@@ -861,13 +900,24 @@ const updateIndicator = async (req, res) => {
 
             const result = await indicatorEngine(candles, payload);
 
-            // let PropControl = await prepareCandlesWithIndicators(type, candles, req.body);
-            return await res.json({ message: `Indicator has been updated by ${req.body.type}`, statusCode: 200, data: result });
-        }
+            // Filter out warmup data - only return what user requested
+            const finalResult = result.filter(r => {
+                if (!formattedFromDate) return true;
+                const ts = r.time * 1000;
+                const startTs = new Date(formattedFromDate).getTime();
+                return ts >= startTs;
+            });
+
+            return await res.json({ 
+                message: `Indicator has been updated by ${req.body.type}`, 
+                statusCode: 200, 
+                data: finalResult 
+            });
     } catch (error) {
         console.log(error, "---------------------------06578987546789")
     }
 }
+
 
 
 const getTimeFrames = async (req, res) => {

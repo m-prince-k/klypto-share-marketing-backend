@@ -3,6 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const EVENTS = require('../constants/socketEvents');
 const optionChainService = require('./optionChainService');
+const { formatDate, getCandlesWithCache } = require('./dbService');
+const { prepareCandlesWithIndicators, withDateTime } = require('../helper');
+const store = require('./marketStore');
 
 let io;
 const socketAlerts = new Map();
@@ -24,7 +27,6 @@ const connectSocket = (server) => {
 
         // --- 1. INITIAL DATA EVENTS ---
         const getFormattedStocks = () => {
-            const store = require('./marketStore');
             return store.stocks.map(s => {
                 const key = `${s.name}:${s.segment}`;
                 const liveData = store.latestMarketData[key] || {};
@@ -93,10 +95,10 @@ const connectSocket = (server) => {
         socket.on(EVENTS.GET_INDICATOR_DETAILS, async (payload) => {
             const start = Date.now();
             try {
-                const { type, symbol, interval, fromDate, toDate, exchange } = payload;
-                const { prepareCandlesWithIndicators, withDateTime } = require('../helper');
-                const { formatDate, getCandlesWithCache } = require('./dbService');
-                const store = require('./marketStore');
+                const { type, symbol, interval, fromDate, toDate, fromdate, todate, exchange } = payload;
+                // Normalize parameter names
+                const finalFromDateInput = fromDate || fromdate;
+                const finalToDateInput = toDate || todate;
 
                 const intervalMap = {
                     "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
@@ -121,7 +123,7 @@ const connectSocket = (server) => {
                 const mappedExchange = finalExchange;
 
                 // Normalize dates
-                let fD = fromDate, tD = toDate;
+                let fD = finalFromDateInput, tD = finalToDateInput;
                 if (typeof fD === 'string' && fD.length === 10) fD = formatDate(new Date(fD), isCommodity ? "09:00" : "09:15", finalInterval);
                 if (typeof tD === 'string' && tD.length === 10) tD = formatDate(new Date(tD), isCommodity ? "23:55" : "15:30", finalInterval);
 
@@ -198,151 +200,13 @@ const connectSocket = (server) => {
             }
         });
         
-        socket.on(EVENTS.UPDATE_INDICATOR, async (payloadData) => {
-            const start = Date.now();
-            try {
-                const { symbol, interval, fromDate, fromdate, toDate, todate, exchange, body } = payloadData;
-                const { indicatorEngine, withDateTime } = require('../helper');
-                const { formatDate, getCandlesWithCache } = require('./dbService');
-                const store = require('./marketStore');
 
-                const intervalMap = {
-                    "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
-                    "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
-                    "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
-                    "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
-                    "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
-                    "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
-                    "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
-                    "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
-                };
-                const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
-
-                const finalFromDate = fromdate || fromDate;
-                const finalToDate = todate || toDate;
-
-                const uSym = symbol.toUpperCase();
-                const isCommodity = uSym === "GOLD" || uSym === "SILVER";
-                let finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
-                
-                // Auto-detect NFO for options/futures
-                if (finalExchange === "NSE" && (uSym.endsWith("CE") || uSym.endsWith("PE") || uSym.includes("FUT"))) {
-                    finalExchange = "NFO";
-                }
-                const mappedExchange = finalExchange;
-
-                let formattedFromDate = finalFromDate;
-                let formattedToDate = finalToDate;
-                if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-                    formattedFromDate = formatDate(new Date(finalFromDate), isCommodity ? "09:00" : "09:15", finalInterval);
-                }
-                if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-                    formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
-                }
-
-                // --- WARMUP LOOKBACK FOR UPDATE_INDICATOR ---
-                let dynamicFrom = formattedFromDate;
-                if (formattedFromDate) {
-                    const warmupDate = new Date(formattedFromDate);
-                    if (finalInterval.includes("MINUTE")) {
-                        warmupDate.setDate(warmupDate.getDate() - 7);
-                    } else if (finalInterval === "ONE_DAY") {
-                        warmupDate.setDate(warmupDate.getDate() - 100);
-                    }
-                    dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
-                }
-
-                const topStocksMap = {
-                    "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
-                    "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
-                    "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
-                    "GOLD": "234454", "SILVER": "234455"
-                };
-                
-                let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
-                let extraInfo = null;
-
-                if (!finalToken) {
-                    // Try robust NFO resolution
-                    const noSpaceSym = uSym.replace(/\s+/g, '');
-                    const shortYearSym = noSpaceSym.replace(/20([2-3][0-9])/, '$1');
-                    const nfoMatch = (store.nfoMasterData || []).find(s => {
-                        const t = s.symbol.toUpperCase();
-                        const tr = s.tradingSymbol?.toUpperCase();
-                        return t === uSym || t === noSpaceSym || t === shortYearSym ||
-                                tr === uSym || tr === noSpaceSym || tr === shortYearSym;
-                    });
-                    if (nfoMatch) {
-                        finalToken = nfoMatch.token;
-                        if (nfoMatch.symbol.endsWith("CE") || nfoMatch.symbol.endsWith("PE")) {
-                            extraInfo = {
-                                underlying: nfoMatch.name,
-                                strike: parseFloat(nfoMatch.strike) / 100,
-                                expiry: nfoMatch.expiry,
-                                optionType: nfoMatch.symbol.endsWith("CE") ? "CE" : "PE"
-                            };
-                        }
-                    }
-                }
-
-                if (!finalToken) throw new Error(`Token not found for ${symbol}`);
-
-                const candleResult = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate, extraInfo);
-                const candles = candleResult?.data || [];
-
-                const configBody = body || {};
-                const type = configBody.type || "RSI";
-                let enginePayload = { ...configBody, type };
-
-                // ... (existing switch logic replaced with spreading configBody for flexibility)
-                const result = await indicatorEngine(candles, enginePayload);
-                const finalResults = withDateTime(result);
-                
-                // Slice result back to requested range
-                let filteredResult = finalResults;
-                if (formattedFromDate && Array.isArray(finalResults)) {
-                    const startTs = new Date(formattedFromDate).getTime();
-                    filteredResult = finalResults.filter(r => (r.time * 1000) >= startTs);
-                }
-
-                socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, { 
-                    success: true, 
-                    message: `Indicator has been updated by ${type}`, 
-                    statusCode: 200, 
-                    data: filteredResult 
-                });
-
-                // --- PERSIST NEW SETTINGS FOR LIVE SUBSCRIPTION ---
-                if (store.indicatorSubscriptions.has(socket.id)) {
-                    const subs = store.indicatorSubscriptions.get(socket.id);
-                    const reqId = payloadData.id || JSON.stringify(configBody);
-                    const subKey = `${uSym}_${type}_${finalInterval}_${reqId}`;
-                    console.log(`[Socket] Setting live sub settings for ${subKey}`);
-                    subs.set(subKey, {
-
-                            ...subs.get(subKey),
-                            ...enginePayload, // Override with new parameters
-                            body: configBody  // Ensure body is preserved for indicatorEngine
-                        });
-                }
-
-
-                console.log(`[Socket] ${type} update: ${Date.now() - start}ms | Result: ${filteredResult?.length}`);
-            } catch (err) {
-                console.error("[Socket UpdateIndicator] Error:", err.message);
-                socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, { success: false, statusCode: 500, message: err.message });
-            }
-        });
 
         //THIS IS USED FOR LIVE EXACT CURRENT DATE INDICATGOR PLOTTING
         socket.on(EVENTS.GET_LIVE_INDICATOR, async (payload) => {
             console.log(`[Socket] Received GET_LIVE_INDICATOR request for:`, payload);
             try {
                 const { type, symbol, interval, exchange } = payload; // Ignore dates for history
-                const { prepareCandlesWithIndicators } = require('../helper');
-                const { getCandlesWithCache, formatDate } = require('./dbService');
-                const store = require('./marketStore');
 
                 const intervalMap = {
                     "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
@@ -536,6 +400,157 @@ const connectSocket = (server) => {
                 socket.emit(EVENTS.INDICATOR_DETAILS_ERROR, { success: false, error: err.message });
             }
         });
+
+        // --- 3.5 DYNAMIC INDICATOR UPDATE ---
+        socket.on(EVENTS.UPDATE_INDICATOR, async (payload) => {
+            const start = Date.now();
+            try {
+                const { symbol, type, interval, exchange } = payload;
+                if (!symbol || !type) throw new Error("Symbol and type are required");
+
+                const intervalMap = {
+                    "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
+                    "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
+                    "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
+                    "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
+                    "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
+                    "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
+                    "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
+                    "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+                };
+                const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
+
+                const uSym = symbol.toUpperCase();
+                const isCommodity = uSym === "GOLD" || uSym === "SILVER";
+                let finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
+
+                if (finalExchange === "NSE" && (uSym.endsWith("CE") || uSym.endsWith("PE") || uSym.includes("FUT"))) {
+                    finalExchange = "NFO";
+                }
+
+                const topStocksMap = {
+                    "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
+                    "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
+                    "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
+                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
+                    "GOLD": "234454", "SILVER": "234455"
+                };
+
+                let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
+                let extraInfo = null;
+
+                if (!finalToken) {
+                    const noSpaceSym = uSym.replace(/\s+/g, '');
+                    const shortYearSym = noSpaceSym.replace(/20([2-3][0-9])/, '$1');
+                    const nfoMatch = (store.nfoMasterData || []).find(s => {
+                        const t = s.symbol.toUpperCase();
+                        const tr = s.tradingSymbol?.toUpperCase();
+                        return t === uSym || t === noSpaceSym || t === shortYearSym ||
+                                tr === uSym || tr === noSpaceSym || tr === shortYearSym;
+                    });
+                    if (nfoMatch) {
+                        finalToken = nfoMatch.token;
+                        if (nfoMatch.symbol.endsWith("CE") || nfoMatch.symbol.endsWith("PE")) {
+                            extraInfo = {
+                                underlying: nfoMatch.name,
+                                strike: parseFloat(nfoMatch.strike) / 100,
+                                expiry: nfoMatch.expiry,
+                                optionType: nfoMatch.symbol.endsWith("CE") ? "CE" : "PE"
+                            };
+                        }
+                    }
+                }
+
+                if (!finalToken) throw new Error(`Token not found for ${symbol}`);
+
+                // --- SMART DATE HANDLING (User Dates + Warmup) ---
+                const fD = payload.fromDate || payload.fromdate;
+                const tD = payload.toDate || payload.todate;
+
+                let formattedFromDate = fD;
+                let formattedToDate = tD;
+
+                if (fD && fD.length === 10) {
+                    formattedFromDate = formatDate(new Date(fD), isCommodity ? "09:00" : "09:15", finalInterval);
+                }
+                if (tD && tD.length === 10) {
+                    formattedToDate = formatDate(new Date(tD), isCommodity ? "23:55" : "15:30", finalInterval);
+                }
+
+                // If no dates provided, fallback to last 5 days
+                if (!formattedFromDate) {
+                    const fiveDaysAgo = new Date();
+                    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+                    formattedFromDate = formatDate(fiveDaysAgo, "09:15", finalInterval);
+                }
+                if (!formattedToDate) {
+                    formattedToDate = formatDate(new Date(), isCommodity ? "23:55" : "15:30", finalInterval);
+                }
+
+                // --- AUTOMATIC LOOKBACK FOR WARMUP ---
+                let dynamicFrom = formattedFromDate;
+                if (formattedFromDate) {
+                    const warmupDate = new Date(formattedFromDate);
+                    if (finalInterval.includes("MINUTE")) warmupDate.setDate(warmupDate.getDate() - 7);
+                    else if (finalInterval === "ONE_DAY") warmupDate.setDate(warmupDate.getDate() - 100);
+                    else warmupDate.setDate(warmupDate.getDate() - 30);
+                    dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
+                }
+
+                const result = await getCandlesWithCache(uSym, finalToken, finalExchange, finalInterval, dynamicFrom, formattedToDate, extraInfo);
+                const candles = result?.data || [];
+                
+                if (candles.length < 2) throw new Error("Insufficient data");
+                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, payload);
+
+                // Update the subscription so the live broadcast loop uses these NEW parameters
+                if (!store.indicatorSubscriptions.has(socket.id)) {
+                    store.indicatorSubscriptions.set(socket.id, new Map());
+                }
+                const socketSubs = store.indicatorSubscriptions.get(socket.id);
+                const subKey = payload.id || `${uSym}_${type}_${finalInterval}`;
+                
+                socketSubs.set(subKey, {
+                    ...payload,
+                    symbol: uSym,
+                    token: finalToken,
+                    type: type,
+                    interval: finalInterval,
+                    exchange: finalExchange,
+                    lastEmit: Date.now()
+                });
+
+                const latest = results[results.length - 1] || {};
+                const indKey = type.toLowerCase();
+                const val = latest[indKey] ?? latest[type] ?? latest.value ?? 0;
+
+                // Slice result back to requested range (remove warmup data)
+                let filteredResults = results;
+                if (formattedFromDate && Array.isArray(results) && results.length > 0) {
+                    const startTs = new Date(formattedFromDate).getTime();
+                    filteredResults = results.filter(r => (r.time * 1000) >= startTs);
+                }
+
+                console.log(`[Socket] ${type} update success: ${Date.now() - start}ms | Val: ${val} | Returned: ${filteredResults.length}`);
+
+                socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, {
+                    success: true,
+                    symbol: uSym,
+                    type: type,
+                    message: "Indicator parameters updated",
+                    value: parseFloat(val || 0),
+                    [indKey]: parseFloat(val || 0),
+                    [type]: parseFloat(val || 0),
+                    time: latest.time,
+                    data: filteredResults
+                });
+
+            } catch (err) {
+                console.error("[Socket Update Indicator] Error:", err.message);
+                socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, { success: false, error: err.message });
+            }
+        });
+
 
         // --- 4. SCANNER & ALERT EVENTS ---
         socket.on(EVENTS.GET_RSI_SCANNER, async (payload) => {

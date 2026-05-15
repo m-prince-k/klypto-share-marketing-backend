@@ -123,9 +123,11 @@ async function calculateRSIIndicator(candles, options) {
     const rsi = Array(candles.length).fill(null);
     const validCloses = closes.filter(value => value !== null);
 
-    if (validCloses.length > rsiLength) {
+    if (validCloses.length >= rsiLength) {
         const libRsi = RSI.calculate({ period: rsiLength, values: validCloses });
         const firstValidIndex = closes.findIndex(v => v !== null);
+        
+        // The first RSI value corresponds to the index equal to rsiLength
         let outputIdx = firstValidIndex + rsiLength;
         for (let i = 0; i < libRsi.length; i++) {
             if (outputIdx < rsi.length) {
@@ -140,8 +142,11 @@ async function calculateRSIIndicator(candles, options) {
     let bbUpper = Array(candles.length).fill(null);
     let bbLower = Array(candles.length).fill(null);
 
-    if (maType !== "None") {
-        switch (maType) {
+    // Default maType to "SMA + Bollinger Bands" if RSI is the type and no maType provided
+    const effectiveMaType = (maType === "RSI" || !maType) ? "SMA + Bollinger Bands" : maType;
+
+    if (effectiveMaType !== "None") {
+        switch (effectiveMaType) {
             case "SMA":
             case "SMA + Bollinger Bands":
                 smoothingMA = sma(rsi, maLength);
@@ -160,7 +165,7 @@ async function calculateRSIIndicator(candles, options) {
                 break;
         }
 
-        if (maType === "SMA + Bollinger Bands") {
+        if (effectiveMaType === "SMA + Bollinger Bands") {
             const dev = stdev(rsi, maLength);
             for (let i = 0; i < candles.length; i++) {
                 if (smoothingMA[i] !== null && dev[i] !== null) {
@@ -172,9 +177,10 @@ async function calculateRSIIndicator(candles, options) {
     }
 
     return candles.map((c, i) => {
-        const dt = new Date(c.time * 1000);
+        const timestamp = c.time ? c.time * 1000 : (c.timestamp ? new Date(c.timestamp).getTime() : Date.now());
+        const dt = new Date(timestamp);
         return {
-            time: c.time,
+            time: Math.floor(timestamp / 1000),
             datetime: dt.toLocaleString("en-IN", { timeZone: 'Asia/Kolkata' }),
             isoDate: dt.toISOString().split('T')[0],
             rsi: rsi[i],

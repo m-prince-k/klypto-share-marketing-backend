@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Klypto Robust Tester</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #0b0f1a; color: #e2e8f0; margin: 0; padding: 15px; }
+        .dashboard { display: grid; grid-template-columns: 380px 1fr; gap: 20px; height: 95vh; }
+        .sidebar { display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+        .card { background: #161b2c; border-radius: 12px; padding: 18px; border: 1px solid #2d364f; }
+        .status-pill { padding: 8px 12px; border-radius: 6px; background: #1f2937; display: flex; align-items: center; gap: 8px; font-weight: bold; margin-bottom: 10px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; }
+        .connected .dot { background: #10b981; box-shadow: 0 0 8px #10b981; }
+        
+        h3 { margin: 0 0 15px 0; color: #38bdf8; font-size: 0.85rem; text-transform: uppercase; border-bottom: 1px solid #2d364f; padding-bottom: 8px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+        label { display: block; font-size: 0.7rem; color: #94a3b8; margin-bottom: 4px; }
+        input, select { background: #1f2937; border: 1px solid #374151; color: white; padding: 8px; border-radius: 6px; width: 100%; font-size: 0.85rem; }
+        
+        button { background: #38bdf8; color: #0b0f1a; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 700; width: 100%; margin-bottom: 8px; }
+        button:hover { background: #7dd3fc; }
+        button.secondary { background: #6366f1; color: white; }
+        button.danger { background: #ef4444; color: white; }
+        
+        .log-area { background: #161b2c; border-radius: 12px; border: 1px solid #2d364f; display: flex; flex-direction: column; overflow: hidden; }
+        #logContainer { flex-grow: 1; background: #000; padding: 15px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; }
+        .log-entry { border-left: 4px solid #38bdf8; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
+        .log-entry.emit { border-left-color: #fbbf24; }
+        .log-entry.error { border-left-color: #ef4444; }
+        pre { margin-top: 5px; color: #4ade80; white-space: pre-wrap; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="sidebar">
+            <div class="card">
+                <div id="connPill" class="status-pill">
+                    <div class="dot"></div>
+                    <span id="connText">Disconnected</span>
+                </div>
+                <label>Server URL (Change if needed)</label>
+                <input type="text" id="serverUrl" placeholder="http://localhost:8000">
+                <button onclick="reconnect()" style="margin-top: 10px; background: #475569; color: white;">Connect / Reconnect</button>
+            </div>
+
+            <div class="card">
+                <h3>Indicator Settings</h3>
+                <div class="grid">
+                    <div>
+                        <label>Symbol</label>
+                        <input type="text" id="symbol" value="TCS">
+                    </div>
+                    <div>
+                        <label>Interval</label>
+                        <select id="interval">
+                            <option value="1m">1m</option>
+                            <option value="5m" selected>5m</option>
+                            <option value="15m">15m</option>
+                            <option value="1h">1h</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Type</label>
+                        <select id="type">
+                            <option value="RSI">RSI</option>
+                            <option value="SMA">SMA</option>
+                            <option value="EMA">EMA</option>
+                            <option value="MACD">MACD</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Length</label>
+                        <input type="number" id="length" value="14">
+                    </div>
+                    <div>
+                        <label>Source</label>
+                        <select id="source">
+                            <option value="close">Close</option>
+                            <option value="open">Open</option>
+                            <option value="high">High</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>MA Type</label>
+                        <select id="maType">
+                            <option value="SMA + Bollinger Bands">SMA + BB</option>
+                            <option value="SMA">SMA</option>
+                            <option value="EMA">EMA</option>
+                            <option value="SMMA (RMA)">SMMA (RMA)</option>
+                            <option value="WMA">WMA</option>
+                            <option value="VWMA">VWMA</option>
+                            <option value="None">None</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>MA Length</label>
+                        <input type="number" id="maLength" value="14">
+                    </div>
+                    <div>
+                        <label>BB StdDev</label>
+                        <input type="number" id="bbStdDev" value="2" step="0.1">
+                    </div>
+                    <div>
+                        <label>From Date</label>
+                        <input type="date" id="fromDate">
+                    </div>
+                    <div>
+                        <label>To Date</label>
+                        <input type="date" id="toDate">
+                    </div>
+                </div>
+                <button onclick="triggerEvent('getIndicatorDetails')">Get History Details</button>
+                <button class="secondary" onclick="triggerEvent('updateIndicator')">Update Live Params</button>
+                <button style="background: #10b981; color: white;" onclick="triggerEvent('getLiveIndicatorUpdate')">Fetch Single Tick</button>
+            </div>
+
+            <button class="danger" onclick="document.getElementById('logContainer').innerHTML=''">Clear Logs</button>
+        </div>
+
+        <div class="log-area">
+            <div style="padding: 10px 20px; background: #1f2937; border-bottom: 1px solid #2d364f; font-weight: bold;">
+                Activity Log <span id="eventCount" style="color: #94a3b8; font-weight: normal; margin-left: 10px;">(0 events)</span>
+            </div>
+            <div id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket;
+        const logContainer = document.getElementById('logContainer');
+        const serverUrlInput = document.getElementById('serverUrl');
+        const connPill = document.getElementById('connPill');
+        const connText = document.getElementById('connText');
+
+        // Set default URL based on how page is opened
+        serverUrlInput.value = window.location.origin.includes('http') ? window.location.origin : 'http://localhost:8000';
+
+        function reconnect() {
+            if (socket) socket.disconnect();
+            const url = serverUrlInput.value || 'http://localhost:8000';
+            addLog('SYSTEM', `Connecting to ${url}...`);
+            
+            socket = io(url, { transports: ['websocket'] });
+
+            socket.on('connect', () => {
+                connPill.className = 'status-pill connected';
+                connText.innerText = 'Connected';
+                addLog('SYSTEM', 'Connected successfully!');
+            });
+
+            socket.on('disconnect', () => {
+                connPill.className = 'status-pill';
+                connText.innerText = 'Disconnected';
+                addLog('SYSTEM', 'Disconnected from server.');
+            });
+
+            socket.on('connect_error', (err) => {
+                addLog('ERROR', `Connection failed: ${err.message}`, true);
+            });
+
+            // Auto-register common events
+            ['indicatorDetailsResponse', 'indicatorDetailsError', 'updateIndicatorResponse', 'liveIndicatorResponse'].forEach(evt => {
+                socket.on(evt, (data) => addLog(evt, data));
+            });
+        }
+
+        // Set default dates
+        const today = new Date().toISOString().split('T')[0];
+        const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        document.getElementById('fromDate').value = tenDaysAgo;
+        document.getElementById('toDate').value = today;
+
+        function triggerEvent(name) {
+            if (!socket || !socket.connected) {
+                alert('Socket not connected! Click Reconnect.');
+                return;
+            }
+
+            const fromVal = document.getElementById('fromDate').value;
+            const toVal = document.getElementById('toDate').value;
+
+            const params = {
+                symbol: document.getElementById('symbol').value.toUpperCase(),
+                interval: document.getElementById('interval').value,
+                type: document.getElementById('type').value,
+                length: parseInt(document.getElementById('length').value),
+                source: document.getElementById('source').value,
+                maType: document.getElementById('maType').value,
+                maLength: parseInt(document.getElementById('maLength').value),
+                bbStdDev: parseFloat(document.getElementById('bbStdDev').value),
+                id: "test_sub_" + document.getElementById('type').value,
+                // Use manual values from UI
+                fromDate: fromVal,
+                fromdate: fromVal,
+                toDate: toVal,
+                todate: toVal
+            };
+
+            addLog(`EMIT: ${name}`, params, false, true);
+            socket.emit(name, params);
+        }
+
+        let count = 0;
+        function addLog(event, data, isError = false, isEmit = false) {
+            count++;
+            document.getElementById('eventCount').innerText = `(${count} events)`;
+            
+            const div = document.createElement('div');
+            div.className = `log-entry ${isEmit ? 'emit' : ''} ${isError || event.includes('Error') ? 'error' : ''}`;
+            
+            const time = new Date().toLocaleTimeString();
+            
+            // Optimization for large arrays
+            let output = data;
+            if (Array.isArray(data) && data.length > 5) {
+                output = { total: data.length, first: data[0], last: data[data.length-1], msg: 'Full data in Console (F12)' };
+                console.log(`Full ${event} data:`, data);
+            }
+
+            div.innerHTML = `<strong>[${time}] ${event}</strong><pre>${JSON.stringify(output, null, 2)}</pre>`;
+            logContainer.prepend(div);
+        }
+
+        // Initial connection
+        reconnect();
+    </script>
+</body>
+</html>

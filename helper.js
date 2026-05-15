@@ -199,7 +199,7 @@ async function smoothing(values, type, length) {
 
 
 async function indicatorEngine(candles, config) {
-  console.log(config, "---------------___________________________________________________________")
+  
 
   // const closes = await candles.map(c => c[config.sourceKey])
 
@@ -208,7 +208,8 @@ async function indicatorEngine(candles, config) {
     //const src = getSource(candles, config.sourceKey || "close"); // ✅ FIX
     let output;
 
-    switch (config.type) {
+    const type = (config.type || "").toUpperCase();
+    switch (type) {
       case "RSI":
         output = await calculateRSIIndicator(candles, config);
         break;
@@ -471,265 +472,260 @@ async function indicatorEngine(candles, config) {
 
 
 async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
-
   try {
+    const results = await (async () => {
+      const normalizedType = (type || "").toUpperCase();
+      switch (normalizedType) {
+        case "SMA":
+          return await calculateSMA(candle, config.length || 9, { ...config, maType: config.maType || "none", maLength: config.maLength || 14, smaLength: config.length || 9, bbMult: config.bbMult || 2, offset: config.offset || 0, source: config.source || "close" });
+        case "STOCH":
+          return await calculateStochastic(candle, { kLength: config.kLength || 14, kSmoothing: config.kSmoothing || 1, dSmoothing: config.dSmoothing || 3 });
+        case "EMA":
+          return await calculateEMAIndicator(candle, { length: config.length || 9, maType: config.maType || "none", maLength: config.maLength || 14, bbMult: config.bbMult || 2, source: config.source || "close", offset: config.offset || 0 });
 
-    switch (type) {
-      case "SMA":
-        return calculateSMA(candle, config.length || 9, { ...config, maType: config.maType || "none", maLength: config.maLength || 14, smaLength: config.length || 9, bbMult: config.bbMult || 2, offset: config.offset || 0, source: config.source || "close" });
-      case "STOCH":
-        return calculateStochastic(candle, { kLength: config.kLength || 14, kSmoothing: config.kSmoothing || 1, dSmoothing: config.dSmoothing || 3 });
-      case "EMA":
-        return calculateEMAIndicator(candle, { length: config.length || 9, maType: config.maType || "none", maLength: config.maLength || 14, bbMult: config.bbMult || 2, source: config.source || "close", offset: config.offset || 0 });
+        case "VWMA":
+          return await vwmaSeries(candle, { period: 20, priceKey: "close", volumeKey: "volume" });
 
-      case "VWMA":
-        return vwmaSeries(candle, { period: 20, priceKey: "close", volumeKey: "volume" });
+        case "RSI":
+          return await calculateRSIIndicator(candle, { length: config.length || 14, maType: config.maType || "SMA + Bollinger Bands", maLength: config.maLength || 14, bbStdDev: config.bbStdDev || 2, source: config.source || "close" });
 
-      case "RSI":
-        return calculateRSIIndicator(candle, { length: config.length || 14, maType: config.maType || "SMA + Bollinger Bands", maLength: config.maLength || 14, bbStdDev: config.bbStdDev || 2, source: config.source || "close" });
+        case "MACD":
+          return await calculateMACD(candle, { fastLength: config.fastLength || 12, slowLength: config.slowLength || 26, signalLength: config.signalLength || 9, oscillatorMAType: config.oscillatorMAType || "EMA", signalMAType: config.signalMAType || "EMA", source: config.source || "close" });
 
-      case "MACD":
-        return calculateMACD(candle, { fastLength: config.fastLength || 12, slowLength: config.slowLength || 26, signalLength: config.signalLength || 9, oscillatorMAType: config.oscillatorMAType || "EMA", signalMAType: config.signalMAType || "EMA", source: config.source || "close" });
-
-      case "VWAP":
-        return calculateVWAP(candle, {
-          anchorPeriod: config.anchorPeriod || "Daily",
-          hideOnDailyOrAbove: config.hideOnDailyOrAbove !== undefined ? config.hideOnDailyOrAbove : true,
-          calculateMode: config.calculateMode || "CUMULATIVE",
-          band1: config.band1 || 1,
-          band2: config.band2 || 2,
-          band3: config.band3 || 3,
-          source: config.source || "close",
-          offset: config.offset || 0,
-          bandMode: config.bandMode || "STD"
-        });
-
-      case "ATR":
-        return calculateATR(candle, { length: config.length || 14, smoothing: config.smoothing || "RMA" });
-
-      case "TR":
-      case "TRUERANGE":
-        return trueRangeSeries(candle);
-
-      case "RMA":
-        return rmaSeries(candle, { period: 14, valueKey: "close" });
-
-      case "TMA":
-        return tmaSeries(candle, { period: 20, source: "close" });
-
-      case "BB": // Bollinger Bands
-        return calculateBollingerBands(candle, { length: config.length || 20, maType: config.maType || "SMA", stdDev: config.stdDev || 2, source: config.source || "close", offset: config.offset || 0 });
-
-      case "BBW": //correct
-        return calculateBBW(candle, { length: config.length || 20, source: config.source || "close", bbMult: config.bbMult || 2, expansionLength: config.expansionLength || 125, contractionLength: config.contractionLength || 125 });
-
-      case "ADX":
-        return calculateADX(candle, { diLength: config.diLength || 14, smoothing: config.smoothing || 14 });
-
-      case "AROON":
-        return calculateAroonFromCandles(candle, config.length || 14);
-
-      case "CKS":
-        return calculateChandeKrollStop(candle, { atrPeriod: config.atrPeriod || 10, atrMultiplier: config.atrMultiplier || 1, stopLength: config.stopLength || 9 });
-
-      case "ROC":
-        return calculatedROC(candle, { length: config.length || 9, source: config.source || "close" });
-
-      case "ICHIMOKU":
-        return calculateIchimoku(candle, config.conversionLinePeriod || 9, config.baseLinePeriod || 26, config.laggingSpan2Period || 52, config.displacement || 26);
-      case "AO":
-        return calculateAroonOscillator(candle, { length: config.length || 14 });
-      case "CCI":
-        return calculateCCI(candle, config.length || 20);
-      case "VP":
-        return calculateVolumeProfile(candle, { lookback: config.lookback || 200, rows: config.rows || 20, valueArea: config.valueArea || 0.7, source: config.source || "hlc3" });
-
-      case "MOM":
-        return calculateMomentum(candle, { length: config.length || 10, source: config.source || "close" });
-
-      case "TEMA":
-        return calculateTEMA(candle, { length: 9 });
-
-      case "DEMA":
-        return calculateDEMA(candle, { length: 9, source: "close" });
-
-      case "WMA":
-        return calculateWMA(candle, { length: 9, source: "close", offset: 0 });
-
-      case "HMA":
-        return calculateHMA(candle, { length: 9, source: "close" });
-
-      case "KAMA":
-        return calculateKAMA(candle, { source: "close", erLength: 2, fastLength: 10, slowLength: 30 });
-
-      case "AWO":
-        return calculateAwesomeOscillator(candle);
-
-      case "CMO":
-        return calculateChandeMO(candle, { length: 9, source: "close" });
-
-      case "TRIX":
-        return calculateTRIX(candle, { length: 18, source: "close" });
-
-      case "FT":
-        return calculateFisherTransform(candle, 9);
-
-      case "KVO":
-        return calculateKlingerOscillator(candle, { fastLength: 34, slowLength: 55, signalLength: 13 });
-
-      case "STDDEV":
-        return calculateStdev(candle, { length: 20, source: "close" });
-
-      case "KC":
-        return calculateKeltnerChannels(candle, {
-          length: 20,
-          source: "close",
-          multiplier: 2,
-          useExpMA: true,
-          bandsStyle: "Average True Range",
-          atrLength: 10
-        });
-
-      case "DC":
-        return calculateDonchianChannels(candle, { length: 20, offset: 0 });
-
-      case "HV":
-        return calculateHistoricalVolatility(candle, 5, true, 1);
-
-      case "CHOP":
-        return calculateCHOP(candle, 14);
-
-      case "VOL":
-        return calculateVolumeIndicator(candle, { maLength: 20, colorByPrevious: "false" });
-
-      case "OBV":
-        return calculateOBV(candle, { maType: "SMA", maLength: 14, bbLength: 20, bbMult: 2 });
-
-      case "PVO":
-        return calculatePVO(candle, { fastLen: 22, slowLen: 26, sigLen: 9, oscType: "EMA", sigType: "EMA" });
-
-      case "AD":
-        return calculateAD(candle);
-
-      case "CMF":
-        return calculateCMF(candle, 20);
-
-      case "MFI":
-        return await calculateMFI(candle, { length: 14 });
-
-      case "EOM":
-        return calculateEOM(candle, { length: 14, divisor: 10000 });
-
-      case "NVI":
-        return calculateNVI(candle, 255);
-
-      case "PVI":
-        return calculatePVI(candle, 255);
-
-      case "SUPERTREND":
-        return calculateSupertrend(candle, { atrPeriod: 10, factor: 3 });
-
-      case "PSAR":
-        return calculateParabolicSAR(candle, { start: 0.02, increment: 0.02, maximum: 0.2 });
-
-      case "STOCHRSI":
-        return calculateStochRSI(candle, { lengthRSI: 14, lengthStoch: 14, smoothK: 3, smoothD: 3, source: "close" });
-
-      case "WPR":
-        return calculateWilliamsR(candle, { length: 14, source: "close" });
-
-      case "CK":
-        return calculateChandeKrollStop(candle, { atrPeriod: 10, atrMultiplier: 1, stopLength: 9 });
-
-      case "UO":
-        return calculateUltimateOscillator(candle, { length1: 7, length2: 14, length3: 28 });
-
-      case "ZIGZAG":
-        return calculateZigZag(candle, { deviation: 5, depth: 10 });
-
-      case "SSL_HYBRID":
-        return calculateSSLHybrid(candle, { ssl1Len: 60, ssl2Len: 5, ssl3Len: 15, baseLen: 60, atrLen: 14, atrMult: 1 });
-
-      case "CAMARILLA":
-        return calculateCamarillaPivots(candle, { timeframe: "Daily" });
-
-      case "ALL":
-        {
-          const indicators = [
-            { type: "RSI", name: "rsi" },
-            { type: "SMA", name: "sma" },
-            { type: "EMA", name: "ema" },
-            { type: "MACD", name: "macd" },
-            { type: "VWAP", name: "vwap" },
-            { type: "ATR", name: "atr" },
-            { type: "BB", name: "bb" },
-            { type: "ADX", name: "adx" },
-            { type: "SUPERTREND", name: "supertrend" },
-            { type: "VWMA", name: "vwma" },
-            { type: "AO", name: "ao" },
-            { type: "PSAR", name: "psar" },
-            { type: "STOCHRSI", name: "stochrsi" },
-            { type: "SSL_HYBRID", name: "ssl_hybrid" }
-          ];
-
-          const resultsMap = new Map();
-          // Initialize map with candles
-          candle.forEach(c => resultsMap.set(c.time, { ...c }));
-
-          for (const ind of indicators) {
-            try {
-              const data = await prepareCandlesWithIndicators(ind.type, candle, res);
-              if (Array.isArray(data)) {
-                data.forEach(item => {
-                  if (item && item.time) {
-                    const existing = resultsMap.get(item.time);
-                    if (existing) {
-                      // Merge all keys except time
-                      Object.keys(item).forEach(key => {
-                        if (key !== "time") existing[key] = item[key];
-                      });
-                    }
-                  }
-                });
-              }
-            } catch (e) {
-              console.error(`Error calculating ${ind.type} in ALL:`, e.message);
-            }
-          }
-
-          let finalResults = Array.from(resultsMap.values()).sort((a, b) => a.time - b.time);
-
-          const warmupPeriod = 50;
-          if (finalResults.length > warmupPeriod) {
-            finalResults = finalResults.slice(warmupPeriod);
-          }
-
-          // Add human-readable datetime to all records
-          return finalResults.map(r => {
-            const dt = new Date(r.time * 1000);
-            return {
-              ...r,
-              datetime: dt.toLocaleString('en-IN', {
-                timeZone: 'Asia/Kolkata',
-                hour12: false,
-                hour: '2-digit', minute: '2-digit', second: '2-digit',
-                day: '2-digit', month: '2-digit', year: 'numeric'
-              })
-            };
+        case "VWAP":
+          return await calculateVWAP(candle, {
+            anchorPeriod: config.anchorPeriod || "Daily",
+            hideOnDailyOrAbove: config.hideOnDailyOrAbove !== undefined ? config.hideOnDailyOrAbove : true,
+            calculateMode: config.calculateMode || "CUMULATIVE",
+            band1: config.band1 || 1,
+            band2: config.band2 || 2,
+            band3: config.band3 || 3,
+            source: config.source || "close",
+            offset: config.offset || 0,
+            bandMode: config.bandMode || "STD"
           });
-        }
 
-      default:
-        const rawResults = await (async () => {
-          // This is a placeholder for single-indicator return logic if it wasn't caught in cases
+        case "ATR":
+          return await calculateATR(candle, { length: config.length || 14, smoothing: config.smoothing || "RMA" });
+
+        case "TR":
+        case "TRUERANGE":
+          return await trueRangeSeries(candle);
+
+        case "RMA":
+          return await rmaSeries(candle, { period: 14, valueKey: "close" });
+
+        case "TMA":
+          return await tmaSeries(candle, { period: 20, source: "close" });
+
+        case "BB": // Bollinger Bands
+          return await calculateBollingerBands(candle, { length: config.length || 20, maType: config.maType || "SMA", stdDev: config.stdDev || 2, source: config.source || "close", offset: config.offset || 0 });
+
+        case "BBW": //correct
+          return await calculateBBW(candle, { length: config.length || 20, source: config.source || "close", bbMult: config.bbMult || 2, expansionLength: config.expansionLength || 125, contractionLength: config.contractionLength || 125 });
+
+        case "ADX":
+          return await calculateADX(candle, { diLength: config.diLength || 14, smoothing: config.smoothing || 14 });
+
+        case "AROON":
+          return await calculateAroonFromCandles(candle, config.length || 14);
+
+        case "CKS":
+          return await calculateChandeKrollStop(candle, { atrPeriod: config.atrPeriod || 10, atrMultiplier: config.atrMultiplier || 1, stopLength: config.stopLength || 9 });
+
+        case "ROC":
+          return await calculatedROC(candle, { length: config.length || 9, source: config.source || "close" });
+
+        case "ICHIMOKU":
+          return await calculateIchimoku(candle, config.conversionLinePeriod || 9, config.baseLinePeriod || 26, config.laggingSpan2Period || 52, config.displacement || 26);
+        case "AO":
+          return await calculateAroonOscillator(candle, { length: config.length || 14 });
+        case "CCI":
+          return await calculateCCI(candle, config.length || 20);
+        case "VP":
+          return await calculateVolumeProfile(candle, { lookback: config.lookback || 200, rows: config.rows || 20, valueArea: config.valueArea || 0.7, source: config.source || "hlc3" });
+
+        case "MOM":
+          return await calculateMomentum(candle, { length: config.length || 10, source: config.source || "close" });
+
+        case "TEMA":
+          return await calculateTEMA(candle, { length: 9 });
+
+        case "DEMA":
+          return await calculateDEMA(candle, { length: 9, source: "close" });
+
+        case "WMA":
+          return await calculateWMA(candle, { length: 9, source: "close", offset: 0 });
+
+        case "HMA":
+          return await calculateHMA(candle, { length: 9, source: "close" });
+
+        case "KAMA":
+          return await calculateKAMA(candle, { source: "close", erLength: 2, fastLength: 10, slowLength: 30 });
+
+        case "AWO":
+          return await calculateAwesomeOscillator(candle);
+
+        case "CMO":
+          return await calculateChandeMO(candle, { length: 9, source: "close" });
+
+        case "TRIX":
+          return await calculateTRIX(candle, { length: 18, source: "close" });
+
+        case "FT":
+          return await calculateFisherTransform(candle, 9);
+
+        case "KVO":
+          return await calculateKlingerOscillator(candle, { fastLength: 34, slowLength: 55, signalLength: 13 });
+
+        case "STDDEV":
+          return await calculateStdev(candle, { length: 20, source: "close" });
+
+        case "KC":
+          return await calculateKeltnerChannels(candle, {
+            length: 20,
+            source: "close",
+            multiplier: 2,
+            useExpMA: true,
+            bandsStyle: "Average True Range",
+            atrLength: 10
+          });
+
+        case "DC":
+          return await calculateDonchianChannels(candle, { length: 20, offset: 0 });
+
+        case "HV":
+          return await calculateHistoricalVolatility(candle, 5, true, 1);
+
+        case "CHOP":
+          return await calculateCHOP(candle, 14);
+
+        case "VOL":
+          return calculateVolumeIndicator(candle, { maLength: 20, colorByPrevious: "false" });
+
+        case "OBV":
+          return calculateOBV(candle, { maType: "SMA", maLength: 14, bbLength: 20, bbMult: 2 });
+
+        case "PVO":
+          return calculatePVO(candle, { fastLen: 22, slowLen: 26, sigLen: 9, oscType: "EMA", sigType: "EMA" });
+
+        case "AD":
+          return calculateAD(candle);
+
+        case "CMF":
+          return calculateCMF(candle, 20);
+
+        case "MFI":
+          return await calculateMFI(candle, { length: 14 });
+
+        case "EOM":
+          return calculateEOM(candle, { length: 14, divisor: 10000 });
+
+        case "NVI":
+          return calculateNVI(candle, 255);
+
+        case "PVI":
+          return calculatePVI(candle, 255);
+
+        case "SUPERTREND":
+          return calculateSupertrend(candle, { atrPeriod: 10, factor: 3 });
+
+        case "PSAR":
+          return calculateParabolicSAR(candle, { start: 0.02, increment: 0.02, maximum: 0.2 });
+
+        case "STOCHRSI":
+          return calculateStochRSI(candle, { lengthRSI: 14, lengthStoch: 14, smoothK: 3, smoothD: 3, source: "close" });
+
+        case "WPR":
+          return calculateWilliamsR(candle, { length: 14, source: "close" });
+
+        case "CK":
+          return calculateChandeKrollStop(candle, { atrPeriod: 10, atrMultiplier: 1, stopLength: 9 });
+
+        case "UO":
+          return calculateUltimateOscillator(candle, { length1: 7, length2: 14, length3: 28 });
+
+        case "ZIGZAG":
+          return calculateZigZag(candle, { deviation: 5, depth: 10 });
+
+        case "SSL_HYBRID":
+          return calculateSSLHybrid(candle, { ssl1Len: 60, ssl2Len: 5, ssl3Len: 15, baseLen: 60, atrLen: 14, atrMult: 1 });
+
+        case "CAMARILLA":
+          return calculateCamarillaPivots(candle, { timeframe: "Daily" });
+
+        case "ALL":
+          {
+            const indicators = [
+              { type: "RSI", name: "rsi" },
+              { type: "SMA", name: "sma" },
+              { type: "EMA", name: "ema" },
+              { type: "MACD", name: "macd" },
+              { type: "VWAP", name: "vwap" },
+              { type: "ATR", name: "atr" },
+              { type: "BB", name: "bb" },
+              { type: "ADX", name: "adx" },
+              { type: "SUPERTREND", name: "supertrend" },
+              { type: "VWMA", name: "vwma" },
+              { type: "AO", name: "ao" },
+              { type: "PSAR", name: "psar" },
+              { type: "STOCHRSI", name: "stochrsi" },
+              { type: "SSL_HYBRID", name: "ssl_hybrid" }
+            ];
+
+            const resultsMap = new Map();
+            // Initialize map with candles
+            candle.forEach(c => resultsMap.set(c.time, { ...c }));
+
+            for (const ind of indicators) {
+              try {
+                const data = await prepareCandlesWithIndicators(ind.type, candle, res);
+                if (Array.isArray(data)) {
+                  data.forEach(item => {
+                    if (item && item.time) {
+                      const existing = resultsMap.get(item.time);
+                      if (existing) {
+                        // Merge all keys except time
+                        Object.keys(item).forEach(key => {
+                          if (key !== "time") existing[key] = item[key];
+                        });
+                      }
+                    }
+                  });
+                }
+              } catch (e) {
+                console.error(`Error calculating ${ind.type} in ALL:`, e.message);
+              }
+            }
+
+            let finalResults = Array.from(resultsMap.values()).sort((a, b) => a.time - b.time);
+
+            const warmupPeriod = 50;
+            if (finalResults.length > warmupPeriod) {
+              finalResults = finalResults.slice(warmupPeriod);
+            }
+
+            // Add human-readable datetime to all records
+            return finalResults.map(r => {
+              const dt = new Date(r.time * 1000);
+              return {
+                ...r,
+                datetime: dt.toLocaleString('en-IN', {
+                  timeZone: 'Asia/Kolkata',
+                  hour12: false,
+                  hour: '2-digit', minute: '2-digit', second: '2-digit',
+                  day: '2-digit', month: '2-digit', year: 'numeric'
+                })
+              };
+            });
+          }
+
+        default:
           return [];
-        })();
+      }
+    })();
 
-        // For single indicators (like RSI, SMA), we still need to add datetime
-        // But since we are returning single indicator functions directly above, 
-        // we should wrap them before returning.
-        return [];
-    }
+        return results;
   } catch (error) {
     console.log(error, "-----------_____________________________________________________")
     return res ? await res.json({ error: error?.message }) : { error: error?.message };
