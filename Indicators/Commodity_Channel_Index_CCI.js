@@ -9,7 +9,7 @@ async function calculateCCI(candles, options) {
     const n = candles.length;
 
     // HLC3: (high + low + close)/3
-    const hlc3 = candles.map(c => (c.high + c.low + c.close) / 3);
+    const hlc3 = candles.map(c => (Number(c.high) + Number(c.low) + Number(c.close)) / 3);
 
     // Helper: simple moving average
     function sma(arr, len, index) {

@@ -44,11 +44,11 @@ async function calculateVWAP(candles, options = {}) {
 
     // Source price
     const price =
-      source === "close" ? close :
-      source === "open" ? open :
-      source === "hl2" ? (high + low) / 2 :
-      source === "ohlc4" ? (open + high + low + close) / 4 :
-      (high + low + close) / 3;
+      source === "close" ? Number(close) :
+      source === "open" ? Number(open) :
+      source === "hl2" ? (Number(high) + Number(low)) / 2 :
+      source === "ohlc4" ? (Number(open) + Number(high) + Number(low) + Number(close)) / 4 :
+      (Number(high) + Number(low) + Number(close)) / 3;
 
     // Hide for daily+ timeframes
     if (hideOnDailyOrAbove && (timeframe.includes("d") || timeframe.includes("w") || timeframe.includes("m"))) {

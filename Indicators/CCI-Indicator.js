@@ -11,7 +11,31 @@ async function calculateCCI(candles, params) {
 
     // ---- Typical Price ----
     if (!Array.isArray(candles)) return [];
-    const tp = candles.map(c => (c.high + c.low + c.close) / 3);
+    
+    function getSourceValue(c, s) {
+        const h = Number(c.high);
+        const l = Number(c.low);
+        const cl = Number(c.close);
+        const o = Number(c.open);
+        
+        switch (s) {
+            case "hl2": return (h + l) / 2;
+            case "hlc3": return (h + l + cl) / 3;
+            case "ohlc4": return (o + h + l + cl) / 4;
+            case "open": return o;
+            case "high": return h;
+            case "low": return l;
+            default: return cl;
+        }
+    }
+
+    const tp = candles.map(c => {
+        // CCI normally uses Typical Price (HLC3), but we can allow source override
+        if (params?.source && params.source !== "hlc3") {
+            return getSourceValue(c, params.source);
+        }
+        return (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+    });
     const cciArr = new Array(candles.length).fill(null);
 
     // ---- Raw CCI Calculation ----

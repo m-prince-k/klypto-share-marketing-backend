@@ -20,11 +20,28 @@ async function vwmaSeries(data, optionsOrPeriod, legacyPriceKey, legacyVolumeKey
       continue;
     }
 
+    function getSourceValue(c, s) {
+      const h = Number(c.high);
+      const l = Number(c.low);
+      const cl = Number(c.close);
+      const o = Number(c.open);
+      
+      switch (s) {
+          case "hl2": return (h + l) / 2;
+          case "hlc3": return (h + l + cl) / 3;
+          case "ohlc4": return (o + h + l + cl) / 4;
+          case "open": return o;
+          case "high": return h;
+          case "low": return l;
+          default: return Number(c[s]) || cl;
+      }
+    }
+
     let sumPV = 0;
     let sumV = 0;
 
     for (let j = i - period + 1; j <= i; j++) {
-      const price = Number(data[j][priceKey]);
+      const price = getSourceValue(data[j], priceKey);
       const volume = Number(data[j][volumeKey]);
 
       sumPV += price * volume;

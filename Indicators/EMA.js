@@ -19,19 +19,19 @@ async function calculateEMAIndicator(candles, options) {
         switch (source) {
 
             case "hl2":
-                return (c.high + c.low) / 2;
+                return (Number(c.high) + Number(c.low)) / 2;
 
             case "hlc3":
-                return (c.high + c.low + c.close) / 3;
+                return (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
 
             case "ohlc4":
-                return (c.open + c.high + c.low + c.close) / 4;
+                return (Number(c.open) + Number(c.high) + Number(c.low) + Number(c.close)) / 4;
 
             case "hlcc4":
-                return (c.high + c.low + c.close + c.close) / 4;
+                return (Number(c.high) + Number(c.low) + Number(c.close) + Number(c.close)) / 4;
 
             default:
-                return c[source]; // close, open, high, low
+                return Number(c[source]); // close, open, high, low
         }
     }
 

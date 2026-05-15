@@ -207,257 +207,9 @@ async function indicatorEngine(candles, config) {
   try {
     //const src = getSource(candles, config.sourceKey || "close"); // ✅ FIX
     let output;
-
     const type = (config.type || "").toUpperCase();
-    switch (type) {
-      case "RSI":
-        output = await calculateRSIIndicator(candles, config);
-        break;
-
-      case "SMA":
-        output = calculateSMA(candles, config);
-        break;
-
-      case "STOCH":
-        return calculateStochastic(candles, config);
-
-      case "EMA":
-        output = calculateEMAIndicator(candles, config);
-        break;
-
-      case "VWMA":
-        output = await vwmaSeries(candles, config);
-        break;
-
-      case "MACD":
-        output = calculateMACD(candles, config);
-        break;
-
-      case "BB":
-        output = calculateBollingerBands(candles, config);
-        break;
-
-      case "BBW":
-        output = calculateBBW(candles, config);
-        break;
-
-      case "VWAP":
-        output = calculateVWAP(candles, config);
-        break;
-
-      case "ATR":
-        output = calculateATR(candles, config);
-        break;
-
-      case "TR":
-      case "TRUERANGE":
-        output = trueRangeSeries(candles, config);
-        break;
-
-      case "RMA":
-        output = rmaSeries(candles, config);
-        break;
-
-      case "TMA":
-        output = tmaSeries(candles, config);
-        break;
-
-      case "ADX":
-        output = calculateADX(candles, config);
-        break;
-
-      case "AROON":
-        output = calculateAroonFromCandles(candles, config);
-        break;
-
-      case "ROC":
-        output = calculatedROC(candles, config);
-        break;
-      case "ICHIMOKU":
-        output = calculateIchimoku(candles, config);
-        break;
-
-      case "CCI":
-        output = calculateCCI(candles, config);
-        break;
-      case "MOM": //correct
-        output = calculateMomentum(candles, config);
-        break;
-
-      case "TEMA":
-        output = calculateTEMA(candles, config);
-        break;
-
-      case "DEMA":
-        output = calculateDEMA(candles, config);
-        break;
-
-      case "WMA":
-        output = calculateWMA(candles, config);
-        break;
-
-      case "HMA":
-        output = calculateHMA(candles, config);
-        break;
-
-      case "KAMA":
-        output = calculateKAMA(candles, config);
-        break;
-
-      case "AWO":
-        output = calculateAwesomeOscillator(candles, config);
-        break;
-
-      case "CMO":
-        output = calculateChandeMO(candles, config);
-        break;
-
-      case "TRIX":
-        output = calculateTRIX(candles, config);
-        break;
-
-      case "FT":
-        output = calculateFisherTransform(candles, config);
-        break;
-
-      case "KO":
-        output = calculateKlingerOscillator(candles, config);
-        break;
-
-      case "STD":
-        output = calculateStdev(candles, config);
-        break;
-
-      case "KC":
-        output = calculateKeltnerChannels(candles, config);
-        break;
-
-      case "DC":
-        output = calculateDonchianChannels(candles, config);
-        break;
-
-      case "HV":
-        output = calculateHistoricalVolatility(candles, config);
-        break;
-
-      case "CHOP":
-        output = calculateCHOP(candles, config);
-        break;
-      case "VOL": //correct
-        output = calculateVolumeIndicator(candles, config);
-        break;
-
-      case "OBV":
-        output = calculateOBV(candles, config);
-        break;
-
-      case "PVO":
-        output = calculatePVO(candles, config);
-        break;
-
-      case "AD":
-        output = calculateAD(candles, config);
-        break;
-
-      case "CMF":
-        output = calculateCMF(candles, config);
-        break;
-
-      case "MFI":
-        output = await calculateMFI(candles, config);
-        break;
-
-      case "EOM":
-        output = calculateEOM(candles, config);
-        break;
-
-      case "NVI":
-        output = calculateNVI(candles, config);
-        break;
-
-      case "PVI":
-        output = calculatePVI(candles, config);
-        break;
-
-      case "VP":
-        output = calculateVolumeProfile(candles, config);
-        break;
-
-      case "SVP":
-        output = calculateSessionVolumeProfile(candles, config);
-        break;
-
-      case "FRVP":
-        output = calculateFixedRangeVolumeProfile(candles, config);
-        break;
-
-      case "AO":
-        output = calculateAroonOscillator(candles, config);
-        break;
-
-      case "SUPERTREND":
-        output = calculateSupertrend(candles, config);
-        break;
-
-      case "CKS":
-        output = calculateChandeKrollStop(candles, config);
-        break;
-
-      case "PSAR":
-        output = calculateParabolicSAR(candles, config);
-        break;
-
-      case "STOCHRSI":
-        output = calculateStochRSI(candles, config);
-        break;
-
-      case "WPR":
-        output = calculateWilliamsR(candles, config);
-        break;
-      case "STDDEV":
-        output = calculateStdev(candles, config);
-        break;
-
-      case "UO": //correct
-        output = calculateUltimateOscillator(candles, config);
-        break;
-
-      case "ZIGZAG":
-        output = calculateZigZag(candles, config);
-        break;
-
-      case "CAM":
-        output = calculateCamarillaPivots(candles, config);
-        break;
-
-      case "SSL_HYBRID":
-        output = await calculateSSLHybrid(candles, config);
-        break;
-
-      case "PIVOT_CLASSIC":
-        output = await calculateClassicPivots(candles, config);
-        break;
-
-      case "PIVOT_FIB":
-        output = await calculateFibonacciPivots(candles, config);
-        break;
-
-      case "PIVOT_WOODIE":
-        output = await calculateWoodiePivots(candles, config);
-        break;
-
-      case "PIVOT_STANDARD":
-        output = await calculatePivotPoints(candles, config);
-        break;
-
-      case "VRP":
-        output = await calculateVisibleRangeVolumeProfile(candles, config);
-        break;
-
-      default:
-        output = { message: "Indicator not supported" };
-    }
-
+    output = await prepareCandlesWithIndicators(type, candles, null, config);
+    
     if (config.smoothing) {
       // console.log(await config.smoothing, "----------------------------89898");
 
@@ -477,11 +229,11 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
       const normalizedType = (type || "").toUpperCase();
       switch (normalizedType) {
         case "SMA":
-          return await calculateSMA(candle, config.length || 9, { ...config, maType: config.maType || "none", maLength: config.maLength || 14, smaLength: config.length || 9, bbMult: config.bbMult || 2, offset: config.offset || 0, source: config.source || "close" });
+          return await calculateSMA(candle, { length: config.length || 9, ...config });
         case "STOCH":
-          return await calculateStochastic(candle, { kLength: config.kLength || 14, kSmoothing: config.kSmoothing || 1, dSmoothing: config.dSmoothing || 3 });
+          return await calculateStochastic(candle, { kLength: config.kLength || 14, kSmoothing: config.kSmoothing || 1, dSmoothing: config.dSmoothing || 3, ...config });
         case "EMA":
-          return await calculateEMAIndicator(candle, { length: config.length || 9, maType: config.maType || "none", maLength: config.maLength || 14, bbMult: config.bbMult || 2, source: config.source || "close", offset: config.offset || 0 });
+          return await calculateEMAIndicator(candle, { length: config.length || 9, ...config });
 
         case "VWMA":
           return await vwmaSeries(candle, { period: 20, priceKey: "close", volumeKey: "volume" });
@@ -494,15 +246,16 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
 
         case "VWAP":
           return await calculateVWAP(candle, {
-            anchorPeriod: config.anchorPeriod || "Daily",
+            anchorPeriod: config.anchorPeriod || "Session",
             hideOnDailyOrAbove: config.hideOnDailyOrAbove !== undefined ? config.hideOnDailyOrAbove : true,
             calculateMode: config.calculateMode || "CUMULATIVE",
             band1: config.band1 || 1,
             band2: config.band2 || 2,
             band3: config.band3 || 3,
-            source: config.source || "close",
+            source: config.source || "hlc3",
             offset: config.offset || 0,
-            bandMode: config.bandMode || "STD"
+            bandMode: config.bandMode || "STD",
+            ...config
           });
 
         case "ATR":
@@ -519,7 +272,7 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
           return await tmaSeries(candle, { period: 20, source: "close" });
 
         case "BB": // Bollinger Bands
-          return await calculateBollingerBands(candle, { length: config.length || 20, maType: config.maType || "SMA", stdDev: config.stdDev || 2, source: config.source || "close", offset: config.offset || 0 });
+          return await calculateBollingerBands(candle, { length: config.length || 20, maType: config.maType || "SMA", stdDev: config.stdDev || 2, source: config.source || "close", offset: config.offset || 0, ...config });
 
         case "BBW": //correct
           return await calculateBBW(candle, { length: config.length || 20, source: config.source || "close", bbMult: config.bbMult || 2, expansionLength: config.expansionLength || 125, contractionLength: config.contractionLength || 125 });
@@ -541,45 +294,45 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
         case "AO":
           return await calculateAroonOscillator(candle, { length: config.length || 14 });
         case "CCI":
-          return await calculateCCI(candle, config.length || 20);
+          return await calculateCCI(candle, { length: config.length || 20, ...config });
         case "VP":
-          return await calculateVolumeProfile(candle, { lookback: config.lookback || 200, rows: config.rows || 20, valueArea: config.valueArea || 0.7, source: config.source || "hlc3" });
+          return await calculateVolumeProfile(candle, { lookback: config.lookback || 200, rows: config.rows || 20, valueArea: config.valueArea || 0.7, source: config.source || "hlc3", ...config });
 
         case "MOM":
-          return await calculateMomentum(candle, { length: config.length || 10, source: config.source || "close" });
+          return await calculateMomentum(candle, { length: config.length || 10, source: config.source || "close", ...config });
 
         case "TEMA":
-          return await calculateTEMA(candle, { length: 9 });
+          return await calculateTEMA(candle, { length: 9, ...config });
 
         case "DEMA":
-          return await calculateDEMA(candle, { length: 9, source: "close" });
+          return await calculateDEMA(candle, { length: 9, source: "close", ...config });
 
         case "WMA":
-          return await calculateWMA(candle, { length: 9, source: "close", offset: 0 });
+          return await calculateWMA(candle, { length: 9, source: "close", offset: 0, ...config });
 
         case "HMA":
-          return await calculateHMA(candle, { length: 9, source: "close" });
+          return await calculateHMA(candle, { length: 9, source: "close", ...config });
 
         case "KAMA":
-          return await calculateKAMA(candle, { source: "close", erLength: 2, fastLength: 10, slowLength: 30 });
+          return await calculateKAMA(candle, { source: "close", erLength: 2, fastLength: 10, slowLength: 30, ...config });
 
         case "AWO":
-          return await calculateAwesomeOscillator(candle);
+          return await calculateAwesomeOscillator(candle, config);
 
         case "CMO":
-          return await calculateChandeMO(candle, { length: 9, source: "close" });
+          return await calculateChandeMO(candle, { length: 9, source: "close", ...config });
 
         case "TRIX":
-          return await calculateTRIX(candle, { length: 18, source: "close" });
+          return await calculateTRIX(candle, { length: 18, source: "close", ...config });
 
         case "FT":
-          return await calculateFisherTransform(candle, 9);
+          return await calculateFisherTransform(candle, config.length || 9);
 
         case "KVO":
-          return await calculateKlingerOscillator(candle, { fastLength: 34, slowLength: 55, signalLength: 13 });
+          return await calculateKlingerOscillator(candle, { fastLength: 34, slowLength: 55, signalLength: 13, ...config });
 
         case "STDDEV":
-          return await calculateStdev(candle, { length: 20, source: "close" });
+          return await calculateStdev(candle, { length: 20, source: "close", ...config });
 
         case "KC":
           return await calculateKeltnerChannels(candle, {
@@ -588,7 +341,8 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
             multiplier: 2,
             useExpMA: true,
             bandsStyle: "Average True Range",
-            atrLength: 10
+            atrLength: 10,
+            ...config
           });
 
         case "DC":
