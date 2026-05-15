@@ -11,14 +11,14 @@ function calculateVolumeIndicator(candles, options) {
         });
     }
 
-    const volumes = candles.map(c => c.volume);
+    const volumes = candles.map(c => Number(c.volume || 0));
     const volumeMA = sma(volumes, maLength);
 
     const result = [];
 
     for (let i = 0; i < candles.length; i++) {
 
-        const currentVolume = candles[i].volume;
+        const currentVolume = Number(candles[i].volume || 0);
 
         // Color logic (like TradingView)
         let color = null;

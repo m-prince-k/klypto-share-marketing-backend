@@ -262,212 +262,249 @@ const getFuturesSymbols = async (req, res) => {
 };
 
 
-//indicator details --- IGNORE ---
+// --- Clean Indicator Functions ---
 const indicatorDetails = async (req, res) => {
-
     try {
-        const { type, symbol, interval, period, fromdate, todate, fromDate, toDate, exchange } = req.query;
+        const { type, symbol, interval, fromdate, todate, fromDate, toDate, exchange } = req.query;
+        if (!symbol) return res.status(400).json({ success: false, message: "Symbol is required" });
 
         const intervalMap = {
-            "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
-            "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
-            "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
-            "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
-            "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
-            "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
-            "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
-            "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+            "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "3": "THREE_MINUTE", "5": "FIVE_MINUTE",
+            "15": "FIFTEEN_MINUTE", "30": "THIRTY_MINUTE", "60": "ONE_HOUR", "day": "ONE_DAY"
         };
         const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
-
-        // Normalize parameter names
         const finalFromDate = fromdate || fromDate;
         const finalToDate = todate || toDate;
 
         const { formatDate, getCandlesWithCache } = require('../services/dbService');
 
-        // Format dates if they are just YYYY-MM-DD
         let formattedFromDate = finalFromDate;
         let formattedToDate = finalToDate;
-
         if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-            formattedFromDate = formatDate(new Date(finalFromDate), isCommodity ? "09:00" : "09:15", finalInterval);
+            formattedFromDate = formatDate(new Date(finalFromDate), "09:15", finalInterval);
         }
         if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-            formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
+            formattedToDate = formatDate(new Date(finalToDate), "15:30", finalInterval);
         }
 
-        const uSym = symbol.toUpperCase();
-        const isCommodity = uSym === "GOLD" || uSym === "SILVER";
-
-        const topStocksMap = {
-            "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
-            "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
-            "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-            "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
-            "GOLD": "234454", "SILVER": "234455"
+        const manualMap = {
+            "ABB": "ABB", "ABBPOW": "ABBINDIA", "ADAENT": "ADANIENT", "ADAGRE": "ADANIGREEN", "ADAPOR": "ADANIPORTS",
+            "ADATRA": "ADANIENSOL", "ADICAP": "ABCAPITAL", "ALKLAB": "ALKEM", "AMBCE": "AMBUJACEM", "AMBEN": "AMBER",
+            "ANGBRO": "ANGELONE", "APLAPO": "APOLLOTYRE", "APOHOS": "APOLLOHOSP", "ASHLEY": "ASHOKLEY",
+            "ASIPAI": "ASIANPAINT", "ASTPOL": "ASTRAL", "AURPHA": "AUROPHARMA", "AXIBAN": "AXISBANK",
+            "BAAUTO": "BAJAJ-AUTO", "BAFINS": "BAJAJFINSV", "BAJFI": "BAJFINANCE", "BAJHOL": "BAJAJHLDNG",
+            "BANBAN": "BANDHANBNK", "BANBAR": "BANKBARODA", "BANIND": "BANKINDIA", "BHAAIR": "BHARTIARTL",
+            "BHADYN": "BDL", "BHAELE": "BEL", "BHAFOR": "BHARATFORG", "BHAINF": "INDUSTOWER",
+            "BHAPET": "BPCL", "BHEL": "BHEL", "BIOCON": "BIOCON", "BLUSTA": "BLUESTARCO",
+            "BOSLIM": "BOSCHLTD", "BRIIND": "BRITANNIA", "BSE": "BSE", "CADHEA": "ZYDUSLIFE",
+            "CANBAN": "CANBK", "CDSL": "CDSL", "CHOINV": "CHOLAFIN", "CIPLA": "CIPLA",
+            "COALIN": "COALINDIA", "COLPAL": "COLPAL", "CONCOR": "CONCOR", "CROGRE": "CGPOWER",
+            "CUMIND": "CUMMINSIND", "DABIND": "DABUR", "DELLIM": "DELHIVERY", "DIVLAB": "DIVISLAB",
+            "DIXTEC": "DIXON", "DLFLIM": "DLF", "DRREDD": "DRREDDY", "EICMOT": "EICHERMOT",
+            "EXIIND": "EXIDEIND", "FEDBAN": "FEDERALBNK", "FORHEA": "FORTIS", "FSNECO": "NYKAA",
+            "GAIL": "GAIL", "GLEPHA": "GLENMARK", "GMRINF": "GMRINFRA", "GODCON": "GODREJCP",
+            "GODPRO": "GODREJPROP", "GRASIM": "GRASIM", "HAVIND": "HAVELLS", "HCLTEC": "HCLTECH",
+            "HDFAMC": "HDFCAMC", "HDFBAN": "HDFCBANK", "HDFSTA": "HDFCLIFE", "HERHON": "HEROMOTOCO",
+            "HINAER": "HAL", "HINDAL": "HINDALCO", "HINLEV": "HINDUNILVR", "HINPET": "HINDPETRO",
+            "HINZIN": "HINDZINC", "HUDCO": "HUDCO", "ICIBAN": "ICICIBANK", "ICILOM": "ICICIGI",
+            "ICIPRU": "ICICIPRULI", "IDECEL": "IDEA", "IDFBAN": "IDFCFIRSTB", "IIFWEA": "360ONE",
+            "INDEN": "INDIGO", "INDHO": "INDIANHOSP", "INDHOT": "INDHOTEL", "INDIBA": "INDIABULLS",
+            "INDOIL": "IOC", "INDREN": "IREDA", "INFEDG": "NAUKRI", "INFTEC": "INFY",
+            "INOWIN": "INOXWIND", "INTAVI": "INDIGO", "ITC": "ITC", "JINSP": "JSL",
+            "JIOFIN": "JIOFIN", "JSWENE": "JSWENERGY", "JSWSTE": "JSWSTEEL", "JUBFOO": "JUBILANT",
+            "KALJEW": "KALYANKJIL", "KAYTEC": "KAYNES", "KEIIND": "KEI", "KFITEC": "KFINTECH",
+            "KOTMAH": "KOTAKBANK", "KPITE": "KPITTECH", "LARTOU": "LT", "LAULAB": "LAURUSLABS",
+            "LIC": "LICI", "LICHF": "LICHSGFIN", "LTFINA": "L&TFH", "LTINFO": "LTIM",
+            "LUPIN": "LUPIN", "MACDEV": "LODHA", "MAHMAH": "M&M", "MANAFI": "MANAPPURAM",
+            "MAPHA": "MAPMYINDIA", "MARLIM": "MARICO", "MARUTI": "MARUTI", "MAXFIN": "MFSL",
+            "MAXHEA": "MAXHEALTH", "MAZDOC": "MAZDOCK", "MCX": "MCX", "MININD": "COALINDIA",
+            "MOTSUM": "MOTHERSON", "MPHLIM": "MPHASIS", "MUTFIN": "MUTHOOTFIN", "NATALU": "NATIONALUM",
+            "NATMIN": "NMDC", "NBCC": "NBCC", "NESIND": "NESTLEIND", "NHPC": "NHPC",
+            "NIFFIN": "NIFTY FINANCIAL SERVICES", "NIITEC": "COFORGE", "NTPC": "NTPC",
+            "NUVWEA": "NUVAMA", "OBEREA": "OBEROIRLTY", "ODICEM": "ULTRACEMCO", "OILIND": "OIL",
+            "ONE97": "PAYTM", "ONGC": "ONGC", "ORAFIN": "OFSS", "PAGIND": "PAGEIND",
+            "PBFINT": "PBフィンテック", "PERSYS": "PERSISTENT", "PETLNG": "PETRONET", "PGELEC": "POWERGRID",
+            "PHOMIL": "PHOENIXLTD", "PIDIND": "PIDILITIND", "PIIND": "PIIND", "PIRPHA": "PIRPHARMA",
+            "PNBHOU": "PNBHOUSING", "POLI": "POLYCAB", "POWFIN": "PFC", "POWGRI": "POWERGRID",
+            "PREENR": "PRESTIGE", "PREEST": "PRESTIGE", "PUNBAN": "PNB", "RAIVIK": "RVNL",
+            "RBLBAN": "RBLBANK", "RELIND": "RELIANCE", "RUCSOY": "PATANJALI", "RURELE": "REC",
+            "SAIL": "SAIL", "SBICAR": "SBICARD", "SBILIF": "SBILIFE", "SHRCEM": "SHREECEM",
+            "SHRTRA": "SHRIRAMFIN", "SIEMEN": "SIEMENS", "SOLIN": "SOLARINDS", "SONBLW": "SONACOMS",
+            "SRF": "SRF", "STABAN": "SBIN", "SUNPHA": "SUNPHARMA", "SUPIND": "SUPREMEIND",
+            "SUZENE": "SUZLON", "SWILIM": "SWANENERGY", "SYNINT": "SYNGENE", "TATELX": "TATAELXSI",
+            "TATGLO": "TATACONSUM", "TATMOT": "TATAMOTORS", "TATPOW": "TATAPOWER", "TATSTE": "TATASTEEL",
+            "TATTEC": "TATATECH", "TCS": "TCS", "TECMAH": "TECHM", "TITIND": "TITAN",
+            "TORPHA": "TORNTPHARM", "TORNTPOWER": "TORNTPOWER", "TRENT": "TRENT", "TUBIN": "TIINDIA",
+            "TVSMOT": "TVSMOTOR", "ULTCEM": "ULTRACEMCO", "UNIBAN": "UNIONBANK", "UNIP": "UNIPARTS",
+            "UNISPI": "UNITDSPR", "VARBEV": "VBL", "VEDLIM": "VEDL", "VOLTAS": "VOLTAS",
+            "WAAENE": "WAREEENER", "WIPRO": "WIPRO", "YESBAN": "YESBANK", "ZOMLIM": "ZOMATO"
         };
 
-        const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
-        const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
+        const uSym = symbol.toUpperCase().trim();
+        const mappedSymbol = manualMap[uSym] || uSym;
+        const mappedExchange = (exchange || "NSE").toUpperCase();
 
-        let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
-        if (!finalToken) throw new Error(`Token not found for ${symbol}`);
+        let finalToken = store.symbolToTokenMaster[mappedSymbol];
+        if (!finalToken) throw new Error(`Token not found for ${symbol} (Mapped: ${mappedSymbol})`);
 
-        // --- AUTOMATIC LOOKBACK FOR WARMUP ---
         let dynamicFrom = formattedFromDate;
         if (formattedFromDate) {
             const warmupDate = new Date(formattedFromDate);
             if (finalInterval.includes("MINUTE")) warmupDate.setDate(warmupDate.getDate() - 7);
             else if (finalInterval === "ONE_DAY") warmupDate.setDate(warmupDate.getDate() - 100);
             else warmupDate.setDate(warmupDate.getDate() - 30);
-            dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
+            dynamicFrom = formatDate(warmupDate, "09:15", finalInterval);
         }
 
-        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate);
+        const result = await getCandlesWithCache(mappedSymbol, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate);
         const candles = result.data;
 
-        const { withDateTime } = require('../helper');
-        let values = await prepareCandlesWithIndicators(type, candles, res);
-        const finalData = withDateTime(values);
+        const typeToUse = (type || req.body?.type || "RSI").toUpperCase();
+        const payload = {
+            ...req.body,
+            type: typeToUse,
+            source: req.body?.source || "close",
+            length: Number(req.body?.length || 14)
+        };
 
-        // Filter out warmup data
-        const filteredData = finalData.filter(r => {
+        const indicatorResult = await indicatorEngine(candles, payload);
+
+        const finalResult = indicatorResult.filter(r => {
             if (!formattedFromDate) return true;
             const ts = r.time * 1000;
             const startTs = new Date(formattedFromDate).getTime();
             return ts >= startTs;
         });
 
-        return await res.json({ message: `Indicator fetched by ${type}`, statusCode: 200, data: filteredData });
+        return res.json({ statusCode: 200, message: `Indicator details fetched by ${typeToUse}`, data: finalResult });
 
     } catch (error) {
         console.error("[IndicatorDetails] Error:", error.message);
         res.status(500).json({ success: false, error: error.message });
     }
-}
+};
 
 const updateIndicator = async (req, res) => {
-
     try {
-
-        if (!req.body) {
-            return res.status(400).json({ success: false, message: "Request body is missing" });
-        }
+        if (!req.body) return res.status(400).json({ success: false, message: "Request body missing" });
 
         const { symbol, interval, fromdate, todate, fromDate, toDate, exchange } = req.query;
-        if (!symbol) {
-            return res.status(400).json({ success: false, message: "Symbol is required in query parameters" });
-        }
+        if (!symbol) return res.status(400).json({ success: false, message: "Symbol required" });
 
-        const uSym = symbol.toUpperCase().trim();
-        const isCommodity = uSym === "GOLD" || uSym === "SILVER";
-
+        const { formatDate, getCandlesWithCache } = require('../services/dbService');
         const intervalMap = {
-            "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
-            "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",
-            "5": "FIVE_MINUTE", "5m": "FIVE_MINUTE", "five_minute": "FIVE_MINUTE",
-            "10": "TEN_MINUTE", "10m": "TEN_MINUTE", "ten_minute": "TEN_MINUTE",
-            "15": "FIFTEEN_MINUTE", "15m": "FIFTEEN_MINUTE", "fifteen_minute": "FIFTEEN_MINUTE",
-            "30": "THIRTY_MINUTE", "30m": "THIRTY_MINUTE", "thirty_minute": "THIRTY_MINUTE",
-            "60": "ONE_HOUR", "1h": "ONE_HOUR", "one_hour": "ONE_HOUR",
-            "day": "ONE_DAY", "1d": "ONE_DAY", "d": "ONE_DAY", "one_day": "ONE_DAY"
+            "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "3": "THREE_MINUTE", "5": "FIVE_MINUTE",
+            "15": "FIFTEEN_MINUTE", "30": "THIRTY_MINUTE", "60": "ONE_HOUR", "day": "ONE_DAY"
         };
         const finalInterval = intervalMap[String(interval).toLowerCase()] || interval || "ONE_MINUTE";
-
-        // Normalize parameter names
         const finalFromDate = fromdate || fromDate;
         const finalToDate = todate || toDate;
 
-        const { formatDate, getCandlesWithCache } = require('../services/dbService');
-
-        // Format dates if they are just YYYY-MM-DD
         let formattedFromDate = finalFromDate;
         let formattedToDate = finalToDate;
-
         if (typeof finalFromDate === 'string' && finalFromDate.length === 10) {
-            formattedFromDate = formatDate(new Date(finalFromDate), isCommodity ? "09:00" : "09:15", finalInterval);
+            formattedFromDate = formatDate(new Date(finalFromDate), "09:15", finalInterval);
         }
         if (typeof finalToDate === 'string' && finalToDate.length === 10) {
-            formattedToDate = formatDate(new Date(finalToDate), isCommodity ? "23:55" : "15:30", finalInterval);
+            formattedToDate = formatDate(new Date(finalToDate), "15:30", finalInterval);
         }
 
-        const topStocksMap = {
-            "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
-            "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
-            "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-            "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
-            "GOLD": "234454", "SILVER": "234455"
+        const manualMap = {
+            "ABB": "ABB", "ABBPOW": "ABBINDIA", "ADAENT": "ADANIENT", "ADAGRE": "ADANIGREEN", "ADAPOR": "ADANIPORTS",
+            "ADATRA": "ADANIENSOL", "ADICAP": "ABCAPITAL", "ALKLAB": "ALKEM", "AMBCE": "AMBUJACEM", "AMBEN": "AMBER",
+            "ANGBRO": "ANGELONE", "APLAPO": "APOLLOTYRE", "APOHOS": "APOLLOHOSP", "ASHLEY": "ASHOKLEY",
+            "ASIPAI": "ASIANPAINT", "ASTPOL": "ASTRAL", "AURPHA": "AUROPHARMA", "AXIBAN": "AXISBANK",
+            "BAAUTO": "BAJAJ-AUTO", "BAFINS": "BAJAJFINSV", "BAJFI": "BAJFINANCE", "BAJHOL": "BAJAJHLDNG",
+            "BANBAN": "BANDHANBNK", "BANBAR": "BANKBARODA", "BANIND": "BANKINDIA", "BHAAIR": "BHARTIARTL",
+            "BHADYN": "BDL", "BHAELE": "BEL", "BHAFOR": "BHARATFORG", "BHAINF": "INDUSTOWER",
+            "BHAPET": "BPCL", "BHEL": "BHEL", "BIOCON": "BIOCON", "BLUSTA": "BLUESTARCO",
+            "BOSLIM": "BOSCHLTD", "BRIIND": "BRITANNIA", "BSE": "BSE", "CADHEA": "ZYDUSLIFE",
+            "CANBAN": "CANBK", "CDSL": "CDSL", "CHOINV": "CHOLAFIN", "CIPLA": "CIPLA",
+            "COALIN": "COALINDIA", "COLPAL": "COLPAL", "CONCOR": "CONCOR", "CROGRE": "CGPOWER",
+            "CUMIND": "CUMMINSIND", "DABIND": "DABUR", "DELLIM": "DELHIVERY", "DIVLAB": "DIVISLAB",
+            "DIXTEC": "DIXON", "DLFLIM": "DLF", "DRREDD": "DRREDDY", "EICMOT": "EICHERMOT",
+            "EXIIND": "EXIDEIND", "FEDBAN": "FEDERALBNK", "FORHEA": "FORTIS", "FSNECO": "NYKAA",
+            "GAIL": "GAIL", "GLEPHA": "GLENMARK", "GMRINF": "GMRINFRA", "GODCON": "GODREJCP",
+            "GODPRO": "GODREJPROP", "GRASIM": "GRASIM", "HAVIND": "HAVELLS", "HCLTEC": "HCLTECH",
+            "HDFAMC": "HDFCAMC", "HDFBAN": "HDFCBANK", "HDFSTA": "HDFCLIFE", "HERHON": "HEROMOTOCO",
+            "HINAER": "HAL", "HINDAL": "HINDALCO", "HINLEV": "HINDUNILVR", "HINPET": "HINDPETRO",
+            "HINZIN": "HINDZINC", "HUDCO": "HUDCO", "ICIBAN": "ICICIBANK", "ICILOM": "ICICIGI",
+            "ICIPRU": "ICICIPRULI", "IDECEL": "IDEA", "IDFBAN": "IDFCFIRSTB", "IIFWEA": "360ONE",
+            "INDEN": "INDIGO", "INDHO": "INDIANHOSP", "INDHOT": "INDHOTEL", "INDIBA": "INDIABULLS",
+            "INDOIL": "IOC", "INDREN": "IREDA", "INFEDG": "NAUKRI", "INFTEC": "INFY",
+            "INOWIN": "INOXWIND", "INTAVI": "INDIGO", "ITC": "ITC", "JINSP": "JSL",
+            "JIOFIN": "JIOFIN", "JSWENE": "JSWENERGY", "JSWSTE": "JSWSTEEL", "JUBFOO": "JUBILANT",
+            "KALJEW": "KALYANKJIL", "KAYTEC": "KAYNES", "KEIIND": "KEI", "KFITEC": "KFINTECH",
+            "KOTMAH": "KOTAKBANK", "KPITE": "KPITTECH", "LARTOU": "LT", "LAULAB": "LAURUSLABS",
+            "LIC": "LICI", "LICHF": "LICHSGFIN", "LTFINA": "L&TFH", "LTINFO": "LTIM",
+            "LUPIN": "LUPIN", "MACDEV": "LODHA", "MAHMAH": "M&M", "MANAFI": "MANAPPURAM",
+            "MAPHA": "MAPMYINDIA", "MARLIM": "MARICO", "MARUTI": "MARUTI", "MAXFIN": "MFSL",
+            "MAXHEA": "MAXHEALTH", "MAZDOC": "MAZDOCK", "MCX": "MCX", "MININD": "COALINDIA",
+            "MOTSUM": "MOTHERSON", "MPHLIM": "MPHASIS", "MUTFIN": "MUTHOOTFIN", "NATALU": "NATIONALUM",
+            "NATMIN": "NMDC", "NBCC": "NBCC", "NESIND": "NESTLEIND", "NHPC": "NHPC",
+            "NIFFIN": "NIFTY FINANCIAL SERVICES", "NIITEC": "COFORGE", "NTPC": "NTPC",
+            "NUVWEA": "NUVAMA", "OBEREA": "OBEROIRLTY", "ODICEM": "ULTRACEMCO", "OILIND": "OIL",
+            "ONE97": "PAYTM", "ONGC": "ONGC", "ORAFIN": "OFSS", "PAGIND": "PAGEIND",
+            "PBFINT": "PBフィンテック", "PERSYS": "PERSISTENT", "PETLNG": "PETRONET", "PGELEC": "POWERGRID",
+            "PHOMIL": "PHOENIXLTD", "PIDIND": "PIDILITIND", "PIIND": "PIIND", "PIRPHA": "PIRPHARMA",
+            "PNBHOU": "PNBHOUSING", "POLI": "POLYCAB", "POWFIN": "PFC", "POWGRI": "POWERGRID",
+            "PREENR": "PRESTIGE", "PREEST": "PRESTIGE", "PUNBAN": "PNB", "RAIVIK": "RVNL",
+            "RBLBAN": "RBLBANK", "RELIND": "RELIANCE", "RUCSOY": "PATANJALI", "RURELE": "REC",
+            "SAIL": "SAIL", "SBICAR": "SBICARD", "SBILIF": "SBILIFE", "SHRCEM": "SHREECEM",
+            "SHRTRA": "SHRIRAMFIN", "SIEMEN": "SIEMENS", "SOLIN": "SOLARINDS", "SONBLW": "SONACOMS",
+            "SRF": "SRF", "STABAN": "SBIN", "SUNPHA": "SUNPHARMA", "SUPIND": "SUPREMEIND",
+            "SUZENE": "SUZLON", "SWILIM": "SWANENERGY", "SYNINT": "SYNGENE", "TATELX": "TATAELXSI",
+            "TATGLO": "TATACONSUM", "TATMOT": "TATAMOTORS", "TATPOW": "TATAPOWER", "TATSTE": "TATASTEEL",
+            "TATTEC": "TATATECH", "TCS": "TCS", "TECMAH": "TECHM", "TITIND": "TITAN",
+            "TORPHA": "TORNTPHARM", "TORNTPOWER": "TORNTPOWER", "TRENT": "TRENT", "TUBIN": "TIINDIA",
+            "TVSMOT": "TVSMOTOR", "ULTCEM": "ULTRACEMCO", "UNIBAN": "UNIONBANK", "UNIP": "UNIPARTS",
+            "UNISPI": "UNITDSPR", "VARBEV": "VBL", "VEDLIM": "VEDL", "VOLTAS": "VOLTAS",
+            "WAAENE": "WAREEENER", "WIPRO": "WIPRO", "YESBAN": "YESBANK", "ZOMLIM": "ZOMATO"
         };
 
-        const finalExchange = (exchange || (isCommodity ? "MCX" : "NSE")).toUpperCase();
-        const mappedExchange = (finalExchange === "NSE" || finalExchange === "NFO") ? "NSE" : (finalExchange === "BSE" || finalExchange === "BFO" ? "BSE" : finalExchange);
+        const uSym = symbol.toUpperCase().trim();
+        const mappedSymbol = manualMap[uSym] || uSym;
+        const mappedExchange = (exchange || "NSE").toUpperCase();
 
-        let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
-        if (!finalToken) throw new Error(`Token not found for ${symbol}`);
+        let finalToken = store.symbolToTokenMaster[mappedSymbol];
+        if (!finalToken) throw new Error(`Token not found for ${symbol} (Mapped: ${mappedSymbol})`);
 
-        // --- AUTOMATIC LOOKBACK FOR WARMUP (Accurate values like TradingView/AngelOne) ---
         let dynamicFrom = formattedFromDate;
         if (formattedFromDate) {
             const warmupDate = new Date(formattedFromDate);
-            if (finalInterval.includes("MINUTE")) {
-                warmupDate.setDate(warmupDate.getDate() - 7);
-            } else if (finalInterval === "ONE_DAY") {
-                warmupDate.setDate(warmupDate.getDate() - 100);
-            } else {
-                warmupDate.setDate(warmupDate.getDate() - 30);
-            }
-            dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
+            if (finalInterval.includes("MINUTE")) warmupDate.setDate(warmupDate.getDate() - 7);
+            else if (finalInterval === "ONE_DAY") warmupDate.setDate(warmupDate.getDate() - 100);
+            else warmupDate.setDate(warmupDate.getDate() - 30);
+            dynamicFrom = formatDate(warmupDate, "09:15", finalInterval);
         }
 
-        const candleResult = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate);
+        const candleResult = await getCandlesWithCache(mappedSymbol, finalToken, mappedExchange, finalInterval, dynamicFrom, formattedToDate);
         const candles = candleResult.data;
 
-        const body = req.body || {};
-        const type = (body.type || "RSI").toUpperCase();
-
-        // ✅ DYNAMIC PAYLOAD: Pass everything from body to the engine
-        // This automatically handles 'fastLength', 'mult', 'source', etc. without hardcoding every case
-        let payload = {
-            ...body,
+        const type = (req.body.type || "RSI").toUpperCase();
+        const payload = {
+            ...req.body,
             type,
-            source: body.source || "close",
-            length: Number(body.length || 14),
-            maLength: Number(body.maLength || 14),
-            bbStdDev: Number(body.bbStdDev || 2)
+            source: req.body.source || "close",
+            length: Number(req.body.length || 14)
         };
 
-        // Specific overrides for standard defaults if not provided by frontend
-        if (type === "VWAP") {
-            payload.anchorPeriod = body.anchorPeriod || "Session";
-            payload.source = body.source || "hlc3";
-        }
-        if (type === "CCI") {
-            payload.length = Number(body.length || 20);
-        }
+        const indicatorResult = await indicatorEngine(candles, payload);
 
-        const result = await indicatorEngine(candles, payload);
-
-        // Filter out warmup data - only return what user requested
-        const finalResult = result.filter(r => {
+        const finalResult = indicatorResult.filter(r => {
             if (!formattedFromDate) return true;
             const ts = r.time * 1000;
             const startTs = new Date(formattedFromDate).getTime();
             return ts >= startTs;
         });
 
-        return await res.json({
-            message: `Indicator has been updated by ${req.body.type}`,
-            statusCode: 200,
-            data: finalResult
-        });
+        return res.json({ statusCode: 200, message: `Indicator updated by ${type}`, data: finalResult });
+
     } catch (error) {
         console.error("Indicator calculation error:", error);
-        return res.status(500).json({ success: false, error: `Calculation failed for ${req.body.type} on ${req.body.symbol}` });
+        return res.status(500).json({ success: false, error: error.message });
     }
-}
-
-
+};
 
 const getTimeFrames = async (req, res) => {
     try {

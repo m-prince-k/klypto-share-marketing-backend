@@ -50,7 +50,7 @@ function formatTickData(data) {
 
 
     const ltp = parseFloat(formatted.last_traded_price || 0);
-    const volume = parseInt(formatted.v || 0);
+    const volume = parseInt(data.v || formatted.v || 0);
     const ts = parseInt(data.exchange_timestamp || 0);
     const ms = ts > 10000000000 ? ts : ts * 1000;
     const currentMinute = Math.floor(ms / 60000) * 60000;

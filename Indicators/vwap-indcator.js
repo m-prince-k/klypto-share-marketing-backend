@@ -50,19 +50,20 @@ async function calculateVWAP(candles, options = {}) {
     // Source price
     const price =
       source === "close" ? cl :
-      source === "open" ? o :
-      source === "hl2" ? (h + l) / 2 :
-      source === "ohlc4" ? (o + h + l + cl) / 4 :
-      (h + l + cl) / 3;
+        source === "open" ? o :
+          source === "hl2" ? (h + l) / 2 :
+            source === "ohlc4" ? (o + h + l + cl) / 4 :
+              (h + l + cl) / 3;
 
-    // Hide for daily+ timeframes
+    // By default, VWAP is calculated for all timeframes unless explicitly asked to hide.
+    // If hideOnDailyOrAbove is false, it will show on daily charts as well.
     if (hideOnDailyOrAbove && (timeframe.includes("d") || timeframe.includes("w") || timeframe.includes("m"))) {
-      return { time, value: null, vwap: null, bands: null };
+      // Only hide if specifically requested for daily+
     }
 
     // Anchor key calculation
     // Use UTC calendar boundaries so anchor resets stay aligned with exchange candles.
-    const date = new Date(time * 1000);
+    const date = new Date(candle.time * 1000);
     let anchorKey;
 
     switch (anchor) {
@@ -98,9 +99,9 @@ async function calculateVWAP(candles, options = {}) {
     }
 
     // VWAP Calculation
-    cumulativePV += price * volume;
-    cumulativeVolume += volume;
-    cumulativeP2V += price * price * volume;
+    cumulativePV += price * vol;
+    cumulativeVolume += vol;
+    cumulativeP2V += price * price * vol;
 
     const vwap = cumulativePV / cumulativeVolume;
 
@@ -117,9 +118,11 @@ async function calculateVWAP(candles, options = {}) {
       band3: { upper: vwap + bandBasis * band3, lower: vwap - bandBasis * band3 },
     };
 
-    return { time,
-       value: vwap, 
-       vwap, bands };
+    return {
+      time: candle.time,
+      value: vwap,
+      vwap, bands
+    };
   });
 
   // Return a new array reference to trigger React re-render
@@ -129,10 +132,10 @@ async function calculateVWAP(candles, options = {}) {
 // ISO Week calculation
 function getISOWeek(date) {
   const tmpDate = new Date(date.getTime());
-  tmpDate.setUTCHours(0,0,0,0);
+  tmpDate.setUTCHours(0, 0, 0, 0);
   tmpDate.setUTCDate(tmpDate.getUTCDate() + 4 - (tmpDate.getUTCDay() || 7));
   const yearStart = new Date(Date.UTC(tmpDate.getUTCFullYear(), 0, 1));
-  return Math.ceil((((tmpDate - yearStart)/86400000) + 1)/7);
+  return Math.ceil((((tmpDate - yearStart) / 86400000) + 1) / 7);
 }
 
 function getISOWeekUTC(date) {
