@@ -63,7 +63,9 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             const lastCandle = dbCandles[dbCandles.length - 1];
             const lastTs = new Date(lastCandle.timestamp);
             const targetTs = new Date(toDate);
-            const gapHours = (targetTs - lastTs) / (1000 * 60 * 60);
+            const nowTs = new Date().getTime();
+            const effectiveTargetTs = targetTs.getTime() > nowTs ? new Date(nowTs) : targetTs;
+            const gapHours = (effectiveTargetTs - lastTs) / (1000 * 60 * 60);
 
             const isToday = targetTs.toDateString() === new Date().toDateString();
             const gapThreshold = isToday ? 0.033 : 24; // If today, any gap > 2 mins triggers API fetch (Real-time sync)
@@ -232,7 +234,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             } catch (err) {
                 console.error(`[API Chunk] Error fetching ${symbol}:`, err.message);
                 // If it's a timeout or serious error, stop further chunks for this request
-                if (err.message.includes("Timeout") || err.message.includes("429")) break;
+                if (err.message.includes("Timeout") || err.message.includes("429") || err.message.includes("exceeding access rate")) break;
             }
 
             currentStartDate = new Date(currentChunkEndDate.getTime() + 1000); // Ensure we move forward

@@ -1,23 +1,21 @@
 function sma(values, period) {
-  const result = [];
-
-  for (let i = 0; i < values.length; i++) {
-    if (i < period - 1 || values[i] == null) {
-      result.push(null);
-      continue;
-    }
-
-    const slice = values.slice(i - period + 1, i + 1).filter(v => v != null);
-
-    if (slice.length < period) {
-      result.push(null);
-      continue;
-    }
-
-    const avg = slice.reduce((sum, v) => sum + v, 0) / period;
-    result.push(Number(avg.toFixed(2)));
+  const { SMA } = require("technicalindicators");
+  const result = new Array(values.length).fill(null);
+  if (period <= 1) return values;
+  
+  const validValues = values.filter(v => v !== null);
+  if (validValues.length < period) return result;
+  
+  const libSma = SMA.calculate({ period, values: validValues });
+  const firstValidIdx = values.findIndex(v => v !== null);
+  let outputIdx = firstValidIdx + period - 1;
+  
+  for (let i = 0; i < libSma.length; i++) {
+      if (outputIdx < result.length) {
+          result[outputIdx] = Number(libSma[i].toFixed(4));
+          outputIdx++;
+      }
   }
-
   return result;
 }
 

@@ -32,37 +32,33 @@ async function calculateBollingerBands(candles, options) {
     const src = candles.map(c => getSource(c));
     const volumes = candles.map(c => c.volume ?? 0);
 
-    function sma(values, len, i) {
-        if (i < len - 1) return null;
-
-        let sum = 0;
-        for (let j = i - len + 1; j <= i; j++) {
-            sum += values[j];
+    const { BollingerBands } = require("technicalindicators");
+    
+    // Check if we have enough data
+    const validSrc = src.filter(v => v !== null);
+    if (validSrc.length >= length) {
+        const bbInput = {
+            period: length,
+            values: validSrc,
+            stdDev: mult
+        };
+        const bbResult = BollingerBands.calculate(bbInput);
+        
+        const firstValidIdx = src.findIndex(v => v !== null);
+        let outputIdx = firstValidIdx + length - 1;
+        
+        for (let i = 0; i < bbResult.length; i++) {
+            if (outputIdx < n) {
+                basis[outputIdx] = Number(bbResult[i].middle.toFixed(4));
+                upper[outputIdx] = Number(bbResult[i].upper.toFixed(4));
+                lower[outputIdx] = Number(bbResult[i].lower.toFixed(4));
+                
+                bandwidth[outputIdx] = (upper[outputIdx] - lower[outputIdx]) / basis[outputIdx];
+                percentB[outputIdx] = (src[outputIdx] - lower[outputIdx]) / (upper[outputIdx] - lower[outputIdx]);
+                
+                outputIdx++;
+            }
         }
-        return sum / len;
-    }
-
-    let maValues = src.map((_, i) => sma(src, length, i));
-
-    for (let i = 0; i < n; i++) {
-
-        if (i < length - 1 || maValues[i] === null) continue;
-
-        let sum = 0;
-
-        for (let j = i - length + 1; j <= i; j++) {
-            sum += Math.pow(src[j] - maValues[i], 2);
-        }
-
-        const stdev = Math.sqrt(sum / length);
-
-        basis[i] = maValues[i];
-        upper[i] = maValues[i] + mult * stdev;
-        lower[i] = maValues[i] - mult * stdev;
-
-        bandwidth[i] = (upper[i] - lower[i]) / basis[i];
-        percentB[i] = (src[i] - lower[i]) / (upper[i] - lower[i]);
-
     }
 
     return candles.map((c, i) => ({

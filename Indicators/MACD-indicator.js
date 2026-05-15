@@ -37,59 +37,37 @@ async function calculateMACD(candles, params) {
 
     // ---------------- SMA ----------------
     function sma(values, period) {
+        const { SMA } = require("technicalindicators");
         const result = new Array(values.length).fill(null);
-
-        for (let i = 0; i < values.length; i++) {
-            let sum = 0;
-            let count = 0;
-
-            for (let j = i; j >= 0 && count < period; j--) {
-                if (values[j] !== null) {
-                    sum += values[j];
-                    count++;
-                }
-            }
-
-            if (count === period) {
-                result[i] = sum / period;
+        const validValues = values.filter(v => v !== null);
+        if (validValues.length < period) return result;
+        const libSma = SMA.calculate({ period, values: validValues });
+        const firstValidIdx = values.findIndex(v => v !== null);
+        let outputIdx = firstValidIdx + period - 1;
+        for (let i = 0; i < libSma.length; i++) {
+            if (outputIdx < result.length) {
+                result[outputIdx] = Number(libSma[i].toFixed(4));
+                outputIdx++;
             }
         }
-
         return result;
     }
 
     // ---------------- EMA (NULL SAFE) ----------------
     function ema(values, period) {
+        const { EMA } = require("technicalindicators");
         const result = new Array(values.length).fill(null);
-        const k = 2 / (period + 1);
-
-        let sum = 0;
-        let count = 0;
-
-        for (let i = 0; i < values.length; i++) {
-            if (values[i] !== null) {
-                sum += values[i];
-                count++;
-            }
-
-            if (count === period) {
-                let prev = sum / period;
-                result[i] = prev;
-
-                for (let j = i + 1; j < values.length; j++) {
-                    if (values[j] === null) {
-                        result[j] = null;
-                        continue;
-                    }
-
-                    const val = values[j] * k + prev * (1 - k);
-                    result[j] = val;
-                    prev = val;
-                }
-                break;
+        const validValues = values.filter(v => v !== null);
+        if (validValues.length < period) return result;
+        const libEma = EMA.calculate({ period, values: validValues });
+        const firstValidIdx = values.findIndex(v => v !== null);
+        let outputIdx = firstValidIdx + period - 1;
+        for (let i = 0; i < libEma.length; i++) {
+            if (outputIdx < result.length) {
+                result[outputIdx] = Number(libEma[i].toFixed(4));
+                outputIdx++;
             }
         }
-
         return result;
     }
 

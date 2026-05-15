@@ -179,7 +179,8 @@ const connectSocket = (server) => {
                 const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, tD, extraInfo);
                 const candles = result?.data || [];
 
-                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, payload);
+                const configPayload = { ...payload, ...(payload.body || {}) };
+                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, configPayload);
                 const finalResults = withDateTime(results);
                 
                 // If we had a warmup, slice the data back to user's requested fromDate
@@ -315,16 +316,17 @@ const connectSocket = (server) => {
                 // --- PERSIST NEW SETTINGS FOR LIVE SUBSCRIPTION ---
                 if (store.indicatorSubscriptions.has(socket.id)) {
                     const subs = store.indicatorSubscriptions.get(socket.id);
-                    const subKey = `${uSym}_${type}_${finalInterval}`;
-                    if (subs.has(subKey)) {
-                        console.log(`[Socket] Updating live sub settings for ${subKey}`);
-                        subs.set(subKey, {
+                    const reqId = payloadData.id || JSON.stringify(configBody);
+                    const subKey = `${uSym}_${type}_${finalInterval}_${reqId}`;
+                    console.log(`[Socket] Setting live sub settings for ${subKey}`);
+                    subs.set(subKey, {
+
                             ...subs.get(subKey),
                             ...enginePayload, // Override with new parameters
                             body: configBody  // Ensure body is preserved for indicatorEngine
                         });
-                    }
                 }
+
 
                 console.log(`[Socket] ${type} update: ${Date.now() - start}ms | Result: ${filteredResult?.length}`);
             } catch (err) {
@@ -463,7 +465,8 @@ const connectSocket = (server) => {
                     }
                 }
 
-                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, payload);
+                const configPayload = { ...payload, ...(payload.body || {}) };
+                const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, configPayload);
 
                 if (results?.length > 0) {
                     const indKey = type.toLowerCase();
@@ -515,7 +518,8 @@ const connectSocket = (server) => {
                         store.indicatorSubscriptions.set(socket.id, new Map());
                     }
                     const socketSubs = store.indicatorSubscriptions.get(socket.id);
-                    socketSubs.set(`${uSym}_${type}_${finalInterval}`, {
+                    const reqId = payload.id || JSON.stringify(payload.body || payload.length || 'default');
+                    socketSubs.set(`${uSym}_${type}_${finalInterval}_${reqId}`, {
                         ...payload, // Preserve all parameters (length, source, etc.)
                         symbol: uSym,
                         token: finalToken,
@@ -816,7 +820,8 @@ const handleIndicatorBroadcast = async (tick) => {
                     }
 
                     let candles = [];
-                    const cacheEntry = indicatorCandleCache.get(subKey);
+                    const candleCacheKey = `${sub.symbol}_${sub.interval}`;
+                    const cacheEntry = indicatorCandleCache.get(candleCacheKey);
                     const nowTs = Date.now();
 
                     if (cacheEntry && (nowTs - cacheEntry.lastFetch < 30000)) {
@@ -824,8 +829,9 @@ const handleIndicatorBroadcast = async (tick) => {
                     } else {
                         const result = await getCandlesWithCache(sub.symbol, sub.token, sub.exchange, sub.interval, dynamicFrom, dynamicTo, sub.extraInfo);
                         candles = result?.data || [];
-                        indicatorCandleCache.set(subKey, { candles: [...candles], lastFetch: nowTs });
+                        indicatorCandleCache.set(candleCacheKey, { candles: [...candles], lastFetch: nowTs });
                     }
+
                     
                     if (candles.length < 15) {
                         console.warn(`[LivePush] ${sub.symbol} has only ${candles.length} candles. Indicator ${sub.type} might be 0/null.`);
@@ -834,7 +840,8 @@ const handleIndicatorBroadcast = async (tick) => {
                     // Note: Live merge is now handled internally by getCandlesWithCache in dbService.js
 
                     const indType = (sub.type || "RSI").toUpperCase();
-                    const indResults = await prepareCandlesWithIndicators(indType, candles, { json: d => d, send: d => d }, sub);
+                    const configSub = { ...sub, ...(sub.body || {}) };
+                    const indResults = await prepareCandlesWithIndicators(indType, candles, { json: d => d, send: d => d }, configSub);
                     if (indResults && indResults.length > 0) {
                         const latest = indResults[indResults.length - 1];
                         const indKey = sub.type.toLowerCase();
