@@ -32,7 +32,27 @@ async function tmaSeries(data, options) {
     return data.map(d => ({ time: d.time, tma: null }));
   }
 
-  const values = data.map(d => Number(d[sourceKey]));
+  const getSourceValue = (c, key) => {
+    const o = Number(c?.open);
+    const h = Number(c?.high);
+    const l = Number(c?.low);
+    const closeVal = Number(c?.close);
+
+    switch (String(key).toLowerCase()) {
+        case 'open': return o;
+        case 'high': return h;
+        case 'low': return l;
+        case 'close': return closeVal;
+        case 'hl2': return (h + l) / 2;
+        case 'hlc3': return (h + l + closeVal) / 3;
+        case 'ohlc4': return (o + h + l + closeVal) / 4;
+        default: 
+            const raw = Number(c?.[key]);
+            return Number.isFinite(raw) ? raw : closeVal;
+    }
+  };
+
+  const values = data.map(d => getSourceValue(d, sourceKey));
 
   const sma1 = sma(values, period);
   const sma2 = sma(sma1, period);

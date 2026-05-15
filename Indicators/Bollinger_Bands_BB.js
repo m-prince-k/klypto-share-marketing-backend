@@ -21,9 +21,9 @@ async function calculateBollingerBands(candles, options) {
             case "open": return c.open;
             case "high": return c.high;
             case "low": return c.low;
-            case "hl2": return (c.high + c.low) / 2;
-            case "hlc3": return (c.high + c.low + c.close) / 3;
-            case "ohlc4": return (c.open + c.high + c.low + c.close) / 4;
+            case "hl2": return (Number(c.high) + Number(c.low)) / 2;
+            case "hlc3": return (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+            case "ohlc4": return (Number(c.open) + Number(c.high) + Number(c.low) + Number(c.close)) / 4;
             default: return c.close;
         }
     }

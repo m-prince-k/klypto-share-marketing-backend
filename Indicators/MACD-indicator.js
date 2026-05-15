@@ -13,19 +13,19 @@ async function calculateMACD(candles, params) {
     function getSource(candle, source) {
         switch (source) {
             case "hl2":
-                return (candle.high + candle.low) / 2;
+                return (Number(candle.high) + Number(candle.low)) / 2;
 
             case "hlc3":
-                return (candle.high + candle.low + candle.close) / 3;
+                return (Number(candle.high) + Number(candle.low) + Number(candle.close)) / 3;
 
             case "ohlc4":
-                return (candle.open + candle.high + candle.low + candle.close) / 4;
+                return (Number(candle.open) + Number(candle.high) + Number(candle.low) + Number(candle.close)) / 4;
 
             case "open":
             case "high":
             case "low":
             case "close":
-                return candle[source];
+                return Number(candle[source]);
 
             default:
                 return candle.close;

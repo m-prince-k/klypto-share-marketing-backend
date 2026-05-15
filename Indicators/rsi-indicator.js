@@ -7,9 +7,29 @@ async function calculateRSIIndicator(candles, options) {
     const maLength = options?.maLength || 14;
     const bbMult = options?.bbStdDev || options?.bbMult || 2;
 
+    const getSourceValue = (c, key) => {
+        const o = Number(c?.open);
+        const h = Number(c?.high);
+        const l = Number(c?.low);
+        const closeVal = Number(c?.close);
+
+        switch (String(key).toLowerCase()) {
+            case 'open': return o;
+            case 'high': return h;
+            case 'low': return l;
+            case 'close': return closeVal;
+            case 'hl2': return (h + l) / 2;
+            case 'hlc3': return (h + l + closeVal) / 3;
+            case 'ohlc4': return (o + h + l + closeVal) / 4;
+            default: 
+                const raw = Number(c?.[key]);
+                return Number.isFinite(raw) ? raw : closeVal;
+        }
+    };
+
     const closes = Array.isArray(candles)
         ? candles.map(c => {
-            const value = Number(c?.[sourceKey]);
+            const value = getSourceValue(c, sourceKey);
             return Number.isFinite(value) ? value : null;
         })
         : [];
