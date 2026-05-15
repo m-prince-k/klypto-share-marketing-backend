@@ -847,10 +847,6 @@ const handleIndicatorBroadcast = async (tick) => {
                         const indKey = sub.type.toLowerCase();
                         let val = latest[indKey] ?? latest[sub.type] ?? latest.value ?? 0;
                         
-                        const logMsg = `[${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}] HIT: ${sub.symbol} | ${indType} | Val: ${val.toFixed(2)}\n`;
-                        fs.appendFileSync(path.join(__dirname, '../live_hits.log'), logMsg);
-                        
-                        console.log(`[IndicatorHit] ${sub.symbol} | ${indType} | Val: ${val.toFixed(2)} | Time: ${latest.time}`);
                         socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, {
                             success: true,
                             symbol: sub.symbol,
