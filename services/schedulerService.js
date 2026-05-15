@@ -3,11 +3,13 @@ const { getIO } = require('./socket');
 const store = require('./marketStore');
 const smartApi = require('./smartApi');
 const { getCandlesWithCache, formatDate } = require('./dbService');
-const optionChainService = require('./optionChainService');
+const { startWebSocketConnection, manageWebSocket, isAnyMarketOpen } = require('./webSocketService');
 
 function startSchedulers() {
-    // 1. Save Aggregated Candles to DB every 60 seconds
+    // 1. Save Aggregated Candles to DB every 60 seconds (Only if market is open)
     setInterval(async () => {
+        if (!isAnyMarketOpen()) return; // Skip during off-hours
+        
         const tokens = Object.keys(store.liveCandles);
         if (tokens.length === 0) return;
 

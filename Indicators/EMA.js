@@ -39,25 +39,27 @@ async function calculateEMAIndicator(candles, options) {
     const src = candles.map(c => getSourceValue(c, srcKey));
     const volume = candles.map(c => c.volume ?? 0);
 
-    // ---------------- EMA ----------------
+    // ---------------- EMA (Manual TV Match) ----------------
     function ema(values, length) {
-        const { EMA } = require("technicalindicators");
         const result = new Array(values.length).fill(null);
-        
-        // Find first non-null index
-        const firstValidIdx = values.findIndex(v => v !== null);
-        if (firstValidIdx === -1 || values.length - firstValidIdx < length) return result;
+        if (values.length < length) return result;
 
-        const validValues = values.slice(firstValidIdx);
-        const libEma = EMA.calculate({ period: length, values: validValues });
+        const k = 2 / (length + 1);
         
-        let outputIdx = firstValidIdx + length - 1;
-        for (let i = 0; i < libEma.length; i++) {
-            if (outputIdx < result.length) {
-                result[outputIdx] = Number(libEma[i].toFixed(4));
-                outputIdx++;
-            }
+        // 1. Initial SMA for the first 'length' bars
+        let sum = 0;
+        for (let i = 0; i < length; i++) {
+            sum += values[i];
         }
+        let prevEMA = sum / length;
+        result[length - 1] = Number(prevEMA.toFixed(4));
+
+        // 2. Subsequent EMA values
+        for (let i = length; i < values.length; i++) {
+            prevEMA = (values[i] * k) + (prevEMA * (1 - k));
+            result[i] = Number(prevEMA.toFixed(4));
+        }
+
         return result;
     }
 

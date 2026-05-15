@@ -7,9 +7,9 @@ const optionChainService = require("./optionChainService");
 function isNSEOpen() {
     const now = new Date();
     const day = now.getDay();
-    const currentTime = now.getHours() * 100 + now.getMinutes();
-    // Monday to Friday, 09:15 AM to 03:30 PM
-    return day >= 1 && day <= 5 && currentTime >= 915 && currentTime <= 1530;
+    const currentMinute = now.getHours() * 100 + now.getMinutes();
+    // Monday to Friday, 09:15 AM to 03:30 PM (NSE/BSE)
+    return day >= 1 && day <= 5 && currentMinute >= 915 && currentMinute <= 1530;
 }
 
 function isMCXOpen() {
@@ -50,7 +50,8 @@ function formatTickData(data) {
 
 
     const ltp = parseFloat(formatted.last_traded_price || 0);
-    const volume = parseInt(data.v || formatted.v || 0);
+    // Use multiple keys to ensure volume is captured (v, vol, volume, total_traded_quantity)
+    const volume = parseInt(data.v || data.vol || data.volume || data.total_traded_quantity || formatted.v || 0);
     const ts = parseInt(data.exchange_timestamp || 0);
     const ms = ts > 10000000000 ? ts : ts * 1000;
     const currentMinute = Math.floor(ms / 60000) * 60000;
@@ -220,6 +221,11 @@ async function startWebSocketConnection(loginData, io) {
     store.wsClient.on("tick", (data) => {
         const formatted = formatTickData(data);
         if (!formatted) return;
+
+        // DIAGNOSTIC LOG FOR TCS
+        if (formatted.symbol === 'TCS') {
+            console.log(`[TCS-DEBUG] Price: ${formatted.last_traded_price} | Raw V: ${data.v} | Formatted V: ${formatted.v}`);
+        }
 
         // 🛡️ BLOCK TICKS FOR CLOSED EXCHANGES
         const exchange = formatted.exchange;

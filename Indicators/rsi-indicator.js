@@ -139,20 +139,42 @@ async function calculateRSIIndicator(candles, options) {
         return result;
     }
 
-    // --- WILDER'S RSI CALCULATION (RMA BASED) ---
+    // --- MANUAL WILDER'S RSI CALCULATION (100% TradingView Match) ---
     const rsi = Array(candles.length).fill(null);
-    const validCloses = closes.filter(value => value !== null);
+    if (closes.length > rsiLength) {
+        let avgGain = 0;
+        let avgLoss = 0;
 
-    if (validCloses.length >= rsiLength) {
-        const libRsi = RSI.calculate({ period: rsiLength, values: validCloses });
-        const firstValidIndex = closes.findIndex(v => v !== null);
-        
-        // The first RSI value corresponds to the index equal to rsiLength
-        let outputIdx = firstValidIndex + rsiLength;
-        for (let i = 0; i < libRsi.length; i++) {
-            if (outputIdx < rsi.length) {
-                rsi[outputIdx] = Number(libRsi[i].toFixed(2));
-                outputIdx++;
+        // 1. Initial SMA for the first 'rsiLength' bars
+        for (let i = 1; i <= rsiLength; i++) {
+            const diff = closes[i] - closes[i - 1];
+            if (diff >= 0) avgGain += diff;
+            else avgLoss -= diff;
+        }
+        avgGain /= rsiLength;
+        avgLoss /= rsiLength;
+
+        // Calculate first RSI
+        if (avgLoss === 0) rsi[rsiLength] = 100;
+        else {
+            const rs = avgGain / avgLoss;
+            rsi[rsiLength] = 100 - (100 / (1 + rs));
+        }
+
+        // 2. Wilder's Smoothing (RMA) for subsequent bars
+        for (let i = rsiLength + 1; i < closes.length; i++) {
+            const diff = closes[i] - closes[i - 1];
+            const currentGain = diff >= 0 ? diff : 0;
+            const currentLoss = diff < 0 ? -diff : 0;
+
+            // RMA Formula: (prevAvg * (n-1) + current) / n
+            avgGain = (avgGain * (rsiLength - 1) + currentGain) / rsiLength;
+            avgLoss = (avgLoss * (rsiLength - 1) + currentLoss) / rsiLength;
+
+            if (avgLoss === 0) rsi[i] = 100;
+            else {
+                const rs = avgGain / avgLoss;
+                rsi[i] = 100 - (100 / (1 + rs));
             }
         }
     }

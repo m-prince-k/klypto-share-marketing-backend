@@ -14,12 +14,19 @@ function sma(data, length) {
 }
 
 function ema(data, length) {
-  let result = [];
-  let multiplier = 2 / (length + 1);
-  data.forEach((v, i) => {
-    if (i === 0) result.push(v);
-    else result.push((v - result[i - 1]) * multiplier + result[i - 1]);
-  });
+  let result = new Array(data.length).fill(null);
+  if (data.length < length) return result;
+
+  const k = 2 / (length + 1);
+  let sum = 0;
+  for (let i = 0; i < length; i++) sum += data[i];
+  let prevEMA = sum / length;
+  result[length - 1] = prevEMA;
+
+  for (let i = length; i < data.length; i++) {
+    prevEMA = (data[i] * k) + (prevEMA * (1 - k));
+    result[i] = prevEMA;
+  }
   return result;
 }
 
@@ -36,12 +43,18 @@ function wma(data, length) {
 }
 
 function smma(data, length) {
-  let result = [];
-  data.forEach((v, i) => {
-    if (i === 0) result.push(v);
-    else if (i < length) result.push((result[i - 1] * i + v) / (i + 1));
-    else result.push((result[i - 1] * (length - 1) + v) / length);
-  });
+  let result = new Array(data.length).fill(null);
+  if (data.length < length) return result;
+
+  let sum = 0;
+  for (let i = 0; i < length; i++) sum += data[i];
+  let prevSMMA = sum / length;
+  result[length - 1] = prevSMMA;
+
+  for (let i = length; i < data.length; i++) {
+    prevSMMA = (prevSMMA * (length - 1) + data[i]) / length;
+    result[i] = prevSMMA;
+  }
   return result;
 }
 

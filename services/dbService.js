@@ -93,10 +93,11 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 });
 
             // --- IMPROVED LIVE CANDLE MERGE (FOR ALL INTERVALS) ---
+            const { isAnyMarketOpen } = require('./webSocketService');
             const live = store.liveCandles[token] || store.liveCandles[symbol.toUpperCase()];
             const liveData = store.latestMarketData[`${symbol.toUpperCase()}:${exchange}`];
             
-            if (live || liveData) {
+            if ((live || liveData) && isAnyMarketOpen()) {
                 const intervalInMinutes = {
                     "ONE_MINUTE": 1, "THREE_MINUTE": 3, "FIVE_MINUTE": 5,
                     "TEN_MINUTE": 10, "FIFTEEN_MINUTE": 15, "THIRTY_MINUTE": 30,
