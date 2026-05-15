@@ -43,27 +43,26 @@ async function calculateEMAIndicator(candles, options) {
 
     // ---------------- EMA ----------------
     function ema(values, length) {
-
+        const { EMA } = require("technicalindicators");
         const result = new Array(values.length).fill(null);
+        
+        // Find first non-null index
+        const firstValidIdx = values.findIndex(v => v !== null);
+        if (firstValidIdx === -1 || values.length - firstValidIdx < length) return result;
 
-        if (values.length < length) return result;
-
-        const k = 2 / (length + 1);
-
-        let sum = 0;
-        for (let i = 0; i < length; i++) sum += values[i];
-
-        let prev = sum / length;
-        result[length - 1] = prev;
-
-        for (let i = length; i < values.length; i++) {
-            const val = values[i] * k + prev * (1 - k);
-            result[i] = val;
-            prev = val;
+        const validValues = values.slice(firstValidIdx);
+        const libEma = EMA.calculate({ period: length, values: validValues });
+        
+        let outputIdx = firstValidIdx + length - 1;
+        for (let i = 0; i < libEma.length; i++) {
+            if (outputIdx < result.length) {
+                result[outputIdx] = Number(libEma[i].toFixed(4));
+                outputIdx++;
+            }
         }
-
         return result;
     }
+
 
     // ---------------- SMA (fixed) ----------------
     function sma(values, length) {

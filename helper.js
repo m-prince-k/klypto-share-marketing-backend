@@ -61,6 +61,7 @@ const { calculateAwesomeOscillator } = require("./Indicators/awesome-oscillator.
 
 const { calculateVolumeIndicator } = require("./Indicators/volume.js");
 const { calculateCHOP } = require("./Indicators/choppiness-index.js");
+const { calculateWoodiePivots } = require("./Indicators/Woodie Pivot Points.js");
 
 const { calculateCamarillaPivots } = require("./Indicators/Camarilla Pivot Points.js");
 
@@ -430,6 +431,26 @@ async function indicatorEngine(candles, config) {
 
       case "SSL_HYBRID":
         output = await calculateSSLHybrid(candles, config);
+        break;
+
+      case "PIVOT_CLASSIC":
+        output = await calculateClassicPivots(candles, config);
+        break;
+
+      case "PIVOT_FIB":
+        output = await calculateFibonacciPivots(candles, config);
+        break;
+
+      case "PIVOT_WOODIE":
+        output = await calculateWoodiePivots(candles, config);
+        break;
+
+      case "PIVOT_STANDARD":
+        output = await calculatePivotPoints(candles, config);
+        break;
+
+      case "VRP":
+        output = await calculateVisibleRangeVolumeProfile(candles, config);
         break;
 
       default:

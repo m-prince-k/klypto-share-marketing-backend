@@ -60,8 +60,8 @@ function calculateWoodiePivots(candles, options = {}) {
             R3: high + 2 * (P - low),
             S3: low - 2 * (high - P),
 
-            R4: R3 = (high + 3 * (P - low)),
-            S4: S3 = (low - 3 * (high - P))
+            R4: high + 3 * (P - low),
+            S4: low - 3 * (high - P)
         };
 
         results.push({

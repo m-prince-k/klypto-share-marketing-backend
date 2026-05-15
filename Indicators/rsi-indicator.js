@@ -124,34 +124,13 @@ async function calculateRSIIndicator(candles, options) {
     const validCloses = closes.filter(value => value !== null);
 
     if (validCloses.length > rsiLength) {
-        let gains = [];
-        let losses = [];
-
-        for (let i = 1; i < validCloses.length; i++) {
-            const diff = validCloses[i] - validCloses[i - 1];
-            gains.push(Math.max(diff, 0));
-            losses.push(Math.max(-diff, 0));
-        }
-
-        let avgGain = gains.slice(0, rsiLength).reduce((a, b) => a + b, 0) / rsiLength;
-        let avgLoss = losses.slice(0, rsiLength).reduce((a, b) => a + b, 0) / rsiLength;
-
+        const libRsi = RSI.calculate({ period: rsiLength, values: validCloses });
         const firstValidIndex = closes.findIndex(v => v !== null);
-        
         let outputIdx = firstValidIndex + rsiLength;
-        if (outputIdx < rsi.length) {
-            const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-            rsi[outputIdx] = Number((avgLoss === 0 ? 100 : 100 - (100 / (1 + rs))).toFixed(2));
-
-            for (let i = rsiLength; i < gains.length; i++) {
-                avgGain = (avgGain * (rsiLength - 1) + gains[i]) / rsiLength;
-                avgLoss = (avgLoss * (rsiLength - 1) + losses[i]) / rsiLength;
-                
+        for (let i = 0; i < libRsi.length; i++) {
+            if (outputIdx < rsi.length) {
+                rsi[outputIdx] = Number(libRsi[i].toFixed(2));
                 outputIdx++;
-                if (outputIdx < rsi.length) {
-                    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-                    rsi[outputIdx] = Number((avgLoss === 0 ? 100 : 100 - (100 / (1 + rs))).toFixed(2));
-                }
             }
         }
     }
