@@ -29,7 +29,7 @@ function startSchedulers() {
                 close: c.close,
                 volume: c.volume
             };
-        });
+        }).filter(c => c.exchange !== "MCX"); // Do not save MCX data to DB as per user request
 
         try {
             await Candle.bulkCreate(candleData, { ignoreDuplicates: true });

@@ -368,7 +368,8 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             const timeVal = hours * 100 + minutes;
 
             if (exchange === "MCX") {
-                return timeVal >= 900 && timeVal <= 2355;
+                // Restricted by user to 3:30 PM
+                return timeVal >= 900 && timeVal <= 1530;
             } else {
                 // NSE / BSE / NFO / BFO
                 if (interval === "ONE_DAY") return true; // Daily candles are fine
@@ -376,7 +377,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             }
         });
 
-        if (filteredData.length > 0) {
+        if (filteredData.length > 0 && exchange !== "MCX") {
             await ModelToUse.bulkCreate(filteredData, { ignoreDuplicates: true });
             console.log(`[API Fallback] Saved ${filteredData.length} records to ${ModelToUse.name} for ${symbol}`);
         }

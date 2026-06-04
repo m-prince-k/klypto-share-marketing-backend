@@ -721,7 +721,7 @@ const startGoldBroadcast = () => {
         const min = now.getMinutes();
         const isWeekend = now.getDay() === 0 || now.getDay() === 6;
         const timeVal = hr + min / 60;
-        if (isWeekend || timeVal < 9.0 || timeVal > 23.9) {
+        if (isWeekend || timeVal < 9.0 || timeVal > 15.5) {
             return; // Skip polling when MCX is closed to prevent 403 errors
         }
 
@@ -766,22 +766,7 @@ const startGoldBroadcast = () => {
                         last_traded_price: Number(lastCandle.close)
                     });
 
-                    // Persistent Save to DB so Indicator Engine can see it
-                    try {
-                        const { Candle } = require('../models');
-                        await Candle.upsert({
-                            symbol: "GOLD",
-                            token: goldToken,
-                            exchange: "MCX",
-                            interval: "ONE_MINUTE",
-                            timestamp: new Date(lastCandle.timestamp),
-                            open: parseFloat(lastCandle.open),
-                            high: parseFloat(lastCandle.high),
-                            low: parseFloat(lastCandle.low),
-                            close: parseFloat(lastCandle.close),
-                            volume: 0
-                        });
-                    } catch (dbErr) { }
+                    // Persistent Save to DB is DISABLED for GOLD/MCX as per user request
                 }
             }
         } catch (err) {
@@ -842,9 +827,12 @@ const handleIndicatorBroadcast = async (tick) => {
                     if (cacheEntry && (nowTs - cacheEntry.lastFetch < 30000)) {
                         candles = [...cacheEntry.candles];
                     } else {
+                        // Mark as fetching immediately to prevent promise explosion on rapid ticks
+                        indicatorCandleCache.set(candleCacheKey, { candles: cacheEntry ? cacheEntry.candles : [], lastFetch: nowTs });
+                        
                         const result = await getCandlesWithCache(sub.symbol, sub.token, sub.exchange, sub.interval, dynamicFrom, dynamicTo, sub.extraInfo);
                         candles = result?.data || [];
-                        indicatorCandleCache.set(candleCacheKey, { candles: [...candles], lastFetch: nowTs });
+                        indicatorCandleCache.set(candleCacheKey, { candles: [...candles], lastFetch: Date.now() });
                     }
 
                     
