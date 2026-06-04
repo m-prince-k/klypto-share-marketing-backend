@@ -203,7 +203,12 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
             
             const fStr = formatDate(currentStartDate, isMCX ? "09:00" : "09:15", interval);
-            const tStr = formatDate(currentChunkEndDate, isToday ? currentTimeStr : (isMCX ? "15:30" : "15:30"), interval);
+            // Strictly cap at 15:30 for NSE/BSE even if current time is later
+            let effectiveEndTime = isToday ? currentTimeStr : (isMCX ? "23:30" : "15:30");
+            if (!isMCX && isToday && parseInt(currentTimeStr.replace(':', '')) > 1530) {
+                effectiveEndTime = "15:30";
+            }
+            const tStr = formatDate(currentChunkEndDate, effectiveEndTime, interval);
 
             console.log(`[AngelOne API] Requesting ${symbol} (${token}) | Interval: ${interval} | From: ${fStr} | To: ${tStr}`);
             

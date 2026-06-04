@@ -40,6 +40,7 @@ function startSchedulers() {
 
     // 2. Background Sync for 1-minute Gaps (Every 5 minutes)
     setInterval(async () => {
+        return; // Temporarily Disabled: Causes Angel API Rate Limits & Server Stall
         if (!smartApi.access_token || store.stocks.length === 0) return;
         const sample = store.stocks.sort(() => 0.5 - Math.random()).slice(0, 5);
         for (const stock of sample) {
@@ -54,6 +55,7 @@ function startSchedulers() {
 
     // 3. Background Sync for 5-minute Candles (Every 10 minutes)
     setInterval(async () => {
+        return; // Temporarily Disabled: Causes Angel API Rate Limits & Server Stall
         if (!smartApi.access_token || store.stocks.length === 0) return;
         console.log("[Scheduler] Syncing 5-minute candles for random stocks...");
         const sample = store.stocks.sort(() => 0.5 - Math.random()).slice(0, 10);
@@ -69,6 +71,7 @@ function startSchedulers() {
 
     // 4. Background Sync for Futures (Every 15 minutes)
     setInterval(async () => {
+        return; // Temporarily Disabled: Causes Angel API Rate Limits & Server Stall
         if (!smartApi.access_token || store.stocks.length === 0) return;
         console.log("[Scheduler] Syncing Futures data for random stocks (5m & 1d)...");
         const sample = store.stocks.sort(() => 0.5 - Math.random()).slice(0, 5);
@@ -91,6 +94,7 @@ function startSchedulers() {
 
     // 5. Background Sync for Options ATM (Every 20 minutes)
     setInterval(async () => {
+        return; // Temporarily Disabled: Causes Angel API Rate Limits & Server Stall
         if (!smartApi.access_token || store.nfoMasterData.length === 0) return;
         console.log("[Scheduler] Syncing ATM Options data for Indices...");
         const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY"];
@@ -149,6 +153,7 @@ function startSchedulers() {
     
     // 6. Background Sync for Priority Options (ABB, etc.) - Every 15 minutes
     setInterval(async () => {
+        return; // Temporarily Disabled: Causes Angel API Rate Limits & Server Stall
         if (!smartApi.access_token || store.nfoMasterData.length === 0) return;
         
         const prioritySymbols = ["ABB", "ABBPOW", "ADAENT", "ADAGRE", "ADAPOR", "ADATRA", "ADICAP", "ALKLAB", "AMBCE", "AMBEN"];

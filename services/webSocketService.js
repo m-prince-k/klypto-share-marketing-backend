@@ -3,7 +3,7 @@ const store = require("./marketStore");
 const EVENTS = require("../constants/socketEvents");
 const alertService = require("./alertService");
 const optionChainService = require("./optionChainService");
-
+const { handleIndicatorBroadcast } = require('./socket');
 function isNSEOpen() {
     const now = new Date();
     const day = now.getDay();
@@ -99,6 +99,108 @@ function formatTickData(data) {
     return formatted;
 }
 
+function subscribeNSE(wsClient) {
+    if (!wsClient) return;
+    console.log(`[WebSocket] Subscribing to NSE & BSE Equity and NFO/BFO Near-Month Futures...`);
+
+    // 1. Subscribe to Equity & Indices (NSE)
+    const nseTokens = [
+        ...store.stocks.filter(s => s.segment === "NSE").map(s => s.token),
+        ...store.indices.filter(i => i.segment === "NSE").map(i => i.token)
+    ];
+    if (nseTokens.length > 0) {
+        console.log(`Subscribing to ${nseTokens.length} NSE tokens...`);
+        wsClient.fetchData({
+            correlationID: "nse_subscription",
+            action: 1, mode: 2, exchangeType: 1,
+            tokens: nseTokens
+        });
+    }
+
+    // 1.1 Subscribe to Equity (BSE)
+    const bseTokens = store.stocks.filter(s => s.segment === "BSE").map(s => s.token);
+    if (bseTokens.length > 0) {
+        console.log(`Subscribing to ${bseTokens.length} BSE tokens...`);
+        wsClient.fetchData({
+            correlationID: "bse_subscription",
+            action: 1, mode: 2, exchangeType: 3, // 3 is BSE
+            tokens: bseTokens
+        });
+    }
+
+    // 2. Subscribe to Near-Month Futures (NFO)
+    const nearMonthFutures = [];
+    const stockNames = store.stocks.map(s => s.name);
+    
+    stockNames.forEach(name => {
+        const futures = store.nfoMasterData.filter(f => 
+            f.name === name && (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX")
+        );
+        if (futures.length > 0) {
+            const bestFut = futures.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+            nearMonthFutures.push(bestFut);
+            store.tokenToName[bestFut.token] = bestFut.symbol;
+        }
+    });
+
+    if (nearMonthFutures.length > 0) {
+        console.log(`Subscribing to ${nearMonthFutures.length} Near-Month Futures...`);
+        
+        const nfoFuts = nearMonthFutures.filter(f => f.exch_seg === "NFO").map(f => f.token);
+        const bfoFuts = nearMonthFutures.filter(f => f.exch_seg === "BFO").map(f => f.token);
+
+        // NFO Sub
+        for (let i = 0; i < nfoFuts.length; i += 50) {
+            const batch = nfoFuts.slice(i, i + 50);
+            wsClient.fetchData({
+                correlationID: `nfo_futures_batch_${i}`,
+                action: 1, mode: 2, exchangeType: 2,
+                tokens: batch
+            });
+        }
+
+        // BFO Sub
+        for (let i = 0; i < bfoFuts.length; i += 50) {
+            const batch = bfoFuts.slice(i, i + 50);
+            wsClient.fetchData({
+                correlationID: `bfo_futures_batch_${i}`,
+                action: 1, mode: 2, exchangeType: 4, // 4 is BFO
+                tokens: batch
+            });
+        }
+    }
+}
+
+function subscribeMCX(wsClient) {
+    if (!wsClient) return;
+    console.log(`[WebSocket] Subscribing to MCX Gold Futures...`);
+
+    const goldContracts = (store.mcxMasterData || []).filter(s => 
+        (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
+        s.instrumenttype === 'FUTCOM'
+    );
+    const nearestGold = {};
+    for (const contract of goldContracts) {
+        if (!nearestGold[contract.name]) nearestGold[contract.name] = contract;
+        else if (new Date(contract.expiry) < new Date(nearestGold[contract.name].expiry)) nearestGold[contract.name] = contract;
+    }
+    const mcxTokens = [];
+    Object.values(nearestGold).forEach(c => {
+        mcxTokens.push(c.token);
+        store.tokenToName[c.token] = c.name; // e.g. "GOLD"
+        store.tokenToExchange[c.token] = "MCX";
+    });
+
+    if (mcxTokens.length > 0) {
+        console.log(`Subscribing to ${mcxTokens.length} MCX Gold Futures...`);
+        wsClient.fetchData({
+            correlationID: "mcx_gold_subscription",
+            action: 1, mode: 2, exchangeType: 5, // 5 is MCX
+            tokens: mcxTokens
+        });
+    }
+}
+
 async function startWebSocketConnection(loginData, io) {
     if (!loginData || !loginData.data) return;
 
@@ -117,105 +219,21 @@ async function startWebSocketConnection(loginData, io) {
     });
 
     await store.wsClient.connect();
-    console.log(`WebSocket Connected. Subscribing to Equity and Futures...`);
+    console.log(`WebSocket Connected. Subscribing based on open markets...`);
 
-    // 1. Subscribe to Equity & Indices (NSE)
+    // Reset subscription state
+    store.subscriptions = { nse: false, mcx: false };
+
+    // 1. Subscribe to Equity & Indices (NSE/BSE/NFO/BFO)
     if (isNSEOpen()) {
-        const nseTokens = [
-            ...store.stocks.filter(s => s.segment === "NSE").map(s => s.token),
-            ...store.indices.filter(i => i.segment === "NSE").map(i => i.token)
-        ];
-        if (nseTokens.length > 0) {
-            store.wsClient.fetchData({
-                correlationID: "nse_subscription",
-                action: 1, mode: 2, exchangeType: 1,
-                tokens: nseTokens
-            });
-        }
+        subscribeNSE(store.wsClient);
+        store.subscriptions.nse = true;
     }
 
-    // 1.1 Subscribe to Equity (BSE)
-    const bseTokens = store.stocks.filter(s => s.segment === "BSE").map(s => s.token);
-    if (bseTokens.length > 0) {
-        console.log(`Subscribing to ${bseTokens.length} BSE tokens...`);
-        store.wsClient.fetchData({
-            correlationID: "bse_subscription",
-            action: 1, mode: 2, exchangeType: 3, // 3 is BSE
-            tokens: bseTokens
-        });
-    }
-
-    // 2. Subscribe to Near-Month Futures (NFO)
-    // Filter nfoMasterData for Current Expiry Futures of our tracked stocks
-    const nearMonthFutures = [];
-    const stockNames = store.stocks.map(s => s.name);
-    
-    stockNames.forEach(name => {
-        const futures = store.nfoMasterData.filter(f => 
-            f.name === name && (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX")
-        );
-        if (futures.length > 0) {
-            // Pick the earliest expiry (Near Month)
-            const bestFut = futures.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
-            nearMonthFutures.push(bestFut);
-            store.tokenToName[bestFut.token] = bestFut.symbol;
-        }
-    });
-
-    if (nearMonthFutures.length > 0) {
-        console.log(`Subscribing to ${nearMonthFutures.length} Near-Month Futures...`);
-        
-        // Split by exchange
-        const nfoFuts = nearMonthFutures.filter(f => f.exch_seg === "NFO").map(f => f.token);
-        const bfoFuts = nearMonthFutures.filter(f => f.exch_seg === "BFO").map(f => f.token);
-
-        // NFO Sub
-        for (let i = 0; i < nfoFuts.length; i += 50) {
-            const batch = nfoFuts.slice(i, i + 50);
-            store.wsClient.fetchData({
-                correlationID: `nfo_futures_batch_${i}`,
-                action: 1, mode: 2, exchangeType: 2,
-                tokens: batch
-            });
-        }
-
-        // BFO Sub
-        for (let i = 0; i < bfoFuts.length; i += 50) {
-            const batch = bfoFuts.slice(i, i + 50);
-            store.wsClient.fetchData({
-                correlationID: `bfo_futures_batch_${i}`,
-                action: 1, mode: 2, exchangeType: 4, // 4 is BFO
-                tokens: batch
-            });
-        }
-    }
-
-    // 3. Subscribe to MCX Gold Futures
+    // 2. Subscribe to MCX Gold Futures
     if (isMCXOpen()) {
-        const goldContracts = (store.mcxMasterData || []).filter(s => 
-            (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
-            s.instrumenttype === 'FUTCOM'
-        );
-        const nearestGold = {};
-        for (const contract of goldContracts) {
-            if (!nearestGold[contract.name]) nearestGold[contract.name] = contract;
-            else if (new Date(contract.expiry) < new Date(nearestGold[contract.name].expiry)) nearestGold[contract.name] = contract;
-        }
-        const mcxTokens = [];
-        Object.values(nearestGold).forEach(c => {
-            mcxTokens.push(c.token);
-            store.tokenToName[c.token] = c.name; // e.g. "GOLD"
-            store.tokenToExchange[c.token] = "MCX";
-        });
-
-        if (mcxTokens.length > 0) {
-            console.log(`Subscribing to ${mcxTokens.length} MCX Gold Futures...`);
-            store.wsClient.fetchData({
-                correlationID: "mcx_gold_subscription",
-                action: 1, mode: 2, exchangeType: 5, // 5 is MCX
-                tokens: mcxTokens
-            });
-        }
+        subscribeMCX(store.wsClient);
+        store.subscriptions.mcx = true;
     }
 
     store.wsClient.on("tick", (data) => {
@@ -246,13 +264,10 @@ async function startWebSocketConnection(loginData, io) {
         }
             // Trigger Live Indicator Broadcast if anyone is listening
             try {
-                const { handleIndicatorBroadcast } = require('./socket');
                 handleIndicatorBroadcast(formatted);
             } catch (e) {}
 
             // Handle Option Chain Logic
-            const optionChainService = require('./optionChainService');
-            
             // Update live option chain subscribers
             optionChainService.handleTick(formatted);
 
@@ -378,12 +393,30 @@ async function manageWebSocket(loginData, io) {
                 if (store.wsClient.terminate) store.wsClient.terminate();
                 else if (store.wsClient.close) store.wsClient.close();
                 store.wsClient = null;
+                store.subscriptions = { nse: false, mcx: false };
             } catch (e) {
                 console.log("[MarketMonitor] Disconnect Error:", e.message);
                 store.wsClient = null;
+                store.subscriptions = { nse: false, mcx: false };
+            }
+        } else if (open && hasClient) {
+            // WebSocket is active. Check if any market segment has recently opened and needs subscription.
+            if (!store.subscriptions) {
+                store.subscriptions = { nse: false, mcx: false };
+            }
+
+            if (isNSEOpen() && !store.subscriptions.nse) {
+                console.log("[MarketMonitor] NSE Market has OPENED. Subscribing to NSE/BSE and Futures...");
+                subscribeNSE(store.wsClient);
+                store.subscriptions.nse = true;
+            }
+            if (isMCXOpen() && !store.subscriptions.mcx) {
+                console.log("[MarketMonitor] MCX Market has OPENED. Subscribing to MCX...");
+                subscribeMCX(store.wsClient);
+                store.subscriptions.mcx = true;
             }
         }
-    }, 60000); // Check every minute
+    }, 15000); // Check every 15 seconds for snappy market-open reaction
 
     // Initial check
     await startWebSocketConnection(loginData, io);
