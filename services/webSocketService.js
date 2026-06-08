@@ -336,6 +336,9 @@ async function startWebSocketConnection(loginData, io) {
                 // BROADCAST to 'liveticks' for plural event support
                 io.emit('liveticks', tickPayload);
 
+                // BROADCAST to 'live-options-list' globally as requested by user
+                io.emit('live-options-list', tickPayload);
+
                 // Console log for confirmation
                 // if (formatted.symbol === "NIFTY 19MAY2026 23450 CE") {
                 //     console.log(`[SocketEmit] Emitted tick for ${formatted.symbol} | LTP: ${candle.close} | Time: ${tickPayload.receivedAt}`);

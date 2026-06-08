@@ -18,6 +18,8 @@ const futuresRoutes = require('./routes/futuresRoutes');
 const authRoutes = require('./routes/authRoutes');
 const alertRoutes = require('./routes/alertRoutes');
 const indicatorRoutes = require('./routes/indicatorRoutes');
+const backtestRoutes = require('./routes/backtestRoutes');
+const tradeRoutes = require('./routes/tradeRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -44,6 +46,8 @@ app.use('/options', optionsRoutes);
 app.use('/futures', futuresRoutes);
 app.use('/alerts', alertRoutes);
 app.use('/api/indicator', indicatorRoutes);
+app.use('/api/backtest', backtestRoutes);
+app.use('/api/trades', tradeRoutes);
 
 
 // Socket logic is now managed in services/socket.js

@@ -16,8 +16,10 @@ module.exports = {
     UNSUBSCRIBE_OPTION_CHAIN: "unsubscribeOptionChain",
     GET_MASTER_WATCHLIST: "getMasterWatchlist",     // Request master watchlist data
     UPDATE_INDICATOR: "updateIndicator",            // Request dynamic indicator values
+    GET_BACKTEST_DASHBOARD: "getBacktestDashboard", // Request backtest metrics
     
     // --- OUTPUT EVENTS (Server to Client) ---
+    BACKTEST_DASHBOARD_RESPONSE: "backtestDashboardResponse",
     UPDATE_INDICATOR_RESPONSE: "updateIndicatorResponse",
     MASTER_WATCHLIST_RESPONSE: "masterWatchlistResponse",
     HISTORICAL_DATA_RESPONSE: "historicalDataResponse",

@@ -172,16 +172,10 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         };
         const maxDaysPerChunk = maxDaysMap[interval] || 5;
 
-        // Optimization: Instead of fetching the whole range from fromDate, 
-        // we only fetch from the LAST available candle in our DB to fill the gap.
+        // We will fetch the full range from fromDate to toDate.
+        // Merging and deduplication is handled below.
         let currentStartDate = new Date(fromDate);
-        if (dbCandles.length > 0) {
-            const lastTs = new Date(dbCandles[dbCandles.length - 1].timestamp);
-            currentStartDate = new Date(lastTs.getTime() + 1000); // Start 1s after the last candle
-            console.log(`[API Fallback] DB has ${dbCandles.length} records. Fetching only the gap starting from ${currentStartDate.toISOString()}`);
-        } else {
-            console.log(`[API Fallback] DB is empty. Fetching full range from ${currentStartDate.toISOString()}`);
-        }
+        console.log(`[API Fallback] Fetching full range from ${currentStartDate.toISOString()} to ${new Date(toDate).toISOString()}`);
 
         const finalEndDate = new Date(toDate);
         let allCandles = [...dbCandles.map(c => {

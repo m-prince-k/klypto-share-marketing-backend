@@ -627,7 +627,32 @@ const connectSocket = (server) => {
             optionChainService.unsubscribe(socket.id);
         });
 
-        // --- 6. CLEANUP ---
+        // --- 6. BACKTEST DASHBOARD EVENTS ---
+        socket.on(EVENTS.GET_BACKTEST_DASHBOARD, (payload) => {
+            try {
+                const backtestService = require('./backtestService');
+                let trades = backtestService.generateMockTrades();
+                
+                const { symbol, initialCapital = 10000, riskFreeRate = 0.05 } = payload || {};
+                
+                if (symbol) {
+                    const symbolTarget = symbol.toUpperCase();
+                    trades = trades.filter(t => t.symbol.toUpperCase() === symbolTarget);
+                }
+
+                const metrics = backtestService.calculateBacktestMetrics(trades, Number(initialCapital), Number(riskFreeRate));
+
+                socket.emit(EVENTS.BACKTEST_DASHBOARD_RESPONSE, {
+                    success: true,
+                    data: metrics
+                });
+            } catch (err) {
+                console.error("[Socket Backtest Dashboard] Error:", err.message);
+                socket.emit(EVENTS.BACKTEST_DASHBOARD_RESPONSE, { success: false, error: err.message });
+            }
+        });
+
+        // --- 7. CLEANUP ---
         socket.on("disconnect", () => {
             const store = require('./marketStore');
             console.log(`[Socket] Client disconnected: ${socket.id}`);
