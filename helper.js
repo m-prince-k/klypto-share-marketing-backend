@@ -2,7 +2,7 @@ require('dotenv').config();
 const axios = require("axios");
 const { calculateRSIForSymbols, calculateRSIIndicator } = require("./Indicators/rsi-indicator.js");
 const { calculateSMA, applySMAtoCandleData } = require("./Indicators/SMA.js");
-
+const { calculateMARibbon } = require("./Indicators/ma-ribbon.js");
 
 const { vwmaSeries } = require("./Indicators/vwma.js");
 
@@ -58,6 +58,8 @@ const { tmaSeries } = require("./Indicators/tma.js");
 
 const { calculateWMA } = require("./Indicators/WMA.js");
 const { calculateAwesomeOscillator } = require("./Indicators/awesome-oscillator.js");
+const { calculateBBPERB } = require("./Indicators/bbperb.js");
+const { calculateVolumeOscillator } = require("./Indicators/volume-oscillator.js");
 
 const { calculateVolumeIndicator } = require("./Indicators/volume.js");
 const { calculateCHOP } = require("./Indicators/choppiness-index.js");
@@ -248,6 +250,8 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
       switch (normalizedType) {
         case "SMA":
           return await calculateSMA(candle, { length: config.length || 9, ...config });
+        case "MA_RIBBON":
+          return await calculateMARibbon(candle, config);
         case "STOCH":
           return await calculateStochastic(candle, { kLength: config.kLength || 14, kSmoothing: config.kSmoothing || 1, dSmoothing: config.dSmoothing || 3, ...config });
         case "EMA":
@@ -426,6 +430,18 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
         case "CAMARILLA":
           return calculateCamarillaPivots(candle, { timeframe: "Daily" });
 
+        case "SVP":
+          return await calculateSessionVolumeProfile(candle, { valueArea: config.valueArea || 0.7, source: config.source || "hlc3", ...config });
+
+        case "FRVP":
+          return await calculateFixedRangeVolumeProfile(candle, { lookback: config.lookback || 200, valueArea: config.valueArea || 0.7, source: config.source || "hlc3", ...config });
+
+        case "BBPERB":
+          return await calculateBBPERB(candle, config);
+
+        case "VO":
+          return await calculateVolumeOscillator(candle, config);
+
         case "ALL":
           {
             const indicators = [
@@ -442,7 +458,12 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
               { type: "AO", name: "ao" },
               { type: "PSAR", name: "psar" },
               { type: "STOCHRSI", name: "stochrsi" },
-              { type: "SSL_HYBRID", name: "ssl_hybrid" }
+              { type: "SSL_HYBRID", name: "ssl_hybrid" },
+              { type: "MA_RIBBON", name: "ma_ribbon" },
+              { type: "BBPERB", name: "bbperb" },
+              { type: "VO", name: "vo" },
+              { type: "SVP", name: "svp" },
+              { type: "FRVP", name: "frvp" }
             ];
 
             const resultsMap = new Map();
@@ -479,9 +500,12 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
 
             // Add human-readable datetime to all records
             return finalResults.map(r => {
-              const dt = new Date(r.time * 1000);
+              let dtMs = typeof r.time === 'number' ? r.time : new Date(r.time).getTime();
+              if (dtMs < 100000000000) dtMs *= 1000;
+              const dt = new Date(dtMs);
               return {
                 ...r,
+                time: Math.floor(dtMs / 1000),
                 datetime: dt.toLocaleString('en-IN', {
                   timeZone: 'Asia/Kolkata',
                   hour12: false,
@@ -524,9 +548,13 @@ const withDateTime = (data) => {
 
   // 3. Add readable datetime
   return sorted.map(r => {
-    const dt = new Date(r.time * 1000);
+    let dtMs = typeof r.time === 'number' ? r.time : new Date(r.time).getTime();
+    if (dtMs < 100000000000) dtMs *= 1000; // If time is in seconds, convert to ms
+
+    const dt = new Date(dtMs);
     return {
       ...r,
+      time: Math.floor(dtMs / 1000),
       datetime: dt.toLocaleString('en-IN', {
         timeZone: 'Asia/Kolkata',
         hour12: false,

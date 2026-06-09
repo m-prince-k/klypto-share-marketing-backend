@@ -19,7 +19,8 @@ const authRoutes = require('./routes/authRoutes');
 const alertRoutes = require('./routes/alertRoutes');
 const indicatorRoutes = require('./routes/indicatorRoutes');
 const backtestRoutes = require('./routes/backtestRoutes');
-const tradeRoutes = require('./routes/tradeRoutes');
+const tradeRoutes    = require('./routes/tradeRoutes');
+const strategyRoutes = require('./routes/strategyRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -47,7 +48,8 @@ app.use('/futures', futuresRoutes);
 app.use('/alerts', alertRoutes);
 app.use('/api/indicator', indicatorRoutes);
 app.use('/api/backtest', backtestRoutes);
-app.use('/api/trades', tradeRoutes);
+app.use('/api/trades',    tradeRoutes);
+app.use('/api/strategy',  strategyRoutes);
 
 
 // Socket logic is now managed in services/socket.js
@@ -68,9 +70,6 @@ async function bootstrap() {
 
         store.loginData = loginData.data;
 
-        // Fetch initial LTP for all stocks to prevent 0.00 display
-        await syncLivePrices();
-
         server.listen(PORT, () => {
             console.log(`\n=================================================`);
             console.log(`🚀 SERVER RUNNING AT: http://localhost:${PORT}`);
@@ -82,10 +81,13 @@ async function bootstrap() {
             console.log(`=================================================\n`);
 
             manageWebSocket(loginData, io);
-            // alertService.loadAlerts();
             startSchedulers();
-            // runInitialHistoricalLoad(); // Disabling temporarily to prevent server stall
-            // startGoldBroadcast();
+
+            // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One
+            setTimeout(() => {
+                console.log('[Startup] Running background LTP sync (non-blocking)...');
+                syncLivePrices().catch(e => console.error('[Startup] LTP sync error:', e.message));
+            }, 5000);
         });
     } catch (err) {
         console.error("Bootstrap error:", err);

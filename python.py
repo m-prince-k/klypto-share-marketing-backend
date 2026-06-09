@@ -3,10 +3,11 @@ import time
 import math
 import numpy as np
 import pandas as pd
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from psycopg2 import sql
-from filelock import FileLock
+import socketio
+import requests
+
+# Initialize Socket.IO client
+sio = socketio.Client()
 
 # =========================================================
 # CONFIGURATION
@@ -21,50 +22,49 @@ stock_store = {}
 # Add your 200 stock codes here
 STOCK_LIST = ["ABB","ABBPOW","ADAENT","ADAGRE","ADAPOR","ADATRA","ADICAP","ALKLAB","AMBCE","AMBEN","ANGBRO","APLAPO","APOHOS","ASHLEY","ASIPAI","ASTPOL","AURPHA","AUSMA",   "AVESUP","AXIBAN","BAAUTO","BAFINS","BAJFI","BAJHOL","BANBAN","BANBAR","BANIND","BHAAIR","BHADYN","BHAELE","BHAFOR","BHAINF","BHAPET","BHEL","BIOCON","BLUSTA",             "BOSLIM","BRIIND","BSE","CADHEA","CANBAN","CDSL","CHOINV","CIPLA","COALIN","COLPAL","COMAGE","CONCOR","CROGR","CROGRE","CUMIND","DABIND","DELLIM",             "DIVLAB","DIXTEC","DLFLIM","DRREDD","EICMOT","EXIIND","FEDBAN","FORHEA","FSNECO","GAIL","GLEPHA","GMRINF","GODCON","GODPRO","GRASIM","HAVIND","HCLTEC",             "HDFAMC","HDFBAN","HDFSTA","HERHON","HINAER","HINDAL","HINLEV","HINPET","HINZIN","HUDCO","ICIBAN","ICILOM","ICIPRU","IDECEL","IDFBAN","IIFWEA","INDBA",             "INDEN","INDHO","INDHOT","INDIBA","INDOIL","INDR","INDREN","INFEDG","INFTEC","INOWIN","INTAVI","ITC","JINSP","JIOFIN","JSWENE","JSWSTE","JUBFOO","KALJEW",             "KAYTEC","KEIIND","KFITEC","KOTMAH","KPITE","LARTOU","LAULAB","LIC","LICHF","LTFINA","LTINFO","LUPIN","MACDEV","MAHMAH","MANAFI","MAPHA","MARLIM","MARUTI",             "MAXFIN","MAXHEA","MAZDOC","MCX","MININD","MOTSUM","MPHLIM","MUTFIN","NATALU","NATMIN","NBCC","NESIND","NHPC","NIFTY","NIITEC","NTPC","NUVWEA","OBEREA",             "ODICEM","OILIND","ONE97","ONGC","ORAFIN","PAGIND","PBFINT","PERSYS","PETLNG","PGELEC","PHOMIL","PIDIND","PIIND","PIRPHA","PNBHOU","POLI","POWFIN","POWGRI",             "PREENR","PREEST","PUNBAN","RAIVIK","RBLBAN","RELIND","RUCSOY","RURELE","SAIL","SBICAR","SBILIF","SHRCEM","SHRTRA","SIEMEN","SOLIN","SONBLW","SRF","STABAN",            "SUNPHA","SUPIND","SUZENE","SWILIM","TATELX","TATGLO","TATMOT","TATPOW","TATSTE","TCS","TECMAH","TITIND","TORPHA","TORPOW","TRENT","TUBIN",             "TVSMOT","ULTCEM","UNIBAN","UNIP","UNISPI","VARBEV","VEDLIM","VOLTAS","WAAENE","WIPRO","YESBAN","ZOMLIM"]
 
-# =========================================================
-# DATABASE CONNECTION
-# =========================================================
-def create_connection():
-    conn = psycopg2.connect(
-        host="localhost",
-        database="postgres",
-        user="postgres",
-        password="123",
-        port=5432
-    )
-    conn.autocommit = True
-    return conn
+# Backend API URL (Update if your backend is running on a different URL/Port)
+API_BASE_URL = "http://localhost:8000"
 
 # =========================================================
-# FETCH LATEST TICKS FOR ALL STOCKS
+# FETCH LATEST TICKS FOR ALL STOCKS (VIA API)
 # =========================================================
-def fetch_latest_ticks(conn, table_name, stock_list):
+def fetch_latest_ticks():
     try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-        query = sql.SQL("""
-            SELE CT DISTINCT ON (raw_data->>'stock_code')
-                raw_data->>'stock_code' AS stock_code,
-                (raw_data->>'open')::numeric AS open,
-                (raw_data->>'high')::numeric AS high,
-                (raw_data->>'low')::numeric AS low,
-                (raw_data->>'close')::numeric AS close,
-                (raw_data->>'volume')::bigint AS volume,
-                TO_CHAR((raw_data->>'datetime')::timestamp, 'DD-MM-YYYY HH24:MI') AS datetime
-            FROM {}
-            WHERE raw_data->>'stock_code' = ANY(%s)
-            ORDER BY raw_data->>'stock_code',
-                     (raw_data->>'datetime')::timestamp ASC;
-        """).format(sql.Identifier(table_name))
-
-        cursor.execute(query, (stock_list,))
-        rows = cursor.fetchall()
-
-        return [dict(r) for r in rows]
-
+        response = requests.get(f"{API_BASE_URL}/equity/live")
+        data = response.json()
+        
+        if not data.get("success"):
+            return []
+            
+        ticks = []
+        for item in data.get("data", []):
+            stock_code = item.get("symbol")
+            if stock_code not in STOCK_LIST:
+                continue
+                
+            # Fallbacks for field names depending on API response format
+            close_price = item.get("last_traded_price") or item.get("ltp") or 0
+            open_price = item.get("open_price_of_the_day") or close_price
+            high_price = item.get("high_price_of_the_day") or close_price
+            low_price = item.get("low_price_of_the_day") or close_price
+            volume = item.get("volume_trade_for_the_day") or 0
+            
+            ticks.append({
+                "stock_code": stock_code,
+                "datetime": pd.Timestamp.now().isoformat(),
+                "open": float(open_price),
+                "high": float(high_price),
+                "low": float(low_price),
+                "close": float(close_price),
+                "volume": int(volume)
+            })
+            
+        return ticks
     except Exception as e:
-        print(f"[DB ERROR] {e}")
+        print(f"[API ERROR] fetching live ticks: {e}")
         return []
+
+
 
 # =========================================================
 # INDICATORS
@@ -482,36 +482,54 @@ def save_trade(stock, trade_data):
     trade_file = os.path.join(trade_folder, f"{stock}_trade.csv")
     lock_file = trade_file + ".lock"
 
-    with FileLock(lock_file):
-        new_df = pd.DataFrame([trade_data])
+    new_df = pd.DataFrame([trade_data])
 
-        if os.path.exists(trade_file):
-            old_df = pd.read_csv(trade_file)
-            new_df = pd.concat([old_df, new_df], ignore_index=True)
+    if os.path.exists(trade_file):
+        old_df = pd.read_csv(trade_file)
+        new_df = pd.concat([old_df, new_df], ignore_index=True)
 
-        new_df.to_csv(trade_file, index=False)
+    new_df.to_csv(trade_file, index=False)
 
 # =========================================================
-# LOAD HISTORICAL
+# LOAD HISTORICAL (VIA API)
 # =========================================================
 def initialize_all_stocks():
     for stock in STOCK_LIST:
         try:
-            file_path = os.path.join(historical_folder, f"{stock}.csv")
-
-            if not os.path.exists(file_path):
-                print(f"[MISSING FILE] {stock}")
+            url = f"{API_BASE_URL}/equity/historical?symbol={stock}&interval=5m&days=20"
+            response = requests.get(url)
+            data = response.json()
+            
+            if not data.get("success") or not data.get("data"):
+                print(f"[MISSING API DATA] {stock}")
+                continue
+                
+            df = pd.DataFrame(data["data"])
+            
+            # Format API response columns if they are list arrays instead of dicts
+            if len(df.columns) >= 6 and 'datetime' not in df.columns and 'time' not in df.columns:
+                df.columns = ["datetime", "open", "high", "low", "close", "volume"][:len(df.columns)]
+                
+            # Determine correct datetime column
+            dt_col = "time" if "time" in df.columns else "datetime"
+            
+            if dt_col in df.columns:
+                df["datetime"] = pd.to_datetime(
+                    df[dt_col],
+                    dayfirst=True,
+                    format="mixed"
+                )
+            else:
+                print(f"[INIT ERROR] {stock}: Missing datetime column in API response.")
                 continue
 
-            df = pd.read_csv(file_path)
-
-            df["datetime"] = pd.to_datetime(
-                df["datetime"],
-                dayfirst=True,
-                format="mixed"
-            )
-
+            # Sort and take latest rows
             df = df.sort_values("datetime").tail(MAX_ROWS).reset_index(drop=True)
+            
+            # Ensure proper types
+            for col in ["open", "high", "low", "close"]:
+                if col in df.columns:
+                    df[col] = df[col].astype(float)
 
             stock_store[stock] = {
                 "df": df,
@@ -519,7 +537,7 @@ def initialize_all_stocks():
                 "active_trade": None
             }
 
-            print(f"[INIT] {stock} loaded")
+            print(f"[INIT] {stock} loaded from API")
 
         except Exception as e:
             print(f"[INIT ERROR] {stock}: {e}")
@@ -659,34 +677,39 @@ def process_stock_tick(stock, tick):
 
         trade_signal = {
             "Stock": stock,
-            "Date": row["datetime"].date(),
+            "Date": str(row["datetime"].date()),
             "Status": "TRADED",
             "Type": trade_type,
 
-            "Entry_Time": row["datetime"],
+            "Entry_Time": str(row["datetime"]),
             "Entry_Price": entry_close,
 
-            "RSI": rsi,
+            "RSI": float(rsi) if pd.notna(rsi) else None,
             "Trend": trend,
             "Signal": signal,
 
-            "SSL_Line": ssl_line,
+            "SSL_Line": float(ssl_line) if pd.notna(ssl_line) else None,
             "SSL_Trend_Entry": row["SSL_Trend"],
-            "SSL_Between": ssl_between,
-            "SSL_Distance_Pct": ssl_pct,
+            "SSL_Between": bool(ssl_between),
+            "SSL_Distance_Pct": float(ssl_pct),
 
-            "Gap_Pct": candle_info["gap_pct"],
-            "Body_Pct": candle_info["body_pct"],
-            "Upper_Wick": candle_info["upper_wick"],
-            "Lower_Wick": candle_info["lower_wick"],
+            "Gap_Pct": float(candle_info["gap_pct"]) if pd.notna(candle_info["gap_pct"]) else None,
+            "Body_Pct": float(candle_info["body_pct"]) if pd.notna(candle_info["body_pct"]) else None,
+            "Upper_Wick": float(candle_info["upper_wick"]) if pd.notna(candle_info["upper_wick"]) else None,
+            "Lower_Wick": float(candle_info["lower_wick"]) if pd.notna(candle_info["lower_wick"]) else None,
 
-            "SMA_20": row["SMA_20"],
-            "SMA_50": row["SMA_50"],
-            "SMA_100": row["SMA_100"],
-            "SMA_200": row["SMA_200"],
+            "SMA_20": float(row["SMA_20"]) if pd.notna(row["SMA_20"]) else None,
+            "SMA_50": float(row["SMA_50"]) if pd.notna(row["SMA_50"]) else None,
+            "SMA_100": float(row["SMA_100"]) if pd.notna(row["SMA_100"]) else None,
+            "SMA_200": float(row["SMA_200"]) if pd.notna(row["SMA_200"]) else None,
             
-            "volume": row.get("volume", None)
+            "volume": int(row.get("volume", 0)) if pd.notna(row.get("volume", 0)) else None
         }
+
+        # Emit the signal via WebSocket to the Node.js server
+        if sio.connected:
+            sio.emit('live_trade_signal_python', trade_signal)
+            print(f"[WS] Emitted trade signal for {stock}")
 
         save_trade(stock, trade_signal)
 
@@ -707,17 +730,21 @@ def process_stock_tick(stock, tick):
 def main():
     print("[SYSTEM] Starting engine...")
 
-    conn = create_connection()
-    print("[SYSTEM] DB connected")
+    # Connect to Node.js backend via WebSocket
+    try:
+        sio.connect(API_BASE_URL)
+        print(f"[SYSTEM] Connected to Node.js WebSocket server at {API_BASE_URL}")
+    except Exception as e:
+        print(f"[SYSTEM] WebSocket connection failed: {e}")
 
     initialize_all_stocks()
     print(f"[SYSTEM] Loaded {len(stock_store)} stocks")
 
     while True:
         try:
-            print("[LOOP] Fetching latest ticks...")
+            print("[LOOP] Fetching latest ticks from API...")
 
-            ticks = fetch_latest_ticks(conn, TABLE_NAME, STOCK_LIST)
+            ticks = fetch_latest_ticks()
             
             print(f"[DEBUG] ticks fetched: {len(ticks)}")
             print(ticks[:2])

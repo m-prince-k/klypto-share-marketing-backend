@@ -89,7 +89,6 @@ function stdev(data, length) {
 // ==============================
 
 async function calculateSMA(candles, options) {
-  console.log(candles, options, "***********************")
 
   const length = options?.length || 9;
   const offset = options?.offset || 0;

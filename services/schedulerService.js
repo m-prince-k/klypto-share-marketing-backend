@@ -38,6 +38,70 @@ function startSchedulers() {
         }
     }, 60000);
 
+    // 1.5 Trading Engine Scanner (Every 60 Seconds)
+    let isScanning = false;
+    setInterval(async () => {
+        if (!isAnyMarketOpen() || isScanning) return; // Skip during off-hours or if previous scan is still running
+        isScanning = true;
+
+        try {
+            const { process_stock_tick } = require('../trading_engine');
+            const { Trade } = require('../models');
+
+            const tokens = Object.keys(store.liveCandles);
+            if (tokens.length === 0) {
+                isScanning = false;
+                return;
+            }
+
+            console.log(`[EngineRunner] Scanning ${tokens.length} stocks for trade signals...`);
+
+            for (const token of tokens) {
+                try {
+                    const uSym = store.tokenToName[token] || token;
+                    const liveTick = store.liveCandles[token];
+                    
+                    const tradeSignal = await process_stock_tick(uSym, liveTick);
+
+                    if (tradeSignal) {
+                        console.log(`[EngineRunner] 🔥 SIGNAL GENERATED for ${uSym}! Saving and emitting...`);
+                        
+                        // Save to Database
+                        await Trade.create({
+                            symbol: tradeSignal.Stock,
+                            direction: tradeSignal.Type === 'CALL' ? 'Long' : 'Short',
+                            entryTime: new Date(tradeSignal.Entry_Time),
+                            exitTime: null,
+                            entryPrice: tradeSignal.Entry_Price,
+                            exitPrice: null,
+                            pnlValue: 0,
+                            pnlPercentage: 0,
+                            status: 'OPEN',
+                            reason: `Signal: ${tradeSignal.Signal}, RSI: ${tradeSignal.RSI}`
+                        });
+
+                        // Broadcast to Frontend
+                        const io = getIO();
+                        if (io) {
+                            io.emit('live_trade_signal', {
+                                success: true,
+                                message: `New Trade Signal for ${uSym}`,
+                                data: tradeSignal
+                            });
+                        }
+                    }
+                } catch (err) {
+                    // Silently ignore to avoid spamming the console on partial data
+                }
+                
+                // Add a small delay (200ms) between each stock to prevent CPU freezing and API Rate Limits
+                await new Promise(r => setTimeout(r, 200));
+            }
+        } finally {
+            isScanning = false;
+        }
+    }, 60000);
+
     // 2. Background Sync for 1-minute Gaps (Every 5 minutes)
     setInterval(async () => {
         return; // Temporarily Disabled: Causes Angel API Rate Limits & Server Stall
@@ -227,9 +291,17 @@ function startSchedulers() {
                 const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
                 const allSymbols = [...new Set([...indices, ...stockNames])];
                 
-                console.log(`[Scheduler] Snapshot for ${allSymbols.length} symbols started.`);
-                await optionChainService.saveDailySnapshot(allSymbols);
-                console.log(`[Scheduler] Snapshot completed successfully.`);
+                // optionChainService guard — only run if service exists
+                let optionChainService;
+                try { optionChainService = require('./optionChainService'); } catch(e) { /* not available */ }
+
+                if (optionChainService && typeof optionChainService.saveDailySnapshot === 'function') {
+                    console.log(`[Scheduler] Snapshot for ${allSymbols.length} symbols started.`);
+                    await optionChainService.saveDailySnapshot(allSymbols);
+                    console.log(`[Scheduler] Snapshot completed successfully.`);
+                } else {
+                    console.log(`[Scheduler] optionChainService not available, skipping snapshot.`);
+                }
             } catch (err) {
                 console.error("[Scheduler] Snapshot Error:", err.message);
             }
@@ -243,7 +315,7 @@ function startSchedulers() {
         runOptionSnapshot();
         setInterval(runOptionSnapshot, 3600000);
     }, 120000);
-    // 6. Background LTP Sync (Every 5 minutes) to ensure watchlist stays accurate
+    // 6. Background LTP Sync (Every 10 minutes) to ensure watchlist stays accurate
     setInterval(async () => {
         const { syncLivePrices } = require('./stockService');
         const { isAnyMarketOpen } = require('./webSocketService');
@@ -251,7 +323,7 @@ function startSchedulers() {
             console.log("[Scheduler] Triggering periodic LTP sync for watchlist...");
             await syncLivePrices();
         }
-    }, 300000);
+    }, 600000);
 }
 
 const { syncPriorityOptionsHistory } = require('./optionSyncService');

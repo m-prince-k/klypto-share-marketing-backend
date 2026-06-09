@@ -37,7 +37,7 @@ const createTrade = async (req, res) => {
       reason: reason || 'Manual Entry'
     });
 
-    res.status(201).json({ success: true, message: 'Trade created successfully', data: trade });
+    return await res.status(201).json({ success: true, message: 'Trade created successfully', data: trade });
   } catch (error) {
     console.error('Error creating trade:', error);
     res.status(500).json({ success: false, message: 'Internal Server Error', error: error.message });

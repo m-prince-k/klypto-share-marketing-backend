@@ -189,7 +189,11 @@ const connectSocket = (server) => {
                 let filteredResults = finalResults;
                 if (fD && finalResults.length > 0) {
                     const startTs = new Date(fD).getTime();
-                    filteredResults = finalResults.filter(r => (r.time * 1000) >= startTs);
+                    filteredResults = finalResults.filter(r => {
+                        let dtMs = typeof r.time === 'number' ? r.time : new Date(r.time).getTime();
+                        if (dtMs < 100000000000) dtMs *= 1000;
+                        return dtMs >= startTs;
+                    });
                 }
 
                 socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: filteredResults });
@@ -339,7 +343,9 @@ const connectSocket = (server) => {
                     const validResult = [...results].reverse().find(r => 
                         (r[indKey] !== null && r[indKey] !== undefined) || 
                         (r[type] !== null && r[type] !== undefined) ||
-                        (r.value !== null && r.value !== undefined)
+                        (r.value !== null && r.value !== undefined) ||
+                        (type.toUpperCase() === 'MA_RIBBON' && r.ma1 !== undefined && r.ma1 !== null) ||
+                        (type.toUpperCase() === 'SSL_HYBRID' && r.baseline !== undefined && r.baseline !== null)
                     );
 
                     const latest = validResult || results[results.length - 1];
@@ -347,34 +353,65 @@ const connectSocket = (server) => {
                     let val = latest[indKey];
                     if (val === undefined || val === null) val = latest[type];
                     if (val === undefined || val === null) val = latest.value;
+                    // SSL_HYBRID does not have a single scalar value — use ssl1 as representative value
+                    if ((val === undefined || val === null) && type.toUpperCase() === 'SSL_HYBRID') {
+                        val = latest.ssl1 ?? latest.baseline ?? 0;
+                    }
                     
-                    if (val === undefined || val === null) {
+                    if ((val === undefined || val === null) && type.toUpperCase() !== 'MA_RIBBON') {
                         console.warn(`[LiveIndicator] ${uSym} ${type} is null even after searching history.`);
                         val = 0;
                     }
 
-                    console.log(`[LiveIndicator] ${uSym} ${type} final value: ${val.toFixed(2)} (IST: ${new Date(latest.time * 1000).toLocaleTimeString()})`);
+                    if (type.toUpperCase() !== 'MA_RIBBON') {
+                        console.log(`[LiveIndicator] ${uSym} ${type} final value: ${parseFloat(val).toFixed(2)} (IST: ${new Date(latest.time * 1000).toLocaleTimeString()})`);
+                    } else {
+                        console.log(`[LiveIndicator] ${uSym} ${type} final value: ma1=${latest.ma1}, ma2=${latest.ma2} (IST: ${new Date(latest.time * 1000).toLocaleTimeString()})`);
+                    }
+
+                    const responseData = { 
+                        time: Number(latest.time), 
+                        receivedAt: new Date().toISOString(),
+                        tickTime: latest.tickTime || (latest.time * 1000),
+                        readableTickTime: latest.readableTickTime || new Date(latest.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                        value: parseFloat(val || 0),
+                        [indKey]: parseFloat(val || 0),
+                        [type]: parseFloat(val || 0),
+                        last_traded_price: latest.close || latest.last_traded_price || 0,
+                        datetime: new Date(latest.time * 1000).toLocaleString('en-IN', { 
+                            timeZone: 'Asia/Kolkata', 
+                            hour12: false,
+                            hour: '2-digit', minute: '2-digit', second: '2-digit',
+                            day: '2-digit', month: '2-digit', year: 'numeric'
+                        })
+                    };
+
+                    if (type.toUpperCase() === 'MA_RIBBON') {
+                        responseData.ma1 = latest.ma1;
+                        responseData.ma2 = latest.ma2;
+                        responseData.ma3 = latest.ma3;
+                        responseData.ma4 = latest.ma4;
+                    }
+
+                    // SSL_HYBRID: send all sub-fields so frontend gets full data
+                    if (type.toUpperCase() === 'SSL_HYBRID') {
+                        responseData.ssl1 = latest.ssl1;
+                        responseData.ssl2 = latest.ssl2;
+                        responseData.sslExit = latest.sslExit;
+                        responseData.baseline = latest.baseline;
+                        responseData.upperChannel = latest.upperChannel;
+                        responseData.lowerChannel = latest.lowerChannel;
+                        responseData.buySignal = latest.buySignal;
+                        responseData.sellSignal = latest.sellSignal;
+                        responseData.atr = latest.atr;
+                        responseData.riskLevel = latest.riskLevel;
+                    }
 
                     socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, {
                         success: true,
                         symbol: uSym,
                         type,
-                        data: [{ 
-                            time: Number(latest.time), 
-                            receivedAt: new Date().toISOString(),
-                            tickTime: latest.tickTime || (latest.time * 1000),
-                            readableTickTime: latest.readableTickTime || new Date(latest.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-                            value: parseFloat(val || 0),
-                            [indKey]: parseFloat(val || 0),
-                            [type]: parseFloat(val || 0),
-                            last_traded_price: latest.close || latest.last_traded_price || 0,
-                            datetime: new Date(latest.time * 1000).toLocaleString('en-IN', { 
-                                timeZone: 'Asia/Kolkata', 
-                                hour12: false,
-                                hour: '2-digit', minute: '2-digit', second: '2-digit',
-                                day: '2-digit', month: '2-digit', year: 'numeric'
-                            })
-                        }]
+                        data: [responseData]
                     });
 
                     // --- TRACK SUBSCRIPTION FOR LIVE UPDATES ---
@@ -520,20 +557,26 @@ const connectSocket = (server) => {
                     lastEmit: Date.now()
                 });
 
-                const latest = results[results.length - 1] || {};
+                const finalResults = withDateTime(results);
+
+                const latest = finalResults[finalResults.length - 1] || {};
                 const indKey = type.toLowerCase();
                 const val = latest[indKey] ?? latest[type] ?? latest.value ?? 0;
 
                 // Slice result back to requested range (remove warmup data)
-                let filteredResults = results;
-                if (formattedFromDate && Array.isArray(results) && results.length > 0) {
+                let filteredResults = finalResults;
+                if (formattedFromDate && Array.isArray(finalResults) && finalResults.length > 0) {
                     const startTs = new Date(formattedFromDate).getTime();
-                    filteredResults = results.filter(r => (r.time * 1000) >= startTs);
+                    filteredResults = finalResults.filter(r => {
+                        let dtMs = typeof r.time === 'number' ? r.time : new Date(r.time).getTime();
+                        if (dtMs < 100000000000) dtMs *= 1000;
+                        return dtMs >= startTs;
+                    });
                 }
 
                 console.log(`[Socket] ${type} update success: ${Date.now() - start}ms | Val: ${val} | Returned: ${filteredResults.length}`);
 
-                socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, {
+                const responseData = {
                     success: true,
                     symbol: uSym,
                     type: type,
@@ -543,7 +586,16 @@ const connectSocket = (server) => {
                     [type]: parseFloat(val || 0),
                     time: latest.time,
                     data: filteredResults
-                });
+                };
+
+                if (type.toUpperCase() === 'MA_RIBBON') {
+                    responseData.ma1 = latest.ma1;
+                    responseData.ma2 = latest.ma2;
+                    responseData.ma3 = latest.ma3;
+                    responseData.ma4 = latest.ma4;
+                }
+
+                socket.emit(EVENTS.UPDATE_INDICATOR_RESPONSE, responseData);
 
             } catch (err) {
                 console.error("[Socket Update Indicator] Error:", err.message);
@@ -628,10 +680,10 @@ const connectSocket = (server) => {
         });
 
         // --- 6. BACKTEST DASHBOARD EVENTS ---
-        socket.on(EVENTS.GET_BACKTEST_DASHBOARD, (payload) => {
+        socket.on(EVENTS.GET_BACKTEST_DASHBOARD, async (payload) => {
             try {
                 const backtestService = require('./backtestService');
-                let trades = backtestService.generateMockTrades();
+                let trades = await backtestService.getTradesFromDB();
                 
                 const { symbol, initialCapital = 10000, riskFreeRate = 0.05 } = payload || {};
                 
@@ -828,12 +880,25 @@ const handleIndicatorBroadcast = async (tick) => {
         for (const [subKey, sub] of subs.entries()) {
             // Match by token or symbol
             if (sub.token === cleanToken || sub.symbol === tickSymbol) {
-                console.log(`[IndicatorMatch] Found match for ${tickSymbol} (Token: ${cleanToken}) - Socket: ${socketId}`);
                 try {
-                    // To keep it efficient, we only calculate if it's been at least 500ms since last update for this socket
                     const now = Date.now();
-                    if (sub.lastEmit && now - sub.lastEmit < 800) continue; 
+
+                    // --- INTERVAL-BASED THROTTLING ---
+                    // Only emit when a new candle would have started for the subscribed interval
+                    const intervalMinutesMap = {
+                        "ONE_MINUTE": 1, "THREE_MINUTE": 3, "FIVE_MINUTE": 5,
+                        "TEN_MINUTE": 10, "FIFTEEN_MINUTE": 15, "THIRTY_MINUTE": 30,
+                        "ONE_HOUR": 60, "ONE_DAY": 1440
+                    };
+                    const intervalMs = (intervalMinutesMap[sub.interval] || 1) * 60 * 1000;
+                    const currentIntervalBucket = Math.floor(now / intervalMs);
+                    
+                    // Skip if we already emitted for this interval bucket
+                    if (sub.lastIntervalBucket === currentIntervalBucket) continue;
+                    sub.lastIntervalBucket = currentIntervalBucket;
                     sub.lastEmit = now;
+                    
+                    console.log(`[IndicatorMatch] New interval tick for ${tickSymbol} (${sub.interval}) - Socket: ${socketId}`);
 
                     // --- AUTOMATIC LOOKBACK FOR WARMUP ---
                     let dynamicFrom = null;
@@ -873,26 +938,33 @@ const handleIndicatorBroadcast = async (tick) => {
                     if (indResults && indResults.length > 0) {
                         const latest = indResults[indResults.length - 1];
                         const indKey = sub.type.toLowerCase();
-                        let val = latest[indKey] ?? latest[sub.type] ?? latest.value ?? 0;
-                        
+                        let val = latest[indKey] ?? latest[sub.type] ?? latest.value;
+                        // SSL_HYBRID fix: use ssl1 as the scalar representative value
+                        if ((val === undefined || val === null) && indType === 'SSL_HYBRID') {
+                            val = latest.ssl1 ?? latest.baseline ?? 0;
+                        }
+                        val = val ?? 0;
+
+                        const livePushData = { 
+                            ...latest, // Send all calculated keys (macd, histogram, upper, lower, ssl1, baseline, etc.)
+                            time: Number(latest.time), 
+                            receivedAt: new Date().toISOString(),
+                            tickTime: latest.tickTime || (latest.time * 1000),
+                            readableTickTime: latest.readableTickTime || new Date(latest.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                            value: parseFloat(val),
+                            [indKey]: parseFloat(val),
+                            [sub.type]: parseFloat(val),
+                            last_traded_price: latest.close || 0,
+                            datetime: latest.datetime
+                        };
+
                         socket.emit(EVENTS.LIVE_INDICATOR_RESPONSE, {
                             success: true,
                             symbol: sub.symbol,
                             type: sub.type,
                             isLivePush: true,
                             isLive: true,
-                            data: [{ 
-                                ...latest, // Send all calculated keys (macd, histogram, upper, lower, etc.)
-                                time: Number(latest.time), 
-                                receivedAt: new Date().toISOString(),
-                                tickTime: latest.tickTime || (latest.time * 1000),
-                                readableTickTime: latest.readableTickTime || new Date(latest.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-                                value: parseFloat(val),
-                                [indKey]: parseFloat(val),
-                                [sub.type]: parseFloat(val),
-                                last_traded_price: latest.close || 0,
-                                datetime: latest.datetime
-                            }]
+                            data: [livePushData]
                         });
                     }
                 } catch (err) {

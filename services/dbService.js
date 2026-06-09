@@ -3,6 +3,31 @@ const { Op } = require('sequelize');
 const store = require('./marketStore');
 const smartApi = require('./smartApi');
 
+// ============================================================
+// GLOBAL API RATE-LIMIT QUEUE
+// Angel One allows ~3 req/sec. Multiple concurrent callers
+// (schedulers, socket, controllers) were all hitting the API
+// simultaneously, causing "exceeding access rate" errors and
+// blocking the event loop. This queue serialises every call.
+// ============================================================
+let _apiQueue = Promise.resolve();
+let _lastApiCallTime = 0;
+const API_MIN_INTERVAL_MS = 1100; // ~1 call per second (safe)
+
+function queuedApiCall(params) {
+    _apiQueue = _apiQueue.then(async () => {
+        const now = Date.now();
+        const elapsed = now - _lastApiCallTime;
+        if (elapsed < API_MIN_INTERVAL_MS) {
+            await new Promise(r => setTimeout(r, API_MIN_INTERVAL_MS - elapsed));
+        }
+        _lastApiCallTime = Date.now();
+        return smartApi.getCandleData(params);
+    });
+    return _apiQueue;
+}
+// ============================================================
+
 const formatDate = (date, time, interval) => {
     if (!date) return null;
     const d = new Date(date);
@@ -166,9 +191,9 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         console.log(`[API Fallback] Fetching ${symbol} from Angel One (${exchange})... Threshold not met (Got ${dbCandles.length}, need ~${Math.floor(((new Date(toDate) - new Date(fromDate)) / (1000 * 60 * 60 * 24)) * (interval === "ONE_DAY" ? 5/7 : 1) * 0.7)})`);
         
         const maxDaysMap = {
-            "ONE_MINUTE": 5, "THREE_MINUTE": 10, "FIVE_MINUTE": 15,
-            "TEN_MINUTE": 30, "FIFTEEN_MINUTE": 60, "THIRTY_MINUTE": 90,
-            "ONE_HOUR": 150, "ONE_DAY": 2000
+            "ONE_MINUTE": 30, "THREE_MINUTE": 90, "FIVE_MINUTE": 100,
+            "TEN_MINUTE": 100, "FIFTEEN_MINUTE": 200, "THIRTY_MINUTE": 200,
+            "ONE_HOUR": 400, "ONE_DAY": 2000
         };
         const maxDaysPerChunk = maxDaysMap[interval] || 5;
 
@@ -207,8 +232,8 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             console.log(`[AngelOne API] Requesting ${symbol} (${token}) | Interval: ${interval} | From: ${fStr} | To: ${tStr}`);
             
             try {
-                // Wrap API call in a timeout to prevent hanging
-                const apiPromise = smartApi.getCandleData({
+                // Use the global queued API caller to prevent rate-limit floods
+                const apiPromise = queuedApiCall({
                     exchange,
                     symboltoken: token,
                     interval: interval,
@@ -217,7 +242,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 });
 
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error("Angel One API Timeout")), 12000)
+                    setTimeout(() => reject(new Error("Angel One API Timeout")), 20000)
                 );
 
                 const response = await Promise.race([apiPromise, timeoutPromise]);
@@ -240,7 +265,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
 
             currentStartDate = new Date(currentChunkEndDate.getTime() + 1000); // Ensure we move forward
             if (currentStartDate >= finalEndDate) break;
-            await new Promise(resolve => setTimeout(resolve, 800)); // Reduced delay slightly
+            // No extra delay needed - the global queue enforces 1100ms between calls
         }
 
         // 3. Save to DB and Return
