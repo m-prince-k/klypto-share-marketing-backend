@@ -4,29 +4,98 @@ const store = require('./marketStore');
 const smartApi = require('./smartApi');
 
 // ============================================================
-// GLOBAL API RATE-LIMIT QUEUE
-// Angel One allows ~3 req/sec. Multiple concurrent callers
-// (schedulers, socket, controllers) were all hitting the API
-// simultaneously, causing "exceeding access rate" errors and
-// blocking the event loop. This queue serialises every call.
+// PRODUCTION-GRADE API RATE LIMITER
+// Handles Angel One "exceeding access rate" with:
+//   1. Serial queue — max 1 call per second guaranteed
+//   2. Exponential backoff — waits 2s → 4s → 8s on rate limit
+//   3. Auto-retry — up to 3 retries per request
+//   4. Circuit breaker — pauses ALL calls for 60s when
+//      Angel One is consistently refusing (3 failures in row)
+// Result: Server NEVER gets stuck. Requests queue up calmly.
 // ============================================================
 let _apiQueue = Promise.resolve();
 let _lastApiCallTime = 0;
-const API_MIN_INTERVAL_MS = 1100; // ~1 call per second (safe)
+let _consecutiveRateLimitFails = 0;
+let _circuitOpenUntil = 0;
+
+const API_MIN_INTERVAL_MS = 1100;   // 1 call/sec max
+const MAX_RETRIES = 3;
+const CIRCUIT_BREAK_DURATION_MS = 60000; // 60s pause when circuit opens
+const CIRCUIT_FAIL_THRESHOLD = 3;        // 3 consecutive failures = open circuit
+
+async function _executeApiCall(params, attempt = 1) {
+    // Circuit breaker check
+    if (Date.now() < _circuitOpenUntil) {
+        const waitMs = _circuitOpenUntil - Date.now();
+        console.warn(`[API Queue] Circuit OPEN — waiting ${Math.ceil(waitMs / 1000)}s before retrying...`);
+        await new Promise(r => setTimeout(r, waitMs));
+    }
+
+    // Enforce minimum interval between calls
+    const now = Date.now();
+    const elapsed = now - _lastApiCallTime;
+    if (elapsed < API_MIN_INTERVAL_MS) {
+        await new Promise(r => setTimeout(r, API_MIN_INTERVAL_MS - elapsed));
+    }
+    _lastApiCallTime = Date.now();
+
+    let response;
+    try {
+        response = await smartApi.getCandleData(params);
+    } catch (err) {
+        // Network / timeout error — treat as rate limit for safety
+        if (attempt <= MAX_RETRIES) {
+            const backoff = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+            console.warn(`[API Queue] Network error (attempt ${attempt}/${MAX_RETRIES}), backing off ${backoff}ms: ${err.message}`);
+            _consecutiveRateLimitFails++;
+            if (_consecutiveRateLimitFails >= CIRCUIT_FAIL_THRESHOLD) {
+                _circuitOpenUntil = Date.now() + CIRCUIT_BREAK_DURATION_MS;
+                console.error(`[API Queue] Circuit BREAKER TRIPPED — all API calls paused for 60s`);
+            }
+            await new Promise(r => setTimeout(r, backoff));
+            return _executeApiCall(params, attempt + 1);
+        }
+        throw err;
+    }
+
+    // Check for rate limit in response body (Angel One sends it as a string in the response)
+    const isRateLimited = response && (
+        (typeof response === 'string' && response.includes('exceeding access rate')) ||
+        (response.message && response.message.includes('exceeding access rate')) ||
+        (!response.status && response.errorcode === 'AG8001')
+    );
+
+    if (isRateLimited) {
+        _consecutiveRateLimitFails++;
+        if (_consecutiveRateLimitFails >= CIRCUIT_FAIL_THRESHOLD) {
+            _circuitOpenUntil = Date.now() + CIRCUIT_BREAK_DURATION_MS;
+            console.error(`[API Queue] Circuit BREAKER TRIPPED — pausing all API calls for 60s`);
+        }
+        if (attempt <= MAX_RETRIES) {
+            const backoff = Math.pow(2, attempt) * 1500; // 3s, 6s, 12s
+            console.warn(`[API Queue] Rate limited (attempt ${attempt}/${MAX_RETRIES}), backing off ${backoff}ms`);
+            await new Promise(r => setTimeout(r, backoff));
+            return _executeApiCall(params, attempt + 1);
+        }
+        // All retries exhausted — return null-safe empty response
+        console.error(`[API Queue] All ${MAX_RETRIES} retries exhausted for ${params.symboltoken}. Giving up.`);
+        return { status: false, data: [], message: 'rate_limit_exhausted' };
+    }
+
+    // Success — reset circuit breaker counter
+    if (_consecutiveRateLimitFails > 0) {
+        console.log(`[API Queue] Circuit reset after success.`);
+        _consecutiveRateLimitFails = 0;
+    }
+    return response;
+}
 
 function queuedApiCall(params) {
-    _apiQueue = _apiQueue.then(async () => {
-        const now = Date.now();
-        const elapsed = now - _lastApiCallTime;
-        if (elapsed < API_MIN_INTERVAL_MS) {
-            await new Promise(r => setTimeout(r, API_MIN_INTERVAL_MS - elapsed));
-        }
-        _lastApiCallTime = Date.now();
-        return smartApi.getCandleData(params);
-    });
+    _apiQueue = _apiQueue.then(() => _executeApiCall(params));
     return _apiQueue;
 }
 // ============================================================
+
 
 const formatDate = (date, time, interval) => {
     if (!date) return null;

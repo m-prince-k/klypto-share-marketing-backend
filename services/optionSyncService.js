@@ -8,7 +8,38 @@ const { Op } = require('sequelize');
 async function syncPriorityOptionsHistory() {
     const symbols = [
         "ABB", "ABBPOW", "ADAENT", "ADAGRE", "ADAPOR", "ADATRA", "ADICAP", "ALKLAB", "AMBCE", "AMBEN",
-        "ANGBRO", "APLAPO", "APOHOS", "ASHLEY", "ASIPAI", "ASTPOL", "AURPHA", "AUSMA", "AVESUP", "AXIBAN"
+        "ANGBRO", "APLAPO", "APOHOS", "ASHLEY", "ASIPAI", "ASTPOL", "AURPHA", "AUBANK",
+        "AXIBAN", "BAAUTO", "BAFINS", "BAJFI", "BAJHOL", "BANBAN", "BANBAR", "BANIND",
+        "BHAAIR", "BHADYN", "BHAELE", "BHAFOR", "BHAINF", "BHAPET", "BHEL", "BIOCON",
+        "BLUSTA", "BOSLIM", "BRIIND", "BSE", "CADHEA", "CAMS", "CANBAN", "CDSL", "CHOINV",
+        "CIPLA", "COALIN", "COLPAL", "CONCOR", "CROMPTON", "CROGRE", "CUMIND",
+        "DABIND", "DELLIM", "DIVLAB", "DIXTEC", "DLFLIM", "DMART", "DRREDD",
+        "EICMOT", "EXIIND", "FEDBAN", "FORHEA", "FSNECO",
+        "GAIL", "GLEPHA", "GMRAIRPORT", "GODCON", "GODPRO", "GRASIM",
+        "HAVIND", "HCLTEC", "HDFAMC", "HDFBAN", "HDFSTA", "HERHON", "HINAER",
+        "HINDAL", "HINLEV", "HINPET", "HINZIN", "HUDCO",
+        "ICIBAN", "ICILOM", "ICIPRU", "IDECEL", "IDFBAN", "IEX", "IIFWEA",
+        "INDUSINDBK", "INDEN", "INDHOT", "INDOIL", "INDREN",
+        "INFEDG", "INFTEC", "INOWIN", "IRFC", "ITC",
+        "JINDALSTEL", "JIOFIN", "JSWENE", "JSWSTE", "JUBFOO",
+        "KALJEW", "KAYTEC", "KEIIND", "KFITEC", "KOTMAH", "KPITE",
+        "LARTOU", "LAULAB", "LIC", "LICHF", "LTF", "LTM", "LUPIN",
+        "LODHA", "MAHMAH", "MANAFI", "MARLIM", "MARUTI", "MAXFIN", "MAXHEA", "MAZDOC", "MCX",
+        "MOTSUM", "MPHLIM", "MUTFIN",
+        "NATALU", "NATMIN", "NBCC", "NESIND", "NHPC", "NIFFIN", "NIITEC", "NTPC", "NUVWEA",
+        "OBEREA", "OILIND", "ONE97", "ONGC", "ORAFIN",
+        "PAGIND", "PAYTM", "PERSYS", "PETLNG", "PGEL", "PHOMIL",
+        "PIDIND", "PIIND", "PNBHOU", "POLI", "POLICYBZR", "POLYCAB", "POWFIN", "POWGRI",
+        "PREMIERENE", "PREENR", "PUNBAN",
+        "RAIVIK", "RBLBAN", "RECLTD", "RELIND", "RUCSOY",
+        "SAIL", "SAMMAANCAP", "SBICAR", "SBILIF", "SHRCEM", "SHRTRA", "SIEMEN",
+        "SOLIN", "SONBLW", "SRF", "STABAN", "SUNPHA", "SUPIND", "SUZENE", "SWIGGY", "SYNINT",
+        "TATELX", "TATGLO", "TATMOT", "TATPOW", "TATSTE", "TATTEC", "TMPV", "TCS", "TECMAH",
+        "TITIND", "TORPHA", "TORPOW", "TRENT", "TIINDIA", "TVSMOTOR",
+        "ULTCEM", "UNIBAN", "UNISPI",
+        "VARBEV", "VEDLIM", "VOLTAS",
+        "WAAREEENER", "WIPRO", "YESBAN", "ETERNAL", "ZOMLIM", "IEX",
+        "POWERINDIA", "INDIANB", "JUBLFOOD", "MANKIND", "UNOMINDA", "DALBHARAT", "PPLPHARMA", "UPL"
     ];
 
     const interval = "5m";
