@@ -7,6 +7,13 @@
     "seed-indicator": "node add_ma_ribbon.js",
     "fetch-missing": "node scratch/fetch_missing_csv.js",
     "fetch-data": "node scratch/fetch_7_months_with_histogram.js",
+    "clean-first-day": "node scratch/remove_incomplete_first_day.js",
+    "check-gaps": "node scratch/check_gaps.js",
+    "fill-missing": "node scratch/fill_missing_candles.js",
+    "deep-scan": "node scratch/deep_scan_and_fetch.js",
+    "add-histogram": "node scratch/add_histogram_to_trades.js",
+    "update-hist": "node scratch/update_all_historical_csvs.js",
+    "convert-ist": "node scratch/convert_historical_to_ist.js",
     "fetch-bosch": "node fetch_boschltd_csv.js",
     "fetch-dalbharat-dec": "node fetch_dalbharat_dec2025.js",
     "test": "echo \"Error: no test specified\" && exit 1"
