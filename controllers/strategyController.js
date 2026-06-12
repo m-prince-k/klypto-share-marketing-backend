@@ -168,125 +168,119 @@ module.exports.saveTestingCsv = saveTestingCsv;
 const forwardToPredict = async (req, res) => {
     try {
         const targetUrl = req.query.url || 'http://43.205.133.183:8000/predict';
-        const symbol = (req.query.symbol || 'BOSLIM').toUpperCase();
-        const interval = (req.query.interval || 'FIVE_MINUTE').toUpperCase();
-        const limit = parseInt(req.query.limit) || 100; // Added limit parameter
+        const interval = 'FIVE_MINUTE';
+        const limit = parseInt(req.query.limit) || 100;
 
-        const token = marketStore.symbolToTokenMaster && (marketStore.symbolToTokenMaster[symbol] || marketStore.symbolToTokenMaster[`${symbol}:NSE`]);
-        if (!token) {
-            return res.status(400).json({ success: false, error: `Symbol ${symbol} not found in master` });
+        // Ensure we have stocks
+        if (!marketStore.stocks || marketStore.stocks.length === 0) {
+            return res.status(400).json({ success: false, error: "No stocks found in marketStore." });
         }
 
-        // Fetch historical data from Angel One API
-        let angelData = [];
-        try {
-            const toDateObj = new Date();
-            const fromDateObj = new Date();
-            fromDateObj.setDate(fromDateObj.getDate() - 40); // 40 days back
+        const payload = [];
 
-            const pad = (n) => String(n).padStart(2, '0');
-            const formatAngel = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const toDateObj = new Date();
+        const fromDateObj = new Date();
+        fromDateObj.setDate(fromDateObj.getDate() - 40); // 40 days back
 
-            const apiRes = await smartApi.getCandleData({
-                exchange: "NSE",
-                symboltoken: token,
-                interval: interval,
-                fromdate: formatAngel(fromDateObj),
-                todate: formatAngel(toDateObj)
-            });
+        const pad = (n) => String(n).padStart(2, '0');
+        const formatAngel = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const fromDateStr = formatAngel(fromDateObj);
+        const toDateStr = formatAngel(toDateObj);
 
-            if (apiRes && apiRes.status && apiRes.data) {
-                angelData = apiRes.data;
-            }
-        } catch (err) {
-            console.error("Angel One getCandleData failed:", err.message);
-            return res.status(500).json({ success: false, error: "Angel One historical fetch failed: " + err.message });
-        }
+        console.log(`[BatchPredict] Starting batch scan for ${marketStore.stocks.length} stocks...`);
 
-        if (angelData.length === 0) {
-            return res.status(404).json({ success: false, error: "No historical data found for symbol " + symbol });
-        }
+        // Loop through all stocks
+        for (const stock of marketStore.stocks) {
+            const symbol = stock.name ? stock.name.toUpperCase() : null;
+            const token = stock.token;
 
-        const formattedHistorical = angelData.map(c => {
-            return {
-                datetime: c[0].replace('T', ' ').substring(0, 19),
-                exchange_code: "NSE",
-                stock_code: symbol,
-                open: c[1],
-                high: c[2],
-                low: c[3],
-                close: c[4],
-                volume: c[5]
-            };
-        });
+            if (!symbol || !token) continue;
 
-
-        // Generate indicators using the dynamically fetched data
-        let boslim = await generateBoslim(formattedHistorical);
-
-        // Fix NaN by keeping only the last 'limit' candles (the end of the array has perfect values)
-        if (boslim.length > limit) {
-            boslim = boslim.slice(-limit);
-        }
-
-        // Fetch live tick for the dynamic symbol
-        let tick = null;
-        try {
-            // mode FULL fetches Open, High, Low, Close
-            const resp = await smartApi.marketData({ mode: 'FULL', exchangeTokens: { 'NSE': [token] } });
-            if (resp && resp.data && resp.data.fetched && resp.data.fetched.length > 0) {
-                tick = resp.data.fetched[0];
-            }
-        } catch (e) {
-            console.warn('[Strategy.forwardToPredict] Angel One LTP fetch failed for ' + symbol + ':', e.message);
-        }
-
-        if (!tick) {
-            tick = (marketStore.latestMarketData && (marketStore.latestMarketData[symbol] || marketStore.latestMarketData[`${symbol}:NSE`])) || {};
-        }
-
-
-
-        // Make tick dynamic based on fetched data
-        const filterTick = {
-            "low": tick.low,
-            "high": tick.high,
-            "open": tick.open,
-            "close": tick.close,
-            "datetime": tick.exchTradeTime
-        };
-
-        // Emit the live tick via socket
-        try {
-            const { getIO } = require('../services/socket');
-            const EVENTS = require('../constants/socketEvents');
-            const io = getIO();
-            if (io) {
-                io.emit(EVENTS.LIVE_TICK, {
-                    symbol: symbol,
-                    tick: filterTick,
-                    raw: tick
+            try {
+                // 1. Fetch historical data
+                const apiRes = await smartApi.getCandleData({
+                    exchange: "NSE",
+                    symboltoken: token,
+                    interval: interval,
+                    fromdate: fromDateStr,
+                    todate: toDateStr
                 });
-                console.log(`[Socket] Emitted LIVE_TICK for ${symbol}`);
+
+                let angelData = [];
+                if (apiRes && apiRes.status && apiRes.data) {
+                    angelData = apiRes.data;
+                }
+
+                let boslim = [];
+                if (angelData.length > 0) {
+                    const formattedHistorical = angelData.map(c => {
+                        return {
+                            datetime: c[0].replace('T', ' ').substring(0, 19),
+                            exchange_code: "NSE",
+                            stock_code: symbol,
+                            open: c[1],
+                            high: c[2],
+                            low: c[3],
+                            close: c[4],
+                            volume: c[5]
+                        };
+                    });
+
+                    // Generate indicators using the dynamically fetched data
+                    boslim = await generateBoslim(formattedHistorical);
+                    if (boslim.length > limit) {
+                        boslim = boslim.slice(-limit);
+                    }
+                }
+
+                // 2. Fetch live tick
+                let tick = null;
+                try {
+                    const tickResp = await smartApi.marketData({ mode: 'FULL', exchangeTokens: { 'NSE': [token] } });
+                    if (tickResp && tickResp.data && tickResp.data.fetched && tickResp.data.fetched.length > 0) {
+                        tick = tickResp.data.fetched[0];
+                    }
+                } catch (e) {
+                    // Ignore live tick fetch errors and fall back
+                }
+
+                if (!tick) {
+                    tick = (marketStore.latestMarketData && (marketStore.latestMarketData[symbol] || marketStore.latestMarketData[`${symbol}:NSE`])) || {};
+                }
+
+                const filterTick = {
+                    "low": tick.low || tick.low_price || 0,
+                    "high": tick.high || tick.high_price || 0,
+                    "open": tick.open || tick.open_price || 0,
+                    "close": tick.close || tick.close_price || 0,
+                    "datetime": tick.exchTradeTime || new Date().toISOString()
+                };
+
+                // Add this stock's data to the payload array
+                payload.push({
+                    symbol: symbol,
+                    historic_data: boslim,
+                    tick: filterTick
+                });
+
+            } catch (err) {
+                console.error(`[BatchPredict] Failed for ${symbol}:`, err.message);
             }
-        } catch (err) {
-            console.error('[Socket] Failed to emit LIVE_TICK:', err.message);
+
+            // 3. Delay to avoid Angel One rate limits
+            await new Promise(resolve => setTimeout(resolve, 400));
         }
 
-        const payload = {
-            historic_data: boslim,
-            tick: filterTick
-        };
-
+        console.log(`[BatchPredict] All stocks processed. Sending combined payload to Python...`);
 
         try {
             const response = await axios.post(targetUrl, payload, {
                 headers: { 'Content-Type': 'application/json' },
-                timeout: 15000
+                timeout: 300000 // 5 minutes timeout because of large payload and processing
             });
 
-            console.log(response, "_____---878987")
-            return res.json(response?.data);
+            console.log("[BatchPredict] Python API response received.");
+            return res.json({ success: true, processed_count: payload.length, data: response?.data });
         } catch (error) {
             const pythonError = error.response ? error.response.data : error.message;
             console.log("Error from Python API:", pythonError);

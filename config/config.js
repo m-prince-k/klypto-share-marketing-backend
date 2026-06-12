@@ -8,7 +8,7 @@ let credential = {
   port: process.env.DB_PORT,
   dialect: process.env.DB_DIALECT,
   pool: {
-    max: 60,
+    max: 80,
     min: 0,
     acquire: 60000,
     idle: 10000

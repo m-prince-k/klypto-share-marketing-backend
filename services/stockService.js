@@ -331,8 +331,8 @@ async function syncLivePrices() {
             } catch (chunkError) {
                 console.error(`[LiveSync] Chunk Sync Failed:`, chunkError.message);
             }
-            // Small delay to respect rate limits
-            await new Promise(r => setTimeout(r, 200));
+            // Increase delay to 400ms to respect Angel One's 3 requests/sec rate limit
+            await new Promise(r => setTimeout(r, 400));
         }
         console.log("[LiveSync] LTP sync completed.");
     } catch (err) {
