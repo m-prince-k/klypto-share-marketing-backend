@@ -245,22 +245,39 @@ const forwardToPredict = async (req, res) => {
             tick = (marketStore.latestMarketData && (marketStore.latestMarketData[symbol] || marketStore.latestMarketData[`${symbol}:NSE`])) || {};
         }
 
+
+
         // Make tick dynamic based on fetched data
         const filterTick = {
-            "low": "2704.4",
-            "high": "2729.8",
-            "open": "2704.6",
-            "close": "2726.8",
-            "datetime": "2026-06-10 09:15:00"
-
+            "low": tick.low,
+            "high": tick.high,
+            "open": tick.open,
+            "close": tick.close,
+            "datetime": tick.exchTradeTime
         };
+
+        // Emit the live tick via socket
+        try {
+            const { getIO } = require('../services/socket');
+            const EVENTS = require('../constants/socketEvents');
+            const io = getIO();
+            if (io) {
+                io.emit(EVENTS.LIVE_TICK, {
+                    symbol: symbol,
+                    tick: filterTick,
+                    raw: tick
+                });
+                console.log(`[Socket] Emitted LIVE_TICK for ${symbol}`);
+            }
+        } catch (err) {
+            console.error('[Socket] Failed to emit LIVE_TICK:', err.message);
+        }
 
         const payload = {
             historic_data: boslim,
             tick: filterTick
         };
 
-        return res.send(payload);
 
         try {
             const response = await axios.post(targetUrl, payload, {
@@ -283,3 +300,326 @@ const forwardToPredict = async (req, res) => {
 };
 
 module.exports.forwardToPredict = forwardToPredict;
+
+// POST /api/strategy/evaluate-python
+// Forwards fetched historical data to the local Python FastAPI server for strategy evaluation
+const evaluatePythonStrategy = async (req, res) => {
+    try {
+        const symbol = (req.query.symbol || req.body.symbol || 'BOSLIM').toUpperCase();
+        const interval = (req.query.interval || req.body.interval || 'FIVE_MINUTE').toUpperCase();
+
+        // Accept dynamic strategy name, parameters, OR full python code from frontend
+        const strategy = req.body.strategy || 'MACD_RSI';
+        const params = req.body.params || {};
+        const strategy_code = req.body.strategy_code || null;
+
+        const token = marketStore.symbolToTokenMaster && (marketStore.symbolToTokenMaster[symbol] || marketStore.symbolToTokenMaster[`${symbol}:NSE`]);
+        if (!token) {
+            return res.status(400).json({ success: false, error: `Symbol ${symbol} not found in master` });
+        }
+
+        // Fetch historical data from Angel One API
+        let angelData = [];
+        try {
+            const toDateObj = new Date();
+            const fromDateObj = new Date();
+            // Angel One API restricts intraday data to max 30 days per request
+            fromDateObj.setDate(fromDateObj.getDate() - 30);
+
+            const pad = (n) => String(n).padStart(2, '0');
+            const formatAngel = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+            const apiRes = await smartApi.getCandleData({
+                exchange: "NSE",
+                symboltoken: token,
+                interval: interval,
+                fromdate: formatAngel(fromDateObj),
+                todate: formatAngel(toDateObj)
+            });
+
+            if (apiRes && apiRes.status && apiRes.data) {
+                angelData = apiRes.data;
+            }
+        } catch (err) {
+            console.error("Angel One getCandleData failed:", err.message);
+            return res.status(500).json({ success: false, error: "Angel One historical fetch failed: " + err.message });
+        }
+
+        if (angelData.length === 0) {
+            return res.status(404).json({ success: false, error: "No historical data found for symbol " + symbol });
+        }
+
+        const formattedHistorical = angelData.map(c => {
+            return {
+                datetime: c[0].replace('T', ' ').substring(0, 19),
+                open: c[1],
+                high: c[2],
+                low: c[3],
+                close: c[4],
+                volume: c[5]
+            };
+        });
+
+        // Send to Python FastAPI
+        const payload = {
+            symbol: symbol,
+            interval: interval,
+            strategy: strategy,
+            params: params,
+            strategy_code: strategy_code,
+            historical_data: formattedHistorical
+        };
+
+        const targetUrl = 'http://127.0.0.1:8000/api/evaluate-strategy';
+
+        try {
+            const response = await axios.post(targetUrl, payload, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 30000 // Strategy evaluation might take a few seconds
+            });
+
+            let finalData = response.data;
+
+            // Map utc_datetime (Unix) and ist_datetime into each object in the data array
+            if (Array.isArray(finalData)) {
+                finalData = finalData.map(item => {
+                    // Get candle time from the item's datetime or via its index mapping
+                    let candleTimeStr = item.datetime;
+                    if (!candleTimeStr && item.index !== undefined && formattedHistorical[item.index]) {
+                        candleTimeStr = formattedHistorical[item.index].datetime;
+                    }
+
+                    if (candleTimeStr) {
+                        // candleTimeStr is IST (e.g. "2026-06-11 09:15:00"). Parse it correctly.
+                        const d = new Date(candleTimeStr.replace(' ', 'T') + "+05:30");
+                        item.utc_datetime = Math.floor(d.getTime() / 1000); // Unix timestamp in seconds
+                        item.ist_datetime = candleTimeStr;
+                    } else {
+                        // Fallback if no candle mapping is found
+                        const now = new Date();
+                        item.utc_datetime = Math.floor(now.getTime() / 1000);
+                        const istDate = new Date(now.getTime() + (330 * 60 * 1000));
+                        item.ist_datetime = istDate.toISOString().replace('Z', '+05:30');
+                    }
+                    return item;
+                });
+            }
+
+            return res.json({
+                success: true,
+                symbol: symbol,
+                total_candles_processed: formattedHistorical.length,
+                data: finalData,
+                message: strategy_code ? "Executed custom python code successfully." : "Built-in strategy applied"
+            });
+
+        } catch (error) {
+            const pythonError = error.response ? error.response.data : error.message;
+            console.error("Error from Python API:", pythonError);
+            return res.status(500).json({ success: false, error: "Python API Error: " + JSON.stringify(pythonError) });
+        }
+
+    } catch (err) {
+        console.error('[Strategy.evaluatePythonStrategy] Error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+};
+
+// GET /api/strategy/scanner-dashboard
+const getScannerDashboard = async (req, res) => {
+    try {
+        const { StrategySignal } = require('../models');
+        const signals = await StrategySignal.findAll({
+            order: [['timestamp', 'DESC']],
+            raw: true
+        });
+
+        const enhancedSignals = signals.map(signal => {
+            let unix_timestamp = null;
+            let ist_timestamp = null;
+            if (signal.timestamp) {
+                const ts = new Date(signal.timestamp);
+                unix_timestamp = Math.floor(ts.getTime() / 1000);
+                const istDate = new Date(ts.getTime() + (330 * 60 * 1000));
+                ist_timestamp = istDate.toISOString().replace('Z', '+05:30');
+            }
+            return {
+                ...signal,
+                unix_timestamp,
+                ist_timestamp
+            };
+        });
+
+        return res.json({
+            success: true,
+            data: enhancedSignals
+        });
+    } catch (err) {
+        console.error('[Strategy.getScannerDashboard] Error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+};
+
+module.exports.evaluatePythonStrategy = evaluatePythonStrategy;
+module.exports.getScannerDashboard = getScannerDashboard;
+
+// POST /api/strategy/run-scanner
+const runDynamicScanner = async (req, res) => {
+    try {
+        const strategy_code = req.body.strategy_code;
+        if (!strategy_code) {
+            return res.status(400).json({ success: false, message: "strategy_code is required in body" });
+        }
+
+        // Return immediately to frontend so UI doesn't block
+        res.json({ success: true, message: "Scanner started in background" });
+
+        console.log('[Dynamic Scanner] Background scan initiated by API');
+
+        // Dynamically require services
+        const { login } = require('../services/authService');
+        const { fetchTop200Stocks } = require('../services/stockService');
+        const { getScannerSymbols } = require('../services/scannerService');
+        const { StrategySignal } = require('../models');
+
+        // Helper: format date
+        const formatAngelDate = (d) => {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        };
+
+        // Helper: read local CSV
+        const readHistoricalCsv = (symbol) => {
+            const filePath = path.join(__dirname, '../historical_csv', `${symbol}.csv`);
+            if (!fs.existsSync(filePath)) return [];
+            const content = fs.readFileSync(filePath, 'utf8');
+            const lines = content.split('\n');
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                const [datetime, open, high, low, close, volume] = line.split(',');
+                data.push({ datetime, open, high, low, close, volume });
+            }
+            return data;
+        };
+
+        // 1. Authenticate
+        const loginData = await login();
+        if (!loginData || !loginData.status) {
+            console.error('[Dynamic Scanner] Angel One login failed.');
+            return;
+        }
+
+        // 2. Fetch Master list
+        await fetchTop200Stocks();
+        const symbols = getScannerSymbols();
+        console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols...`);
+
+        for (const symbol of symbols) {
+            try {
+                console.log(`  - Processing ${symbol}...`);
+                const token = marketStore.symbolToTokenMaster[symbol] || marketStore.symbolToTokenMaster[`${symbol}:NSE`];
+                if (!token) continue;
+
+                let historicalData = readHistoricalCsv(symbol);
+
+                // Load latest data
+                let latestData = [];
+                try {
+                    const toDate = new Date();
+                    const fromDate = new Date();
+                    fromDate.setDate(fromDate.getDate() - 2);
+                    const resApi = await smartApi.getCandleData({
+                        exchange: "NSE",
+                        symboltoken: token,
+                        interval: "FIVE_MINUTE",
+                        fromdate: formatAngelDate(fromDate),
+                        todate: formatAngelDate(toDate)
+                    });
+                    if (resApi && resApi.status && resApi.data) {
+                        latestData = resApi.data.map(c => ({
+                            datetime: c[0].replace('T', ' ').substring(0, 19),
+                            open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5]
+                        }));
+                    }
+                } catch (e) {
+                    console.error(`Error fetching latest data for token ${token}:`, e.message);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 500)); // Throttling
+
+                const existingTimes = new Set(historicalData.map(d => d.datetime));
+                for (const c of latestData) {
+                    if (!existingTimes.has(c.datetime)) historicalData.push(c);
+                }
+                historicalData.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+
+                const payload = {
+                    symbol: symbol,
+                    interval: "FIVE_MINUTE",
+                    strategy: "CUSTOM",
+                    params: {},
+                    strategy_code: strategy_code,
+                    historical_data: historicalData
+                };
+
+                if (historicalData.length === 0) {
+                    console.log(`[Dynamic Scanner] Skipping ${symbol} as historical data is empty.`);
+                    continue;
+                }
+
+                const pythonRes = await axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 30000 });
+
+                const resultData = pythonRes.data;
+                if (Array.isArray(resultData) && resultData.length > 0) {
+                    const signals = resultData.filter(d => d.type === 'BUY' || d.type === 'SELL');
+                    if (signals.length > 0) {
+                        const latestSignal = signals[signals.length - 1];
+
+                        let candleTimeStr = latestSignal.datetime;
+                        if (!candleTimeStr && latestSignal.index !== undefined && historicalData[latestSignal.index]) {
+                            candleTimeStr = historicalData[latestSignal.index].datetime;
+                        }
+
+                        let signalTimestamp = new Date();
+                        if (candleTimeStr) {
+                            signalTimestamp = new Date(candleTimeStr.replace(' ', 'T') + "+05:30");
+                        }
+
+                        await StrategySignal.upsert({
+                            symbol: symbol,
+                            signalType: latestSignal.type,
+                            indicatorValues: latestSignal,
+                            timestamp: signalTimestamp
+                        });
+                        console.log(`    => Stored ${latestSignal.type} signal for ${symbol} at ${candleTimeStr}`);
+                    } else {
+                        await StrategySignal.upsert({
+                            symbol: symbol,
+                            signalType: 'NONE',
+                            indicatorValues: {},
+                            timestamp: new Date()
+                        });
+                    }
+                }
+            } catch (err) {
+                const pythonError = err.response ? err.response.data : err.message;
+                console.error(`[Dynamic Scanner] Error processing ${symbol}:`, JSON.stringify(pythonError));
+            }
+        }
+        console.log('[Dynamic Scanner] Scan cycle complete.');
+
+        // Notify Python console that scan is complete
+        try {
+            await axios.post('http://127.0.0.1:8000/api/scan-complete');
+        } catch (e) {
+            // Ignore error if python is down
+        }
+
+    } catch (err) {
+        console.error('[Strategy.runDynamicScanner] Error:', err.message);
+    }
+};
+
+module.exports.runDynamicScanner = runDynamicScanner;

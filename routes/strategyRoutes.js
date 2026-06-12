@@ -1,6 +1,6 @@
 const express = require('express');
 const router  = express.Router();
-const { getMarkers, saveTestingCsv, forwardToPredict } = require('../controllers/strategyController');
+const { getMarkers, saveTestingCsv, forwardToPredict, evaluatePythonStrategy, getScannerDashboard, runDynamicScanner } = require('../controllers/strategyController');
 
 /**
  * GET /api/strategy/markers
@@ -20,5 +20,17 @@ router.get('/save-testing-csv', saveTestingCsv);
 // POST /api/strategy/predict
 // Forwards generated historic_data and tick to an external predict endpoint.
 router.post('/predict', forwardToPredict);
+
+// POST /api/strategy/evaluate-python
+// Evaluates the Python strategy via the local FastAPI server
+router.post('/evaluate-python', evaluatePythonStrategy);
+
+// GET /api/strategy/scanner-dashboard
+// Dashboard route for the Multi-Stock Screener
+router.get('/scanner-dashboard', getScannerDashboard);
+
+// POST /api/strategy/run-scanner
+// Dynamically runs the background scanner based on strategy_code sent from frontend
+router.post('/run-scanner', runDynamicScanner);
 
 module.exports = router;

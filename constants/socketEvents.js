@@ -11,6 +11,7 @@ module.exports = {
     GET_LIVE_INDICATOR: "getLiveIndicatorUpdate",   // Fetch single tick indicator value
     GET_RSI_SCANNER: "getRsiScanner",               // Trigger manual RSI scan
     SET_RSI_ALERT: "setRsiAlert",                   // Set background monitoring threshold
+    GET_LIVE_TICK: "getLiveTick",                   // Fetch live tick for a symbol
     GET_ALL_STOCKS: "getAllStocks",                 // Request initial stock list
     SUBSCRIBE_OPTION_CHAIN: "subscribeOptionChain", // Subscribe to live option chain updates
     UNSUBSCRIBE_OPTION_CHAIN: "unsubscribeOptionChain",
@@ -29,6 +30,7 @@ module.exports = {
     INDICATOR_DETAILS_ERROR: "indicatorDetailsError",
     
     LIVE_INDICATOR_RESPONSE: "liveIndicatorResponse",
+    STRATEGY_LIVE_TICK: "strategyLiveTick",
     
     RSI_SCANNER_RESPONSE: "rsiScannerResponse",
     RSI_SCANNER_ERROR: "rsiScannerError",

@@ -53,6 +53,64 @@ const connectSocket = (server) => {
             socket.emit(EVENTS.STOCKS_LIST, getFormattedStocks());
         });
 
+        socket.on(EVENTS.GET_LIVE_TICK, async (payload) => {
+            try {
+                const symbol = payload?.symbol?.toUpperCase();
+                console.log(`[Socket] GET_LIVE_TICK requested for symbol: ${symbol}`);
+                if (!symbol) return;
+                
+                let cleanSymbol = symbol.endsWith('-EQ') ? symbol.replace('-EQ', '') : symbol;
+                const token = store.symbolToTokenMaster && (store.symbolToTokenMaster[cleanSymbol] || store.symbolToTokenMaster[`${cleanSymbol}:NSE`]);
+                console.log(`[Socket] Resolved token for ${cleanSymbol}: ${token}`);
+                
+                // 🚀 SUBSCRIBE TO ANGEL ONE WEBSOCKET LIVE STREAM SO IT CONTINUES TO EMIT TICKS!
+                if (token && store.wsClient) {
+                    store.wsClient.fetchData({
+                        action: 1, 
+                        mode: 2, 
+                        exchangeType: 1,
+                        tokens: [token]
+                    });
+                    console.log(`[Socket] Added ${cleanSymbol} (${token}) to live WebSocket stream!`);
+                }
+                
+                let rawTick = null;
+                if (token) {
+                    const smartApi = require('./smartApi');
+                    try {
+                        const resp = await smartApi.marketData({ mode: 'FULL', exchangeTokens: { 'NSE': [token] } });
+                        console.log(`[Socket] smartApi.marketData response:`, JSON.stringify(resp?.data));
+                        if (resp && resp.data && resp.data.fetched && resp.data.fetched.length > 0) {
+                            rawTick = resp.data.fetched[0];
+                        }
+                    } catch (e) {
+                        console.warn(`[Socket] GET_LIVE_TICK Angel One fetch failed for ${symbol}:`, e.message);
+                    }
+                }
+                
+                if (!rawTick) {
+                    console.log(`[Socket] rawTick not populated from API, falling back to cache`);
+                    rawTick = (store.latestMarketData && (store.latestMarketData[symbol] || store.latestMarketData[`${symbol}:NSE`])) || {};
+                }
+                
+                const filterTick = {
+                    "low": rawTick.low || rawTick.low_price || 0,
+                    "high": rawTick.high || rawTick.high_price || 0,
+                    "open": rawTick.open || rawTick.open_price || 0,
+                    "close": rawTick.close || rawTick.close_price || 0,
+                    "datetime": rawTick.exchTradeTime || new Date().toISOString()
+                };
+
+                socket.emit(EVENTS.STRATEGY_LIVE_TICK, {
+                    symbol: symbol,
+                    tick: filterTick,
+                    raw: rawTick
+                });
+            } catch (err) {
+                console.error("[Socket] GET_LIVE_TICK Error:", err.message);
+            }
+        });
+
         socket.on(EVENTS.GET_MASTER_WATCHLIST, async () => {
             try {
                 const { generateMasterWatchlistData } = require('../controllers/stockController');

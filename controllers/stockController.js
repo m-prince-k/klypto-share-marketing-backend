@@ -700,8 +700,26 @@ const getOptionsChain = async (req, res) => {
                 return expDate >= today;
             })
             .sort((a, b) => new Date(a) - new Date(b))
-            .slice(0, 4); // Show only top 4 near-term expiries (Near, Next, Far + 1)
-        const selectedExpiry = expiry || uniqueExpiries[0];
+            .slice(0, 10); // Show top 10 near-term expiries instead of 4, just to be safe
+            
+        let selectedExpiry = uniqueExpiries[0];
+        if (expiry) {
+            const clean = (s) => String(s).toUpperCase().replace(/[- ]/g, '');
+            const passedClean = clean(expiry);
+            const matched = uniqueExpiries.find(e => clean(e) === passedClean);
+            if (matched) {
+                selectedExpiry = matched;
+            } else {
+                const passedDate = new Date(expiry).setHours(0,0,0,0);
+                if (!isNaN(passedDate)) {
+                    const dateMatched = uniqueExpiries.find(e => new Date(e).setHours(0,0,0,0) === passedDate);
+                    if (dateMatched) selectedExpiry = dateMatched;
+                    else selectedExpiry = expiry;
+                } else {
+                    selectedExpiry = expiry;
+                }
+            }
+        }
 
         // 4. Filter for selected expiry and group by strike
         const expiryOptions = allOptions.filter(o => o.expiry === selectedExpiry);

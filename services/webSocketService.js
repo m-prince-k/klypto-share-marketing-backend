@@ -315,6 +315,7 @@ async function startWebSocketConnection(loginData, io) {
                 const tickPayload = {
                     token: cleanToken,
                     symbol: formatted.symbol,
+                    symbolWithEq: formatted.symbol + "-EQ", // For the frontend if it expects -EQ
                     exchange: formatted.exchange,
                     receivedAt: new Date().toISOString(),
                     data: {
@@ -327,11 +328,33 @@ async function startWebSocketConnection(loginData, io) {
                         close: candle.close,
                         last_traded_price: formatted.last_traded_price,
                         volume: candle.volume
-                    }
+                    },
+                    // Added for user's strategyController requirement
+                    tick: {
+                        open: candle.open,
+                        high: candle.high,
+                        low: candle.low,
+                        close: candle.close,
+                        datetime: formatted.exchange_timestamp || new Date().toISOString()
+                    },
+                    raw: formatted
                 };
 
                 // BROADCAST to 'liveTick'
                 io.emit(EVENTS.LIVE_TICK, tickPayload);
+
+                // Added for user's strategyController requirement (isolated event to prevent conflicts)
+                io.emit(EVENTS.STRATEGY_LIVE_TICK, {
+                    symbol: formatted.symbol + (formatted.exchange === 'NSE' ? '-EQ' : ''),
+                    tick: {
+                        open: candle.open,
+                        high: candle.high,
+                        low: candle.low,
+                        close: candle.close,
+                        datetime: formatted.exchange_timestamp || new Date().toISOString()
+                    },
+                    raw: formatted
+                });
 
                 // BROADCAST to 'liveticks' for plural event support
                 io.emit('liveticks', tickPayload);
