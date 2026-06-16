@@ -3,9 +3,16 @@ const store = require('./marketStore');
 const { getHistoricalCandle } = require('./angelOne');
 const { formatDate, getCandlesWithCache } = require('./dbService');
 
-async function fetchManualHistoricalData({ symbol, interval, fromDate, toDate, exchange, segment }) {
+async function fetchManualHistoricalData(payload) {
     let extraInfo = null;
     try {
+        const symbol = payload.symbol;
+        const interval = payload.interval;
+        const fromDate = payload.fromDate || payload.fromdate;
+        const toDate = payload.toDate || payload.todate;
+        const exchange = payload.exchange;
+        const segment = payload.segment;
+
         const intervalMap = {
             "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
             "3": "THREE_MINUTE", "3m": "THREE_MINUTE", "three_minute": "THREE_MINUTE",

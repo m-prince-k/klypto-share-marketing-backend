@@ -10,8 +10,11 @@ module.exports = (sequelize, DataTypes) => {
   StrategySignal.init({
     symbol: {
       type: DataTypes.STRING,
-      allowNull: false,
-      unique: true // Upsert operations will use symbol as the unique key
+      allowNull: false
+    },
+    userId: {
+      type: DataTypes.STRING,
+      allowNull: true // Allow null for backward compatibility
     },
     signalType: DataTypes.STRING, // BUY, SELL, NONE
     indicatorValues: DataTypes.JSON, // JSON string or object to store dynamic markers/indicators
@@ -21,6 +24,12 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'StrategySignal',
     tableName: 'strategy_signals',
+    indexes: [
+      {
+        unique: true,
+        fields: ['symbol', 'userId']
+      }
+    ]
   });
   return StrategySignal;
 };

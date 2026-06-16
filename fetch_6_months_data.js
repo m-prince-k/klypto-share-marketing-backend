@@ -7,37 +7,37 @@ const stockService = require('./services/stockService');
 const { sequelize } = require('./models');
 
 const STOCK_LIST = [
-  "ABB", "POWERINDIA", "ADANIENT", "ADANIGREEN", "ADANIPORTS", "ADANIENSOL",
-  "ABCAPITAL", "ALKEM", "AMBUJACEM", "AMBER", "ANGELONE", "APLAPOLLO",
-  "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", "ASTRAL", "AUROPHARMA", "AUBANK",
-  "DMART", "AXISBANK", "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "BAJAJHLDNG",
-  "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BHARTIARTL", "BDL", "BEL",
-  "BHARATFORG", "INDUSTOWER", "BPCL", "BHEL", "BIOCON", "BLUESTARCO",
-  "BOSCHLTD", "BRITANNIA", "BSE", "ZYDUSLIFE", "CANBK", "CDSL", "CHOLAFIN",
-  "CIPLA", "COALINDIA", "COLPAL", "CAMS", "CONCOR", "CROMPTON", "CGPOWER",
-  "CUMMINSIND", "DABUR", "DELHIVERY", "DIVISLAB", "DIXON", "DLF", "DRREDDY",
-  "EICHERMOT", "EXIDEIND", "FEDERALBNK", "FORTIS", "NYKAA", "GAIL", "GLENMARK",
-  "GMRAIRPORT", "GODREJCP", "GODREJPROP", "GRASIM", "HAVELLS", "HCLTECH",
-  "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HAL", "HINDALCO",
-  "HINDUNILVR", "HINDPETRO", "HINDZINC", "HUDCO", "ICICIBANK", "ICICIGI",
-  "ICICIPRULI", "IDEA", "IDFCFIRSTB", "360ONE", "INDUSINDBK", "IEX",
-  "SAMMAANCAP", "INDHOTEL", "INDIANB", "IOC", "IRFC", "IREDA", "NAUKRI",
-  "INFY", "INOXWIND", "INDIGO", "ITC", "JINDALSTEL", "JIOFIN", "JSWENERGY",
-  "JSWSTEEL", "JUBLFOOD", "KALYANKJIL", "KAYNES", "KEI", "KFINTECH",
-  "KOTAKBANK", "KPITTECH", "LT", "LAURUSLABS", "LICI", "LICHSGFIN", "LTF",
-  "LTM", "LUPIN", "LODHA", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI",
-  "MFSL", "MAXHEALTH", "MAZDOCK", "MCX", "UNOMINDA", "MOTHERSON", "MPHASIS",
-  "MUTHOOTFIN", "NATIONALUM", "NMDC", "NBCC", "NESTLEIND", "NHPC", "COFORGE",
-  "NTPC", "NUVAMA", "OBEROIRLTY", "DALBHARAT", "OIL", "PAYTM", "ONGC", "OFSS",
-  "PAGEIND", "POLICYBZR", "PERSISTENT", "PETRONET", "PGEL", "PHOENIXLTD",
-  "PIDILITIND", "PIIND", "PPLPHARMA", "PNBHOUSING", "POLYCAB", "PFC",
-  "POWERGRID", "PREMIERENE", "PRESTIGE", "PNB", "RVNL", "RBLBANK", "RELIANCE",
-  "PATANJALI", "RECLTD", "SAIL", "SBICARD", "SBILIFE", "SHREECEM", "SHRIRAMFIN",
-  "SIEMENS", "SOLARINDS", "SONACOMS", "SRF", "SBIN", "SUNPHARMA", "SUPREMEIND",
-  "SUZLON", "SWIGGY", "SYNGENE", "TATAELXSI", "TATACONSUM", "TMPV", "TATAPOWER",
-  "TATASTEEL", "TATATECH", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TORNTPOWER",
-  "TRENT", "TIINDIA", "TVSMOTOR", "ULTRACEMCO", "UNIONBANK", "UPL", "UNITDSPR",
-  "VBL", "VEDL", "VOLTAS", "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
+    "ABB", "POWERINDIA", "ADANIENT", "ADANIGREEN", "ADANIPORTS", "ADANIENSOL",
+    "ABCAPITAL", "ALKEM", "AMBUJACEM", "AMBER", "ANGELONE", "APLAPOLLO",
+    "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", "ASTRAL", "AUROPHARMA", "AUBANK",
+    "DMART", "AXISBANK", "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "BAJAJHLDNG",
+    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BHARTIARTL", "BDL", "BEL",
+    "BHARATFORG", "INDUSTOWER", "BPCL", "BHEL", "BIOCON", "BLUESTARCO",
+    "BOSCHLTD", "BRITANNIA", "BSE", "ZYDUSLIFE", "CANBK", "CDSL", "CHOLAFIN",
+    "CIPLA", "COALINDIA", "COLPAL", "CAMS", "CONCOR", "CROMPTON", "CGPOWER",
+    "CUMMINSIND", "DABUR", "DELHIVERY", "DIVISLAB", "DIXON", "DLF", "DRREDDY",
+    "EICHERMOT", "EXIDEIND", "FEDERALBNK", "FORTIS", "NYKAA", "GAIL", "GLENMARK",
+    "GMRAIRPORT", "GODREJCP", "GODREJPROP", "GRASIM", "HAVELLS", "HCLTECH",
+    "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HAL", "HINDALCO",
+    "HINDUNILVR", "HINDPETRO", "HINDZINC", "HUDCO", "ICICIBANK", "ICICIGI",
+    "ICICIPRULI", "IDEA", "IDFCFIRSTB", "360ONE", "INDUSINDBK", "IEX",
+    "SAMMAANCAP", "INDHOTEL", "INDIANB", "IOC", "IRFC", "IREDA", "NAUKRI",
+    "INFY", "INOXWIND", "INDIGO", "ITC", "JINDALSTEL", "JIOFIN", "JSWENERGY",
+    "JSWSTEEL", "JUBLFOOD", "KALYANKJIL", "KAYNES", "KEI", "KFINTECH",
+    "KOTAKBANK", "KPITTECH", "LT", "LAURUSLABS", "LICI", "LICHSGFIN", "LTF",
+    "LTM", "LUPIN", "LODHA", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI",
+    "MFSL", "MAXHEALTH", "MAZDOCK", "MCX", "UNOMINDA", "MOTHERSON", "MPHASIS",
+    "MUTHOOTFIN", "NATIONALUM", "NMDC", "NBCC", "NESTLEIND", "NHPC", "COFORGE",
+    "NTPC", "NUVAMA", "OBEROIRLTY", "DALBHARAT", "OIL", "PAYTM", "ONGC", "OFSS",
+    "PAGEIND", "POLICYBZR", "PERSISTENT", "PETRONET", "PGEL", "PHOENIXLTD",
+    "PIDILITIND", "PIIND", "PPLPHARMA", "PNBHOUSING", "POLYCAB", "PFC",
+    "POWERGRID", "PREMIERENE", "PRESTIGE", "PNB", "RVNL", "RBLBANK", "RELIANCE",
+    "PATANJALI", "RECLTD", "SAIL", "SBICARD", "SBILIFE", "SHREECEM", "SHRIRAMFIN",
+    "SIEMENS", "SOLARINDS", "SONACOMS", "SRF", "SBIN", "SUNPHARMA", "SUPREMEIND",
+    "SUZLON", "SWIGGY", "SYNGENE", "TATAELXSI", "TATACONSUM", "TMPV", "TATAPOWER",
+    "TATASTEEL", "TATATECH", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TORNTPOWER",
+    "TRENT", "TIINDIA", "TVSMOTOR", "ULTRACEMCO", "UNIONBANK", "UPL", "UNITDSPR",
+    "VBL", "VEDL", "VOLTAS", "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
 ];
 
 function formatDate(d, time) {
@@ -56,7 +56,7 @@ async function main() {
         console.log("[1/3] Connecting to Database...");
         await sequelize.authenticate();
         await sequelize.sync();
-        
+
         console.log("[2/3] Authenticating with Angel One...");
         await authService.login();
 
@@ -71,11 +71,12 @@ async function main() {
         }
 
         const now = new Date();
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(now.getMonth() - 6);
-        
+        const fromDate = new Date("2025-06-01T09:15:00");
+
         const toDateStr = formatDate(now, "15:30");
-        const fromDateStr = formatDate(sixMonthsAgo, "09:15");
+        const fromDateStr = formatDate(fromDate, "09:15");
+        
+
 
         console.log(`\nDate Range: ${fromDateStr} to ${toDateStr}`);
         console.log(`Total Stocks to fetch: ${STOCK_LIST.length}\n`);
@@ -96,18 +97,20 @@ async function main() {
 
                 // Call internal service which handles API chunking and DB saving automatically!
                 const result = await getCandlesWithCache(symbol, token, "NSE", "FIVE_MINUTE", fromDateStr, toDateStr);
-                
+
                 if (result && result.data && result.data.length > 0) {
                     const filePath = path.join(csvFolder, `${symbol}.csv`);
                     let csvContent = "datetime,open,high,low,close,volume\n";
-                    
+
                     for (const candle of result.data) {
                         const ts = new Date(candle.timestamp);
+                        // Convert to IST by adding 5 hours 30 mins (5.5 hours)
+                        const istTs = new Date(ts.getTime() + (5.5 * 60 * 60 * 1000));
                         // Format for CSV: YYYY-MM-DD HH:mm:ss
-                        const formattedTs = ts.toISOString().replace('T', ' ').substring(0, 19);
+                        const formattedTs = istTs.toISOString().replace('T', ' ').substring(0, 19);
                         csvContent += `${formattedTs},${candle.open},${candle.high},${candle.low},${candle.close},${candle.volume}\n`;
                     }
-                    
+
                     fs.writeFileSync(filePath, csvContent);
                     console.log(`  -> [SUCCESS] Saved ${result.data.length} rows to historical_csv/${symbol}.csv`);
                 } else {

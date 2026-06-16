@@ -16,13 +16,19 @@ const socketAlerts = new Map();
 const connectSocket = (server) => {
     io = new Server(server, {
         cors: { origin: "*" },
-        maxHttpBufferSize: 1e7 // 10MB for large historical data
+        maxHttpBufferSize: 1e7, // 10MB for large historical data
+        pingTimeout: 60000,     // 60 seconds ping timeout to prevent disconnects on slow connections
+        pingInterval: 25000     // 25 seconds ping interval
     });
 
     optionChainService.init(io);
 
     io.on("connection", (socket) => {
-        console.log("Client connected:", socket.id);
+        // Extract userId from frontend query or auth to join private room
+        const userId = socket.handshake.query.userId || (socket.handshake.auth && socket.handshake.auth.userId) || "anonymous";
+        socket.join(String(userId));
+        console.log(`Client connected: ${socket.id} (User ID: ${userId})`);
+        
         socketAlerts.set(socket.id, { threshold: null, interval: '5m' });
 
         // --- 1. INITIAL DATA EVENTS ---
@@ -60,38 +66,107 @@ const connectSocket = (server) => {
                 if (!symbol) return;
                 
                 let cleanSymbol = symbol.endsWith('-EQ') ? symbol.replace('-EQ', '') : symbol;
+                
+                // Leave previous tick rooms to only subscribe to the newly selected symbol
+                for (const room of socket.rooms) {
+                    if (room.startsWith("tick_")) {
+                        socket.leave(room);
+                    }
+                }
+                socket.join("tick_" + cleanSymbol);
+                
                 const token = store.symbolToTokenMaster && (store.symbolToTokenMaster[cleanSymbol] || store.symbolToTokenMaster[`${cleanSymbol}:NSE`]);
                 console.log(`[Socket] Resolved token for ${cleanSymbol}: ${token}`);
                 
                 // 1. FAST EMIT FROM CACHE IMMEDIATELY
                 let rawTick = (store.latestMarketData && (store.latestMarketData[cleanSymbol] || store.latestMarketData[`${cleanSymbol}:NSE`])) || null;
                 
-                if (rawTick) {
-                    const filterTick = {
-                        "low": rawTick.low || rawTick.low_price || 0,
-                        "high": rawTick.high || rawTick.high_price || 0,
-                        "open": rawTick.open || rawTick.open_price || 0,
-                        "close": rawTick.close || rawTick.close_price || 0,
-                        "datetime": rawTick.exchTradeTime || rawTick.last_update_time || new Date().toISOString()
-                    };
-
-                    socket.emit(EVENTS.STRATEGY_LIVE_TICK, {
-                        symbol: symbol,
-                        tick: filterTick,
-                        raw: rawTick
-                    });
-                    console.log(`[Socket] Emitted INSTANT cached tick for ${symbol}`);
+                // If not in cache, we MUST fetch it from Angel One API so frontend gets at least the last known price!
+                if (!rawTick && token) {
+                    const smartApi = require('./smartApi');
+                    try {
+                        const exchange = store.tokenToExchange[token] || 'NSE';
+                        const resp = await smartApi.marketData({ mode: 'FULL', exchangeTokens: { [exchange]: [token] } });
+                        if (resp && resp.data && resp.data.fetched && resp.data.fetched.length > 0) {
+                            let apiTick = resp.data.fetched[0];
+                            // Map API format to exactly match WebSocket format
+                            rawTick = {
+                                ...apiTick,
+                                last_traded_price: apiTick.ltp || apiTick.last_traded_price || 0,
+                                exchange_timestamp: apiTick.exchTradeTime || apiTick.exchange_timestamp || new Date().toISOString(),
+                                last_update_time: apiTick.exchTradeTime || apiTick.last_update_time || new Date().toISOString(),
+                                open: apiTick.open_price || apiTick.open || apiTick.ltp || 0,
+                                high: apiTick.high_price || apiTick.high || apiTick.ltp || 0,
+                                low: apiTick.low_price || apiTick.low || apiTick.ltp || 0,
+                                close: apiTick.close_price || apiTick.close || apiTick.ltp || 0,
+                                volume: apiTick.trade_volume || apiTick.volume || 0,
+                                percent_change: apiTick.percent_change || apiTick.pChange || 0,
+                                best_five_buy: (apiTick.depth && apiTick.depth.buy) ? apiTick.depth.buy : (apiTick.best5Buy || apiTick.best_five_buy || []),
+                                best_five_sell: (apiTick.depth && apiTick.depth.sell) ? apiTick.depth.sell : (apiTick.best5Sell || apiTick.best_five_sell || []),
+                                token: token,
+                                symbol: symbol,
+                                exchange: exchange
+                            };
+                            console.log(`[Socket] Fetched rawTick from API for ${symbol}`);
+                        }
+                    } catch (e) {
+                        console.warn(`[Socket] GET_LIVE_TICK Angel One fetch failed for ${symbol}:`, e.message);
+                    }
                 }
 
-                // 2. SUBSCRIBE TO ANGEL ONE WEBSOCKET LIVE STREAM SO IT CONTINUES TO EMIT TICKS EVERY SECOND!
+                if (!rawTick) {
+                    const fallbackExchange = store.tokenToExchange[token] || 'NSE';
+                    rawTick = {
+                        last_traded_price: 0,
+                        open: 0, high: 0, low: 0, close: 0,
+                        exchange_timestamp: new Date().toISOString(),
+                        exchange: fallbackExchange,
+                        best_five_buy: [],
+                        best_five_sell: []
+                    }; 
+                }
+                
+                // Save to cache so webSocketService can preserve depth across Mode 2 ticks
+                if (rawTick.exchange && cleanSymbol) {
+                    store.latestMarketData[`${cleanSymbol}:${rawTick.exchange}`] = rawTick;
+                }
+                
+                const candle = store.liveCandles[token] || {};
+                const fallbackPrice = rawTick.last_traded_price || rawTick.close_price || rawTick.close || 0;
+                
+                const filterTick = {
+                    "open": candle.open || rawTick.open || rawTick.open_price || fallbackPrice,
+                    "high": candle.high || rawTick.high || rawTick.high_price || fallbackPrice,
+                    "low": candle.low || rawTick.low || rawTick.low_price || fallbackPrice,
+                    "close": candle.close || rawTick.close || rawTick.close_price || fallbackPrice,
+                    "volume": candle.volume || rawTick.volume || rawTick.trade_volume || 0,
+                    "datetime": rawTick.exchange_timestamp || rawTick.exchTradeTime || rawTick.last_update_time || new Date().toISOString()
+                };
+
+                socket.emit(EVENTS.STRATEGY_LIVE_TICK, {
+                    symbol: symbol,
+                    tick: filterTick,
+                    raw: rawTick
+                });
+                console.log(`[Socket] Emitted INSTANT tick for ${symbol}`);
+
+                // 2. AVOID REDUNDANT WEBSOCKET SUBSCRIPTIONS
+                // The global webSocketService already subscribes to equities, futures, and MCX.
+                // Dynamic options/equities are handled in stockController.js
+                // Sending redundant subscriptions here was causing Angel One to drop the WebSocket connection!
                 if (token && store.wsClient) {
+                    const actualExchange = store.tokenToExchange[token] || 'NSE';
+                    const exchangeTypeMap = { "NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5 };
+                    const exchType = exchangeTypeMap[actualExchange] || 1;
+                    
                     store.wsClient.fetchData({
+                        correlationID: "live_tick_" + token,
                         action: 1, 
-                        mode: 2, 
-                        exchangeType: 1,
+                        mode: 3, // FULL mode for all depth keys
+                        exchangeType: exchType,
                         tokens: [token]
                     });
-                    console.log(`[Socket] Added ${cleanSymbol} (${token}) to live WebSocket stream!`);
+                    console.log(`[Socket] Added ${cleanSymbol} (${token}) to live WebSocket stream in FULL mode!`);
                 }
             } catch (err) {
                 console.error("[Socket] GET_LIVE_TICK Error:", err.message);
@@ -187,15 +262,37 @@ const connectSocket = (server) => {
                     dynamicFrom = formatDate(warmupDate, isCommodity ? "09:00" : "09:15", finalInterval);
                 }
 
-                const topStocksMap = {
-                    "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
-                    "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
-                    "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
-                    "GOLD": "234454", "SILVER": "234455"
-                };
+                const userTopStocks = [
+                    "ABB", "POWERINDIA", "ADANIENT", "ADANIGREEN", "ADANIPORTS", "ADANIENSOL", "ABCAPITAL", "ALKEM", 
+                    "AMBUJACEM", "AMBER", "ANGELONE", "APLAPOLLO", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", "ASTRAL", 
+                    "AUROPHARMA", "AUBANK", "DMART", "AXISBANK", "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "BAJAJHLDNG", 
+                    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BHARTIARTL", "BDL", "BEL", "BHARATFORG", "INDUSTOWER", 
+                    "BPCL", "BHEL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "BSE", "ZYDUSLIFE", "CANBK", "CDSL", 
+                    "CHOLAFIN", "CIPLA", "COALINDIA", "COLPAL", "CAMS", "CONCOR", "CROMPTON", "CGPOWER", "CUMMINSIND", 
+                    "DABUR", "DELHIVERY", "DIVISLAB", "DIXON", "DLF", "DRREDDY", "EICHERMOT", "EXIDEIND", "FEDERALBNK", 
+                    "FORTIS", "NYKAA", "GAIL", "GLENMARK", "GMRAIRPORT", "GODREJCP", "GODREJPROP", "GRASIM", "HAVELLS", 
+                    "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HAL", "HINDALCO", "HINDUNILVR", 
+                    "HINDPETRO", "HINDZINC", "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDEA", "IDFCFIRSTB", 
+                    "360ONE", "INDUSINDBK", "IEX", "SAMMAANCAP", "INDHOTEL", "INDIANB", "IOC", "IRFC", "IREDA", 
+                    "NAUKRI", "INFY", "INOXWIND", "INDIGO", "ITC", "JINDALSTEL", "JIOFIN", "JSWENERGY", "JSWSTEEL", 
+                    "JUBLFOOD", "KALYANKJIL", "KAYNES", "KEI", "KFINTECH", "KOTAKBANK", "KPITTECH", "LT", "LAURUSLABS", 
+                    "LICI", "LICHSGFIN", "LTF", "LTM", "LUPIN", "LODHA", "M&M", "MANAPPURAM", "MANKIND", "MARICO", 
+                    "MARUTI", "MFSL", "MAXHEALTH", "MAZDOCK", "MCX", "UNOMINDA", "MOTHERSON", "MPHASIS", "MUTHOOTFIN", 
+                    "NATIONALUM", "NMDC", "NBCC", "NESTLEIND", "NHPC", "COFORGE", "NTPC", "NUVAMA", "OBEROIRLTY", 
+                    "DALBHARAT", "OIL", "PAYTM", "ONGC", "OFSS", "PAGEIND", "POLICYBZR", "PERSISTENT", "PETRONET", 
+                    "PGEL", "PHOENIXLTD", "PIDILITIND", "PIIND", "PPLPHARMA", "PNBHOUSING", "POLYCAB", "PFC", "POWERGRID", 
+                    "PREMIERENE", "PRESTIGE", "PNB", "RVNL", "RBLBANK", "RELIANCE", "PATANJALI", "RECLTD", "SAIL", 
+                    "SBICARD", "SBILIFE", "SHREECEM", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SRF", "SBIN", 
+                    "SUNPHARMA", "SUPREMEIND", "SUZLON", "SWIGGY", "SYNGENE", "TATAELXSI", "TATACONSUM", "TMPV", 
+                    "TATAPOWER", "TATASTEEL", "TATATECH", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", 
+                    "TIINDIA", "TVSMOTOR", "ULTRACEMCO", "UNIONBANK", "UPL", "UNITDSPR", "VBL", "VEDL", "VOLTAS", 
+                    "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
+                ];
 
-                let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym];
+                if (uSym === "GOLD") finalToken = "234454";
+                if (uSym === "SILVER") finalToken = "234455";
+
                 let extraInfo = null;
 
                 if (!finalToken) {
@@ -250,7 +347,6 @@ const connectSocket = (server) => {
         });
         
 
-
         //THIS IS USED FOR LIVE EXACT CURRENT DATE INDICATGOR PLOTTING
         socket.on(EVENTS.GET_LIVE_INDICATOR, async (payload) => {
             console.log(`[Socket] Received GET_LIVE_INDICATOR request for:`, payload);
@@ -279,15 +375,37 @@ const connectSocket = (server) => {
                 }
                 const mappedExchange = finalExchange;
 
-                const topStocksMap = {
-                    "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
-                    "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
-                    "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
-                    "GOLD": "234454", "SILVER": "234455"
-                };
+                const userTopStocks = [
+                    "ABB", "POWERINDIA", "ADANIENT", "ADANIGREEN", "ADANIPORTS", "ADANIENSOL", "ABCAPITAL", "ALKEM", 
+                    "AMBUJACEM", "AMBER", "ANGELONE", "APLAPOLLO", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", "ASTRAL", 
+                    "AUROPHARMA", "AUBANK", "DMART", "AXISBANK", "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "BAJAJHLDNG", 
+                    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BHARTIARTL", "BDL", "BEL", "BHARATFORG", "INDUSTOWER", 
+                    "BPCL", "BHEL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "BSE", "ZYDUSLIFE", "CANBK", "CDSL", 
+                    "CHOLAFIN", "CIPLA", "COALINDIA", "COLPAL", "CAMS", "CONCOR", "CROMPTON", "CGPOWER", "CUMMINSIND", 
+                    "DABUR", "DELHIVERY", "DIVISLAB", "DIXON", "DLF", "DRREDDY", "EICHERMOT", "EXIDEIND", "FEDERALBNK", 
+                    "FORTIS", "NYKAA", "GAIL", "GLENMARK", "GMRAIRPORT", "GODREJCP", "GODREJPROP", "GRASIM", "HAVELLS", 
+                    "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HAL", "HINDALCO", "HINDUNILVR", 
+                    "HINDPETRO", "HINDZINC", "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDEA", "IDFCFIRSTB", 
+                    "360ONE", "INDUSINDBK", "IEX", "SAMMAANCAP", "INDHOTEL", "INDIANB", "IOC", "IRFC", "IREDA", 
+                    "NAUKRI", "INFY", "INOXWIND", "INDIGO", "ITC", "JINDALSTEL", "JIOFIN", "JSWENERGY", "JSWSTEEL", 
+                    "JUBLFOOD", "KALYANKJIL", "KAYNES", "KEI", "KFINTECH", "KOTAKBANK", "KPITTECH", "LT", "LAURUSLABS", 
+                    "LICI", "LICHSGFIN", "LTF", "LTM", "LUPIN", "LODHA", "M&M", "MANAPPURAM", "MANKIND", "MARICO", 
+                    "MARUTI", "MFSL", "MAXHEALTH", "MAZDOCK", "MCX", "UNOMINDA", "MOTHERSON", "MPHASIS", "MUTHOOTFIN", 
+                    "NATIONALUM", "NMDC", "NBCC", "NESTLEIND", "NHPC", "COFORGE", "NTPC", "NUVAMA", "OBEROIRLTY", 
+                    "DALBHARAT", "OIL", "PAYTM", "ONGC", "OFSS", "PAGEIND", "POLICYBZR", "PERSISTENT", "PETRONET", 
+                    "PGEL", "PHOENIXLTD", "PIDILITIND", "PIIND", "PPLPHARMA", "PNBHOUSING", "POLYCAB", "PFC", "POWERGRID", 
+                    "PREMIERENE", "PRESTIGE", "PNB", "RVNL", "RBLBANK", "RELIANCE", "PATANJALI", "RECLTD", "SAIL", 
+                    "SBICARD", "SBILIFE", "SHREECEM", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SRF", "SBIN", 
+                    "SUNPHARMA", "SUPREMEIND", "SUZLON", "SWIGGY", "SYNGENE", "TATAELXSI", "TATACONSUM", "TMPV", 
+                    "TATAPOWER", "TATASTEEL", "TATATECH", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", 
+                    "TIINDIA", "TVSMOTOR", "ULTRACEMCO", "UNIONBANK", "UPL", "UNITDSPR", "VBL", "VEDL", "VOLTAS", 
+                    "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
+                ];
 
-                let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym];
+                if (uSym === "GOLD") finalToken = "234454";
+                if (uSym === "SILVER") finalToken = "234455";
+
                 let extraInfo = null;
 
                 if (!finalToken) {
@@ -510,15 +628,36 @@ const connectSocket = (server) => {
                     finalExchange = "NFO";
                 }
 
-                const topStocksMap = {
-                    "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
-                    "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
-                    "KOTAKBANK": "1922", "LT": "11483", "BAJFINANCE": "317", "MARUTI": "10999", "SUNPHARMA": "3351",
-                    "TITAN": "3506", "ADANIENT": "25", "ADANIPORTS": "15083", "TATAMOTORS": "3456", "TATASTEEL": "3499",
-                    "GOLD": "234454", "SILVER": "234455"
-                };
+                const userTopStocks = [
+                    "ABB", "POWERINDIA", "ADANIENT", "ADANIGREEN", "ADANIPORTS", "ADANIENSOL", "ABCAPITAL", "ALKEM", 
+                    "AMBUJACEM", "AMBER", "ANGELONE", "APLAPOLLO", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", "ASTRAL", 
+                    "AUROPHARMA", "AUBANK", "DMART", "AXISBANK", "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "BAJAJHLDNG", 
+                    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BHARTIARTL", "BDL", "BEL", "BHARATFORG", "INDUSTOWER", 
+                    "BPCL", "BHEL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "BSE", "ZYDUSLIFE", "CANBK", "CDSL", 
+                    "CHOLAFIN", "CIPLA", "COALINDIA", "COLPAL", "CAMS", "CONCOR", "CROMPTON", "CGPOWER", "CUMMINSIND", 
+                    "DABUR", "DELHIVERY", "DIVISLAB", "DIXON", "DLF", "DRREDDY", "EICHERMOT", "EXIDEIND", "FEDERALBNK", 
+                    "FORTIS", "NYKAA", "GAIL", "GLENMARK", "GMRAIRPORT", "GODREJCP", "GODREJPROP", "GRASIM", "HAVELLS", 
+                    "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HAL", "HINDALCO", "HINDUNILVR", 
+                    "HINDPETRO", "HINDZINC", "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDEA", "IDFCFIRSTB", 
+                    "360ONE", "INDUSINDBK", "IEX", "SAMMAANCAP", "INDHOTEL", "INDIANB", "IOC", "IRFC", "IREDA", 
+                    "NAUKRI", "INFY", "INOXWIND", "INDIGO", "ITC", "JINDALSTEL", "JIOFIN", "JSWENERGY", "JSWSTEEL", 
+                    "JUBLFOOD", "KALYANKJIL", "KAYNES", "KEI", "KFINTECH", "KOTAKBANK", "KPITTECH", "LT", "LAURUSLABS", 
+                    "LICI", "LICHSGFIN", "LTF", "LTM", "LUPIN", "LODHA", "M&M", "MANAPPURAM", "MANKIND", "MARICO", 
+                    "MARUTI", "MFSL", "MAXHEALTH", "MAZDOCK", "MCX", "UNOMINDA", "MOTHERSON", "MPHASIS", "MUTHOOTFIN", 
+                    "NATIONALUM", "NMDC", "NBCC", "NESTLEIND", "NHPC", "COFORGE", "NTPC", "NUVAMA", "OBEROIRLTY", 
+                    "DALBHARAT", "OIL", "PAYTM", "ONGC", "OFSS", "PAGEIND", "POLICYBZR", "PERSISTENT", "PETRONET", 
+                    "PGEL", "PHOENIXLTD", "PIDILITIND", "PIIND", "PPLPHARMA", "PNBHOUSING", "POLYCAB", "PFC", "POWERGRID", 
+                    "PREMIERENE", "PRESTIGE", "PNB", "RVNL", "RBLBANK", "RELIANCE", "PATANJALI", "RECLTD", "SAIL", 
+                    "SBICARD", "SBILIFE", "SHREECEM", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SRF", "SBIN", 
+                    "SUNPHARMA", "SUPREMEIND", "SUZLON", "SWIGGY", "SYNGENE", "TATAELXSI", "TATACONSUM", "TMPV", 
+                    "TATAPOWER", "TATASTEEL", "TATATECH", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", 
+                    "TIINDIA", "TVSMOTOR", "ULTRACEMCO", "UNIONBANK", "UPL", "UNITDSPR", "VBL", "VEDL", "VOLTAS", 
+                    "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
+                ];
 
-                let finalToken = topStocksMap[uSym] || store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym];
+                if (uSym === "GOLD") finalToken = "234454";
+                if (uSym === "SILVER") finalToken = "234455";
                 let extraInfo = null;
 
                 if (!finalToken) {

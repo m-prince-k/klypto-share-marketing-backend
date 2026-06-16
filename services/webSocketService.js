@@ -47,6 +47,13 @@ function formatTickData(data) {
     formatted.sentiment = (data.last_traded_price > data.close_price) ? "bullish" : "bearish";
     formatted.fetchedAt = new Date().toISOString();
 
+    if (data.best_five_buy) {
+        formatted.best_five_buy = data.best_five_buy.map(b => ({ ...b, price: (parseFloat(b.price) / 100).toFixed(2) }));
+    }
+    if (data.best_five_sell) {
+        formatted.best_five_sell = data.best_five_sell.map(s => ({ ...s, price: (parseFloat(s.price) / 100).toFixed(2) }));
+    }
+
 
 
     const ltp = parseFloat(formatted.last_traded_price || 0);
@@ -130,10 +137,10 @@ function subscribeNSE(wsClient) {
 
     // 2. Subscribe to Near-Month Futures (NFO)
     const nearMonthFutures = [];
-    const stockNames = store.stocks.map(s => s.name);
+    const stockNames = (store.stocks || []).map(s => s.name);
     
     stockNames.forEach(name => {
-        const futures = store.nfoMasterData.filter(f => 
+        const futures = (store.nfoMasterData || []).filter(f => 
             f.name === name && (f.instrumenttype === "FUTSTK" || f.instrumenttype === "FUTIDX")
         );
         if (futures.length > 0) {
@@ -276,6 +283,16 @@ async function startWebSocketConnection(loginData, io) {
             
             // Key by Symbol:Exchange to avoid collisions
             const key = `${formatted.symbol}:${formatted.exchange}`;
+            
+            // Preserve depth arrays from previous tick if current tick (Mode 2) doesn't have them
+            const prev = store.latestMarketData[key] || {};
+            if (!formatted.best_five_buy && prev.best_five_buy) {
+                formatted.best_five_buy = prev.best_five_buy;
+            }
+            if (!formatted.best_five_sell && prev.best_five_sell) {
+                formatted.best_five_sell = prev.best_five_sell;
+            }
+            
             store.latestMarketData[key] = formatted;
             
             // Format for frontend '/stocks' equivalent
@@ -344,7 +361,7 @@ async function startWebSocketConnection(loginData, io) {
                 io.emit(EVENTS.LIVE_TICK, tickPayload);
 
                 // Added for user's strategyController requirement (isolated event to prevent conflicts)
-                io.emit(EVENTS.STRATEGY_LIVE_TICK, {
+                io.to("tick_" + formatted.symbol).emit(EVENTS.STRATEGY_LIVE_TICK, {
                     symbol: formatted.symbol + (formatted.exchange === 'NSE' ? '-EQ' : ''),
                     tick: {
                         open: candle.open,

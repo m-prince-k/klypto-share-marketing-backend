@@ -43,5 +43,11 @@ module.exports = {
     ALERT_TRIGGERED: "ALERT_TRIGGERED",
     SYNC_STATUS: "syncStatus",
     OPTION_CHAIN_UPDATE: "optionChainUpdate",       // Real-time option chain data
-    OPTION_CHAIN_ERROR: "optionChainError"
+    OPTION_CHAIN_ERROR: "optionChainError",
+    
+    // --- MULTI-USER DYNAMIC SCANNER EVENTS ---
+    SCANNER_PROGRESS: "scannerProgress",            // Emits progress of background scan
+    NEW_SCANNER_SIGNAL: "newScannerSignal",         // Emits immediately when a new signal is found
+    SCANNER_COMPLETE: "scannerComplete",            // Emits when scan finishes
+    SCANNER_ERROR: "scannerError"                   // Emits when an error occurs during scanning
 };

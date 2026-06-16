@@ -1429,6 +1429,16 @@ const getFormattedOptionChain = async (req, res) => {
 
 const generateMasterWatchlistData = async () => {
     try {
+        if (Object.keys(store.latestMarketData).length < 50) {
+            console.log("[MasterWatchlist] latestMarketData is empty or incomplete. Force syncing...");
+            try {
+                const { syncLivePrices } = require('../services/stockService');
+                await syncLivePrices();
+            } catch (err) {
+                console.warn("[MasterWatchlist] Force sync failed, proceeding with available data:", err.message);
+            }
+        }
+
         const formatItem = (item, isIndex = false) => {
             const exchange = isIndex ? "NSE" : (item.segment || "NSE");
             const key = `${item.name}:${exchange}`;
