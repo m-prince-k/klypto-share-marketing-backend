@@ -1429,6 +1429,12 @@ const getFormattedOptionChain = async (req, res) => {
 
 const generateMasterWatchlistData = async () => {
     try {
+        if (!store.stocks || store.stocks.length === 0) {
+            console.log("[MasterWatchlist] store.stocks is empty. Forcing master data load...");
+            const { fetchTop200Stocks } = require('../services/stockService');
+            await fetchTop200Stocks();
+        }
+
         if (Object.keys(store.latestMarketData).length < 50) {
             console.log("[MasterWatchlist] latestMarketData is empty or incomplete. Force syncing...");
             try {
