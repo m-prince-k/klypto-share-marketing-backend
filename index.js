@@ -1,94 +1,99 @@
-const {
-  subscribeStock,
-  getAllTicks,
-  getTickByStock
-} = require("./services/breeze-connect");
-
 const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+require('dotenv').config();
+
+const { connectSocket, getIO, startGoldBroadcast } = require('./services/socket');
+const { sequelize } = require('./models');
+const store = require('./services/marketStore');
+const { login } = require('./services/authService');
+const { fetchTop200Stocks, syncLivePrices } = require('./services/stockService');
+const { startWebSocketConnection, manageWebSocket } = require('./services/webSocketService');
+const { startSchedulers, runInitialHistoricalLoad } = require('./services/schedulerService');
+
+const cors = require('cors');
+
+
+
+const stockRoutes = require('./routes/stockRoutes');
+const optionsRoutes = require('./routes/optionsRoutes');
+const futuresRoutes = require('./routes/futuresRoutes');
+const authRoutes = require('./routes/authRoutes');
+const alertRoutes = require('./routes/alertRoutes');
+const indicatorRoutes = require('./routes/indicatorRoutes');
+const backtestRoutes = require('./routes/backtestRoutes');
+const tradeRoutes = require('./routes/tradeRoutes');
+const strategyRoutes = require('./routes/strategyRoutes');
+
 const app = express();
-const bodyParser = require("body-parser");
-const { getData, getAllStocks } = require("./historicalData");
-
-const cors=require("cors");
+const server = http.createServer(app);
 
 
-const PORT = 8000;
+//init socket
+connectSocket(server);
+const io = getIO();
 
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+const alertService = require('./services/alertService');
+alertService.init(io);
 
-// app.use("/api");
+const PORT = process.env.PORT || 3000;
 
-app.get("/testing", async (req, res) => {
-    return await res.send("safasf")
-});
-
-app.post("/subscribe", async (req, res) => {
-  try {
-    const result = await subscribeStock(req.body);
-   return await res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message || String(error)
-    });
-  }
-});
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(cors()); // Enable CORS for all routes
+app.use(express.static(__dirname + '/public')); // Serve only public/ folder, not entire project root
+// Routes
+app.use('/auth', authRoutes);
+app.use('/equity', stockRoutes);
+app.use('/options', optionsRoutes);
+app.use('/futures', futuresRoutes);
+app.use('/alerts', alertRoutes);
+app.use('/api/indicator', indicatorRoutes);
+app.use('/api/backtest', backtestRoutes);
+app.use('/api/trades', tradeRoutes);
+app.use('/api/strategy', strategyRoutes);
 
 
-app.get("/ticks", async (req, res) => {
-  return await res.json(getAllTicks());
-});
+// Socket logic is now managed in services/socket.js
 
-app.get("/ticks/:stockCode", async (req, res) => {
-  return await res.json(getTickByStock(req.params.stockCode));
-});
 
-function formatOHLCV(response) {
-  // ✅ Step 1: extract Success
-  const data = response?.Success || [];
+async function bootstrap() {
+    try {
+        console.log("Synchronizing Database...");
+        await sequelize.sync();
 
-  // ✅ Step 2: map to OHLCV
-  return data.map(item => ({
-    time: Math.floor(new Date(item.datetime).getTime() / 1000), // ⚠️ IMPORTANT
-    datetime: item.datetime,
-    expiry_date:item.expiry_date,
-    count:item.count,
-    stockCode:item.stock_code,
-    open: Number(item.open),
-    high: Number(item.high),
-    low: Number(item.low),
-    close: Number(item.close),
-    volume: Number(item.volume),
-    openInterest: Number(item.open_interest)
-  }));
+        await fetchTop200Stocks();
+
+        const loginData = await login();
+        if (!loginData || !loginData.status) {
+            console.error("Critical Error: Angel One login failed.");
+            return;
+        }
+
+        store.loginData = loginData.data;
+
+        server.listen(PORT, () => {
+            console.log(`\n=================================================`);
+            console.log(`🚀 SERVER RUNNING AT: http://localhost:${PORT}`);
+            console.log(`-------------------------------------------------`);
+            console.log(`📈 EQUITY:   http://localhost:${PORT}/equity/stocks`);
+            console.log(`📊 EQUITY LIVE:      http://localhost:${PORT}/equity/live`);
+            console.log(`📉 OPTIONS LIVE:     http://localhost:${PORT}/options/live`);
+            console.log(`🔮 FUTURES LIVE:     http://localhost:${PORT}/futures/live`);
+            console.log(`=================================================\n`);
+
+            manageWebSocket(loginData, io);
+            startSchedulers();
+
+            // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One
+            setTimeout(() => {
+                console.log('[Startup] Running background LTP sync (non-blocking)...');
+                syncLivePrices().catch(e => console.error('[Startup] LTP sync error:', e.message));
+            }, 5000);
+        });
+    } catch (err) {
+        console.error("Bootstrap error:", err);
+    }
 }
 
-
-app.get("/getBreezeHistoricalData",async (req,res) => {
-    try {
-        const {interval,symbol,from_date,to_date}=req.query;
-        let object={
-            interval:interval,
-            symbol:symbol,
-            from_date:from_date,
-            to_date:to_date
-        }
-        const data = await getData(object);
-        console.log(data,"________---8978643")
-        return await res.json({data:formatOHLCV(data)});
-    } catch (error) {
-        console.log(error);
-    }
-})
-
-app.get("/getAllStockss",async (req,res) => {
-    const output = await getAllStocks();
-    return output;
-});
-
-
-app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}/`);
-});
+bootstrap();
