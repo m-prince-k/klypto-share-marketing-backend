@@ -46,7 +46,13 @@ const io = getIO();
 const alertService = require("./services/alertService");
 alertService.init(io);
 
+const HOST = process.env.HOST || "0.0.0.0";
 const PORT = process.env.PORT || 5000;
+const startupState = {
+  databaseReady: false,
+  marketFeedsReady: false,
+  startupError: null,
+};
 
 const allowedOrigins = [
   // Production
@@ -101,53 +107,71 @@ app.get("/", (req, res) => {
   res.send("Klypto backend is running");
 });
 
+app.get("/health", (req, res) => {
+  const hasStartupError = Boolean(startupState.startupError);
+  const isReady = startupState.databaseReady && startupState.marketFeedsReady;
+
+  res.status(hasStartupError ? 503 : 200).json({
+    status: hasStartupError ? "degraded" : isReady ? "ready" : "starting",
+    databaseReady: startupState.databaseReady,
+    marketFeedsReady: startupState.marketFeedsReady,
+    startupError: startupState.startupError,
+  });
+});
+
 // Socket logic is now managed in services/socket.js
 
 async function bootstrap() {
   try {
-    console.log("Synchronizing Database...");
-    await sequelize.sync();
-
-    server.listen(PORT, () => {
+    server.listen(PORT, HOST, () => {
       console.log(`\n=================================================`);
-      console.log(`🚀 SERVER RUNNING AT: http://localhost:${PORT}`);
+      console.log(`🚀 SERVER RUNNING AT: http://${HOST}:${PORT}`);
       console.log(`-------------------------------------------------`);
-      console.log(`📈 EQUITY:   http://localhost:${PORT}/equity/stocks`);
-      console.log(`📊 EQUITY LIVE:      http://localhost:${PORT}/equity/live`);
-      console.log(`📉 OPTIONS LIVE:     http://localhost:${PORT}/options/live`);
-      console.log(`🔮 FUTURES LIVE:     http://localhost:${PORT}/futures/live`);
+      console.log(`📈 EQUITY:   http://${HOST}:${PORT}/equity/stocks`);
+      console.log(`📊 EQUITY LIVE:      http://${HOST}:${PORT}/equity/live`);
+      console.log(`📉 OPTIONS LIVE:     http://${HOST}:${PORT}/options/live`);
+      console.log(`🔮 FUTURES LIVE:     http://${HOST}:${PORT}/futures/live`);
+      console.log(`🩺 HEALTH:   http://${HOST}:${PORT}/health`);
       console.log(`=================================================\n`);
-    });
+      // Run slow startup tasks after the HTTP server is already accepting requests.
+      (async () => {
+        try {
+          console.log("[Startup] Synchronizing database in background...");
+          await sequelize.sync();
+          startupState.databaseReady = true;
+          console.log("[Startup] Database synchronized.");
 
-    // Run slow startup tasks after the HTTP server is already accepting requests.
-    (async () => {
-      try {
-        console.log("[Startup] Loading stock master data in background...");
-        await fetchTop200Stocks();
+          console.log("[Startup] Loading stock master data in background...");
+          await fetchTop200Stocks();
 
-        console.log("[Startup] Logging into Angel One in background...");
-        const loginData = await login();
-        if (!loginData || !loginData.status) {
-          console.error("Critical Error: Angel One login failed.");
-          return;
+          console.log("[Startup] Logging into Angel One in background...");
+          const loginData = await login();
+          if (!loginData || !loginData.status) {
+            const loginError = "Angel One login failed.";
+            startupState.startupError = loginError;
+            console.error(`[Startup] ${loginError}`);
+            return;
+          }
+
+          store.loginData = loginData.data;
+
+          await manageWebSocket(loginData, io);
+          startSchedulers();
+          startupState.marketFeedsReady = true;
+
+          // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One
+          setTimeout(() => {
+            console.log("[Startup] Running background LTP sync (non-blocking)...");
+            syncLivePrices().catch((e) =>
+              console.error("[Startup] LTP sync error:", e.message),
+            );
+          }, 5000);
+        } catch (err) {
+          startupState.startupError = err.message;
+          console.error("[Startup] Background initialization error:", err);
         }
-
-        store.loginData = loginData.data;
-
-        await manageWebSocket(loginData, io);
-        startSchedulers();
-
-        // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One
-        setTimeout(() => {
-          console.log("[Startup] Running background LTP sync (non-blocking)...");
-          syncLivePrices().catch((e) =>
-            console.error("[Startup] LTP sync error:", e.message),
-          );
-        }, 5000);
-      } catch (err) {
-        console.error("[Startup] Background initialization error:", err);
-      }
-    })();
+      })();
+    });
   } catch (err) {
     console.error("Bootstrap error:", err);
   }
