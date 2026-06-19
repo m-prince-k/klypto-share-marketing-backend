@@ -36,6 +36,34 @@ const stockNameMapping = {
     'PETRONET': 'PETRONET LNG LIMITED'
 };
 
+function removeFileFromFailedLog(symbol, file) {
+    const logFilePath = path.join(__dirname, '../failed_ingestion.log');
+    if (!fs.existsSync(logFilePath)) return;
+
+    try {
+        const logContent = fs.readFileSync(logFilePath, 'utf8');
+        const lines = logContent.split('\n');
+        const updatedLines = lines.filter(line => {
+            if (line.trim() === '') return false; // Clean up empty lines
+            const stockMatch = line.match(/Stock:\s*([^|]+)/);
+            const fileMatch = line.match(/File:\s*([^|]+)/);
+            if (stockMatch && fileMatch) {
+                const lineSymbol = stockMatch[1].trim();
+                const lineFile = fileMatch[1].trim();
+                if (lineSymbol === symbol && lineFile === file) {
+                    return false; // Remove this line
+                }
+            }
+            return true; // Keep other lines
+        });
+
+        const newContent = updatedLines.length > 0 ? updatedLines.join('\n') + '\n' : '';
+        fs.writeFileSync(logFilePath, newContent);
+    } catch (err) {
+        console.error("[AUTO-RECOVERY] Failed to remove entry from failed_ingestion.log:", err);
+    }
+}
+
 async function ingestSingleStockFolder(folderPath, summary, forceReingest) {
     if (!fs.existsSync(folderPath)) return;
 
@@ -59,6 +87,7 @@ async function ingestSingleStockFolder(folderPath, summary, forceReingest) {
                 if (!forceReingest) {
                     console.log(`[Ingestion] File ${file} already ingested (${existingCount} rows). Skipping to save time.`);
                     summary.filesSkipped++;
+                    removeFileFromFailedLog(symbol, file);
                     continue;
                 } else {
                     console.log(`[Ingestion] Force re-ingesting ${file}. Deleting ${existingCount} existing records...`);
@@ -179,6 +208,7 @@ async function ingestSingleStockFolder(folderPath, summary, forceReingest) {
             console.log(`[Ingestion] Successfully finished ${file}\n`);
             summary.filesProcessed++;
             summary.newRowsInserted += mappedData.length;
+            removeFileFromFailedLog(symbol, file);
 
         } catch (fileError) {
             console.error(`Failed to process file ${file}:`, fileError);

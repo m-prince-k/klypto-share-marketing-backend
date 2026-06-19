@@ -152,7 +152,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
 
             const marketHoursPerDay = interval === "ONE_DAY" ? 24 : 6.25; 
             const expectedCandlesPerDay = interval === "ONE_DAY" ? (5/7) : (marketHoursPerDay * 60) / intervalInMinutes;
-            const expectedCount = Math.max(1, Math.floor(rangeDays * expectedCandlesPerDay) * 0.7); // 70% threshold
+            const expectedCount = Math.max(1, Math.floor(rangeDays * expectedCandlesPerDay) * 0.6); // 60% threshold to prevent unnecessary API fetches for holidays
 
             const lastCandle = dbCandles[dbCandles.length - 1];
             const lastTs = new Date(lastCandle.timestamp);
