@@ -173,9 +173,8 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                     return { ...d, time: Math.floor(new Date(d.timestamp).getTime() / 1000) };
                 }).filter(c => {
                     const ts = new Date(c.timestamp);
-                    const hours = ts.getHours();
-                    const minutes = ts.getMinutes();
-                    const timeVal = hours * 100 + minutes;
+                    const istDate = new Date(ts.getTime() + 5.5 * 60 * 60 * 1000);
+                    const timeVal = istDate.getUTCHours() * 100 + istDate.getUTCMinutes();
 
                     if (exchange === "MCX") {
                         // Restricted by user to 3:30 PM
@@ -466,9 +465,8 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
 
         const filteredData = sortedData.filter(c => {
             const ts = new Date(c.timestamp);
-            const hours = ts.getHours();
-            const minutes = ts.getMinutes();
-            const timeVal = hours * 100 + minutes;
+            const istDate = new Date(ts.getTime() + 5.5 * 60 * 60 * 1000);
+            const timeVal = istDate.getUTCHours() * 100 + istDate.getUTCMinutes();
 
             if (exchange === "MCX") {
                 // Restricted by user to 3:30 PM
