@@ -63,27 +63,27 @@ const allowedOrigins = [
   "https://www.klypto.app",
 ];
 
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, curl)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked: ${origin}`));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+};
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (mobile apps, Postman, curl)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS blocked: ${origin}`));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  }),
-);
+app.use(cors(corsOptions));
 // Handle preflight requests
-app.options("*", cors());
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.static(__dirname + "/public")); // Serve only public/ folder, not entire project root
 // Routes
@@ -108,16 +108,6 @@ async function bootstrap() {
     console.log("Synchronizing Database...");
     await sequelize.sync();
 
-    await fetchTop200Stocks();
-
-    const loginData = await login();
-    if (!loginData || !loginData.status) {
-      console.error("Critical Error: Angel One login failed.");
-      return;
-    }
-
-    store.loginData = loginData.data;
-
     server.listen(PORT, () => {
       console.log(`\n=================================================`);
       console.log(`🚀 SERVER RUNNING AT: http://localhost:${PORT}`);
@@ -127,18 +117,37 @@ async function bootstrap() {
       console.log(`📉 OPTIONS LIVE:     http://localhost:${PORT}/options/live`);
       console.log(`🔮 FUTURES LIVE:     http://localhost:${PORT}/futures/live`);
       console.log(`=================================================\n`);
-
-      manageWebSocket(loginData, io);
-      startSchedulers();
-
-      // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One
-      setTimeout(() => {
-        console.log("[Startup] Running background LTP sync (non-blocking)...");
-        syncLivePrices().catch((e) =>
-          console.error("[Startup] LTP sync error:", e.message),
-        );
-      }, 5000);
     });
+
+    // Run slow startup tasks after the HTTP server is already accepting requests.
+    (async () => {
+      try {
+        console.log("[Startup] Loading stock master data in background...");
+        await fetchTop200Stocks();
+
+        console.log("[Startup] Logging into Angel One in background...");
+        const loginData = await login();
+        if (!loginData || !loginData.status) {
+          console.error("Critical Error: Angel One login failed.");
+          return;
+        }
+
+        store.loginData = loginData.data;
+
+        await manageWebSocket(loginData, io);
+        startSchedulers();
+
+        // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One
+        setTimeout(() => {
+          console.log("[Startup] Running background LTP sync (non-blocking)...");
+          syncLivePrices().catch((e) =>
+            console.error("[Startup] LTP sync error:", e.message),
+          );
+        }, 5000);
+      } catch (err) {
+        console.error("[Startup] Background initialization error:", err);
+      }
+    })();
   } catch (err) {
     console.error("Bootstrap error:", err);
   }

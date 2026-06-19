@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon index.js",
+    "start": "node index.js",
+    "dev": "node ./node_modules/nodemon/bin/nodemon.js index.js",
     "seed-indicator": "node add_ma_ribbon.js",
     "fetch-missing": "node scratch/fetch_missing_csv.js",
     "fetch-data": "node scratch/fetch_7_months_with_histogram.js",
