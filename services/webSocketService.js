@@ -4,6 +4,7 @@ const EVENTS = require("../constants/socketEvents");
 const alertService = require("./alertService");
 const optionChainService = require("./optionChainService");
 const { handleIndicatorBroadcast } = require('./socket');
+const ENABLE_MARKET_DEBUG_LOGS = process.env.ENABLE_MARKET_DEBUG_LOGS === "true";
 function isNSEOpen() {
     const now = new Date();
     const day = now.getDay();
@@ -248,7 +249,7 @@ async function startWebSocketConnection(loginData, io) {
         if (!formatted) return;
 
         // DIAGNOSTIC LOG FOR TCS
-        if (formatted.symbol === 'TCS') {
+        if (ENABLE_MARKET_DEBUG_LOGS && formatted.symbol === 'TCS') {
             console.log(`[TCS-DEBUG] Price: ${formatted.last_traded_price} | Raw V: ${data.v} | Formatted V: ${formatted.v}`);
         }
 
@@ -264,7 +265,7 @@ async function startWebSocketConnection(loginData, io) {
         }
 
         // Log raw tokens to see what's arriving
-        if (Math.random() < 0.05) {
+        if (ENABLE_MARKET_DEBUG_LOGS && Math.random() < 0.05) {
             const cleanToken = data.token ? data.token.replace(/\"/g, "").trim() : null;
             const sym = store.tokenToName[cleanToken] || cleanToken;
             console.log(`[WS Tick] Received tick for ${sym} (${exchange})`);
@@ -326,7 +327,7 @@ async function startWebSocketConnection(loginData, io) {
 
 
                 // Log only for options or every 100th tick to avoid spam
-                if (formatted.symbol.length > 10 || Math.random() < 0.01) {
+                if (ENABLE_MARKET_DEBUG_LOGS && (formatted.symbol.length > 10 || Math.random() < 0.01)) {
                     console.log(`[WebSocket] Emitting LIVE_TICK for ${formatted.symbol} (${cleanToken}) | Close: ${candle.close}`);
                 }
                 const tickPayload = {
