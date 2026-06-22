@@ -1,0 +1,12 @@
+error.log
+node_modules/
+.env
+angel_token.json
+failed_ingestion.log
+add_index.js
+scratch/
+vikas/
+historical_csv/
+historical_csv.zip
+*.zip
+
