@@ -78,10 +78,16 @@ const connectSocket = (server) => {
                 const token = store.symbolToTokenMaster && (store.symbolToTokenMaster[cleanSymbol] || store.symbolToTokenMaster[`${cleanSymbol}:NSE`]);
                 console.log(`[Socket] Resolved token for ${cleanSymbol}: ${token}`);
                 
-                // 1. FAST EMIT FROM CACHE IMMEDIATELY
-                let rawTick = (store.latestMarketData && (store.latestMarketData[cleanSymbol] || store.latestMarketData[`${cleanSymbol}:NSE`])) || null;
+                // 1. FAST EMIT FROM CACHE IMMEDIATELY (Only if market is open, else force API fetch to get latest snapshot)
+                const { isAnyMarketOpen } = require('./webSocketService');
+                const marketOpen = isAnyMarketOpen();
                 
-                // If not in cache, we MUST fetch it from Angel One API so frontend gets at least the last known price!
+                let rawTick = null;
+                if (marketOpen) {
+                    rawTick = (store.latestMarketData && (store.latestMarketData[cleanSymbol] || store.latestMarketData[`${cleanSymbol}:NSE`])) || null;
+                }
+                
+                // If not in cache (or market is closed), we MUST fetch it from Angel One API so frontend gets at least the last known price!
                 if (!rawTick && token) {
                     const smartApi = require('./smartApi');
                     try {
@@ -89,16 +95,23 @@ const connectSocket = (server) => {
                         const resp = await smartApi.marketData({ mode: 'FULL', exchangeTokens: { [exchange]: [token] } });
                         if (resp && resp.data && resp.data.fetched && resp.data.fetched.length > 0) {
                             let apiTick = resp.data.fetched[0];
+                            
+                            const ltp = parseFloat(apiTick.ltp || apiTick.last_traded_price || 0);
+                            const openPrice = parseFloat(apiTick.open_price || apiTick.open || 0) || ltp;
+                            const highPrice = parseFloat(apiTick.high_price || apiTick.high || 0) || ltp;
+                            const lowPrice = parseFloat(apiTick.low_price || apiTick.low || 0) || ltp;
+                            const closePrice = parseFloat(apiTick.close_price || apiTick.close || 0) || ltp;
+
                             // Map API format to exactly match WebSocket format
                             rawTick = {
                                 ...apiTick,
-                                last_traded_price: apiTick.ltp || apiTick.last_traded_price || 0,
+                                last_traded_price: ltp,
                                 exchange_timestamp: apiTick.exchTradeTime || apiTick.exchange_timestamp || new Date().toISOString(),
                                 last_update_time: apiTick.exchTradeTime || apiTick.last_update_time || new Date().toISOString(),
-                                open: apiTick.open_price || apiTick.open || apiTick.ltp || 0,
-                                high: apiTick.high_price || apiTick.high || apiTick.ltp || 0,
-                                low: apiTick.low_price || apiTick.low || apiTick.ltp || 0,
-                                close: apiTick.close_price || apiTick.close || apiTick.ltp || 0,
+                                open: openPrice,
+                                high: highPrice,
+                                low: lowPrice,
+                                close: closePrice,
                                 volume: apiTick.trade_volume || apiTick.volume || 0,
                                 percent_change: apiTick.percent_change || apiTick.pChange || 0,
                                 best_five_buy: (apiTick.depth && apiTick.depth.buy) ? apiTick.depth.buy : (apiTick.best5Buy || apiTick.best_five_buy || []),
@@ -107,7 +120,7 @@ const connectSocket = (server) => {
                                 symbol: symbol,
                                 exchange: exchange
                             };
-                            console.log(`[Socket] Fetched rawTick from API for ${symbol}`);
+                            console.log(`[Socket] Fetched rawTick from API for ${symbol} (Market Open: ${marketOpen})`);
                         }
                     } catch (e) {
                         console.warn(`[Socket] GET_LIVE_TICK Angel One fetch failed for ${symbol}:`, e.message);
@@ -164,13 +177,23 @@ const connectSocket = (server) => {
                 }
                 
                 const candle = store.liveCandles[token] || {};
-                const fallbackPrice = rawTick.last_traded_price || rawTick.close_price || rawTick.close || 0;
+                const fallbackPrice = parseFloat(rawTick.last_traded_price || rawTick.close_price || rawTick.close || 0);
                 
+                const openPriceRaw = candle.open || rawTick.open || rawTick.open_price || fallbackPrice;
+                const highPriceRaw = candle.high || rawTick.high || rawTick.high_price || fallbackPrice;
+                const lowPriceRaw = candle.low || rawTick.low || rawTick.low_price || fallbackPrice;
+                const closePriceRaw = candle.close || rawTick.close || rawTick.close_price || fallbackPrice;
+
+                const openPriceVal = parseFloat(openPriceRaw || 0) || fallbackPrice;
+                const highPriceVal = parseFloat(highPriceRaw || 0) || fallbackPrice;
+                const lowPriceVal = parseFloat(lowPriceRaw || 0) || fallbackPrice;
+                const closePriceVal = parseFloat(closePriceRaw || 0) || fallbackPrice;
+
                 const filterTick = {
-                    "open": candle.open || rawTick.open || rawTick.open_price || fallbackPrice,
-                    "high": candle.high || rawTick.high || rawTick.high_price || fallbackPrice,
-                    "low": candle.low || rawTick.low || rawTick.low_price || fallbackPrice,
-                    "close": candle.close || rawTick.close || rawTick.close_price || fallbackPrice,
+                    "open": openPriceVal,
+                    "high": highPriceVal,
+                    "low": lowPriceVal,
+                    "close": closePriceVal,
                     "volume": candle.volume || rawTick.volume || rawTick.trade_volume || 0,
                     "datetime": rawTick.exchange_timestamp || rawTick.exchTradeTime || rawTick.last_update_time || new Date().toISOString()
                 };
@@ -191,11 +214,11 @@ const connectSocket = (server) => {
                     open_interest: rawTick.opnInterest || rawTick.open_interest || 0,
                     net_change: rawTick.netChange || rawTick.net_change || 0,
                     percent_change: rawTick.percentChange || rawTick.percent_change || 0,
-                    last_traded_price: rawTick.ltp || rawTick.last_traded_price || fallbackPrice,
-                    day_high: rawTick.high || rawTick.high_price_day || rawTick.high_price || fallbackPrice,
-                    day_low: rawTick.low || rawTick.low_price_day || rawTick.low_price || fallbackPrice,
-                    open: rawTick.open || rawTick.open_price_day || rawTick.open_price || fallbackPrice,
-                    close: rawTick.close || rawTick.close_price || fallbackPrice
+                    last_traded_price: parseFloat(rawTick.ltp || rawTick.last_traded_price || 0) || fallbackPrice,
+                    day_high: parseFloat(rawTick.high || rawTick.high_price_day || rawTick.high_price || 0) || fallbackPrice,
+                    day_low: parseFloat(rawTick.low || rawTick.low_price_day || rawTick.low_price || 0) || fallbackPrice,
+                    open: parseFloat(rawTick.open || rawTick.open_price_day || rawTick.open_price || 0) || fallbackPrice,
+                    close: parseFloat(rawTick.close || rawTick.close_price || 0) || fallbackPrice
                 };
 
                 socket.emit(EVENTS.STRATEGY_LIVE_TICK, {

@@ -224,8 +224,10 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         if (uniqueData.length > 0 && !skipSave) {
             try {
                 // Candle bulkCreate handles duplicates based on composite unique key
-                await Candle.bulkCreate(uniqueData, { ignoreDuplicates: true });
-                console.log(`[AngelOne Service] Saved ${uniqueData.length} candles to DB for ${symbol}`);
+                await Candle.bulkCreate(uniqueData, { 
+                    updateOnDuplicate: ['open', 'high', 'low', 'close', 'volume'] 
+                });
+                console.log(`[AngelOne Service] Saved/Updated ${uniqueData.length} candles in DB for ${symbol}`);
             } catch (dbErr) {
                 console.error(`[AngelOne Service] Failed to save to DB for ${symbol}:`, dbErr.message);
             }

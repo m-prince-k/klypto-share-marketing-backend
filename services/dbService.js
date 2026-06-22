@@ -139,6 +139,17 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             order: [['timestamp', 'ASC']]
         });
 
+        // Self-healing: if the DB has premature candles (where open === close === high for all checked candles),
+        // we force an API fetch to overwrite them with fully-formed candles.
+        if (!forceApi && dbCandles.length > 5) {
+            const sampleCandles = dbCandles.slice(0, 15);
+            const allIdentical = sampleCandles.every(c => parseFloat(c.open) === parseFloat(c.close) && parseFloat(c.open) === parseFloat(c.high));
+            if (allIdentical) {
+                console.log(`[dbService] DB candles for ${symbol} look premature (open === close === high). Forcing API fetch to self-heal...`);
+                forceApi = true;
+            }
+        }
+
         // Only serve from DB if we have enough data and forceApi is false
         if (!forceApi && dbCandles.length > 0) {
             const diffMs = new Date(toDate) - new Date(fromDate);
@@ -246,9 +257,10 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             }
             // --------------------------------------------------------
 
+                const gapFilledData = fillIntradayGaps(finalData, interval, exchange, fromDate, toDate);
                 return { 
                     source: "database", 
-                    data: finalData,
+                    data: gapFilledData,
                     raw_response: null 
                 };
             }
@@ -479,16 +491,87 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         });
 
         if (filteredData.length > 0 && exchange !== "MCX") {
-            await ModelToUse.bulkCreate(filteredData, { ignoreDuplicates: true });
-            console.log(`[API Fallback] Saved ${filteredData.length} records to ${ModelToUse.name} for ${symbol}`);
+            await ModelToUse.bulkCreate(filteredData, { 
+                updateOnDuplicate: ['open', 'high', 'low', 'close', 'volume'] 
+            });
+            console.log(`[API Fallback] Saved/Updated ${filteredData.length} records in ${ModelToUse.name} for ${symbol}`);
         }
 
 
 
-        return { source: "api_chunked", data: filteredData, raw_response: null };
+        const gapFilledData = fillIntradayGaps(filteredData, interval, exchange, fromDate, toDate);
+        return { source: "api_chunked", data: gapFilledData, raw_response: null };
     } catch (err) {
         throw err;
     }
+}
+
+// Helper to fill intraday gaps by forward-filling missing timestamps
+function fillIntradayGaps(candles, interval, exchange, fromDate, toDate) {
+    if (interval === "ONE_DAY" || !candles || candles.length === 0) return candles;
+
+    const intervalMinutes = {
+        "ONE_MINUTE": 1, "THREE_MINUTE": 3, "FIVE_MINUTE": 5,
+        "TEN_MINUTE": 10, "FIFTEEN_MINUTE": 15, "THIRTY_MINUTE": 30,
+        "ONE_HOUR": 60
+    }[interval] || 1;
+
+    const stepSec = intervalMinutes * 60;
+    
+    // Sort candles by timestamp to ensure chronological order
+    const sortedCandles = [...candles].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    const candleMap = new Map();
+    sortedCandles.forEach(c => {
+        candleMap.set(Number(c.time), c);
+    });
+
+    const filled = [];
+    let lastKnown = sortedCandles[0];
+
+    const startSec = Math.floor(new Date(fromDate).getTime() / 1000);
+    const endSec = Math.floor(new Date(toDate).getTime() / 1000);
+
+    for (let timeSec = startSec; timeSec <= endSec; timeSec += stepSec) {
+        const ms = timeSec * 1000;
+        const d = new Date(ms);
+        
+        // Filter by market hours (IST)
+        const istDate = new Date(ms + 5.5 * 60 * 60 * 1000);
+        const timeVal = istDate.getUTCHours() * 100 + istDate.getUTCMinutes();
+        
+        let inMarketHours = false;
+        if (exchange === "MCX") {
+            inMarketHours = timeVal >= 900 && timeVal <= 1530;
+        } else {
+            inMarketHours = timeVal >= 915 && timeVal <= 1530;
+        }
+
+        if (!inMarketHours) continue;
+
+        if (candleMap.has(timeSec)) {
+            const current = candleMap.get(timeSec);
+            filled.push(current);
+            lastKnown = current;
+        } else if (lastKnown) {
+            // Forward fill
+            const closeVal = parseFloat(lastKnown.close || lastKnown.ltp || 0);
+            
+            const newCandle = {
+                ...lastKnown,
+                timestamp: d,
+                time: timeSec,
+                open: closeVal,
+                high: closeVal,
+                low: closeVal,
+                close: closeVal,
+                volume: 0
+            };
+            filled.push(newCandle);
+        }
+    }
+
+    return filled;
 }
 
 module.exports = {
