@@ -3,6 +3,26 @@ const EVENTS = require('../constants/socketEvents');
 const { DailyOptionData } = require('../models');
 const smartApi = require('./smartApi');
 
+// Helper to parse DDMMMYYYY (e.g. 23JUN2026) to YYYY-MM-DD format for database compatibility
+function parseExpiryDate(expiryStr) {
+    if (!expiryStr || typeof expiryStr !== 'string') return expiryStr;
+    const months = {
+        JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
+        JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12'
+    };
+    const match = expiryStr.match(/^(\d{2})([A-Z]{3})(\d{4})$/i);
+    if (match) {
+        const day = match[1];
+        const monthStr = match[2].toUpperCase();
+        const year = match[3];
+        const month = months[monthStr];
+        if (month) {
+            return `${year}-${month}-${day}`;
+        }
+    }
+    return expiryStr;
+}
+
 /**
  * OptionChainService
  * Manages live option chain subscriptions and updates
@@ -107,11 +127,22 @@ class OptionChainService {
                 if (pe) allTargetTokens.push(pe.token);
             });
 
-            const todayStr = new Date().toISOString().split('T')[0];
-            const dbFallbackData = await DailyOptionData.findAll({
-                where: { token: allTargetTokens, timestamp: todayStr },
-                raw: true
-            });
+            let dbFallbackData = [];
+            try {
+                const latestOptionRecord = await DailyOptionData.findOne({
+                    where: { token: allTargetTokens },
+                    order: [['timestamp', 'DESC']],
+                    attributes: ['timestamp']
+                });
+                if (latestOptionRecord) {
+                    dbFallbackData = await DailyOptionData.findAll({
+                        where: { token: allTargetTokens, timestamp: latestOptionRecord.timestamp },
+                        raw: true
+                    });
+                }
+            } catch (dbErr) {
+                console.warn(`[OptionChain] DB fallback query failed:`, dbErr.message);
+            }
             const dbMap = {};
             dbFallbackData.forEach(d => dbMap[d.token] = d);
 
@@ -386,7 +417,7 @@ class OptionChainService {
                                 token: opt.token,
                                 exchange: "NFO",
                                 strike: strike,
-                                expiry: targetExpiry,
+                                expiry: parseExpiryDate(targetExpiry),
                                 optionType: type,
                                 ltp: parseFloat(live.ltp || 0),
                                 open: parseFloat(live.open || 0),

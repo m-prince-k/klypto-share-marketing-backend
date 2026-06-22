@@ -399,11 +399,45 @@ async function startWebSocketConnection(loginData, io) {
                     overview: fullOverview
                 });
 
+                // Plural event payload (watchlist / table) using daily OHLCV values to ensure they don't have same values
+                const tickOpen = parseFloat(formatted.open_price_day || 0) || candle.open;
+                const tickHigh = parseFloat(formatted.high_price_day || 0) || candle.high;
+                const tickLow = parseFloat(formatted.low_price_day || 0) || candle.low;
+                const tickClose = parseFloat(formatted.close_price || 0) || candle.close;
+                const tickVolume = parseInt(formatted.v || formatted.vol || formatted.volume || formatted.total_traded_quantity || 0) || candle.volume;
+
+                const liveTicksPayload = {
+                    token: cleanToken,
+                    symbol: formatted.symbol,
+                    symbolWithEq: formatted.symbol + "-EQ", // For the frontend if it expects -EQ
+                    exchange: formatted.exchange,
+                    receivedAt: new Date().toISOString(),
+                    data: {
+                        time: Math.floor(candle.minute / 1000),
+                        tickTime: formatted.exchange_timestamp,
+                        readableTickTime: formatted.readable_timestamp,
+                        open: tickOpen,
+                        high: tickHigh,
+                        low: tickLow,
+                        close: tickClose,
+                        last_traded_price: formatted.last_traded_price,
+                        volume: tickVolume
+                    },
+                    tick: {
+                        open: tickOpen,
+                        high: tickHigh,
+                        low: tickLow,
+                        close: tickClose,
+                        datetime: formatted.exchange_timestamp || new Date().toISOString()
+                    },
+                    raw: formatted
+                };
+
                 // BROADCAST to 'liveticks' for plural event support
-                io.emit('liveticks', tickPayload);
+                io.emit('liveticks', liveTicksPayload);
 
                 // BROADCAST to 'live-options-list' globally as requested by user
-                io.emit('live-options-list', tickPayload);
+                io.emit('live-options-list', liveTicksPayload);
 
                 // Console log for confirmation
                 // if (formatted.symbol === "NIFTY 19MAY2026 23450 CE") {

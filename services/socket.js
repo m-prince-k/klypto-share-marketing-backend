@@ -114,6 +114,38 @@ const connectSocket = (server) => {
                     }
                 }
 
+                // If not in cache and Angel One fetch is empty/failed, use database historical candle as fallback
+                if ((!rawTick || parseFloat(rawTick.last_traded_price || 0) === 0) && cleanSymbol) {
+                    try {
+                        const { Candle } = require('../models');
+                        const lastCandle = await Candle.findOne({
+                            where: { symbol: cleanSymbol },
+                            order: [['timestamp', 'DESC']]
+                        });
+                        if (lastCandle) {
+                            console.log(`[Socket] Found DB fallback candle for ${cleanSymbol}: ltp=${lastCandle.close}`);
+                            const ltp = parseFloat(lastCandle.close || 0);
+                            rawTick = {
+                                last_traded_price: ltp,
+                                open: parseFloat(lastCandle.open || ltp),
+                                high: parseFloat(lastCandle.high || ltp),
+                                low: parseFloat(lastCandle.low || ltp),
+                                close: parseFloat(lastCandle.close || ltp),
+                                volume: parseFloat(lastCandle.volume || 0),
+                                percent_change: 0,
+                                exchange_timestamp: lastCandle.timestamp ? new Date(lastCandle.timestamp).toISOString() : new Date().toISOString(),
+                                exchange: store.tokenToExchange[token] || 'NSE',
+                                best_five_buy: [],
+                                best_five_sell: [],
+                                token: token,
+                                symbol: symbol
+                            };
+                        }
+                    } catch (dbErr) {
+                        console.error(`[Socket] DB fallback candle fetch error for ${cleanSymbol}:`, dbErr.message);
+                    }
+                }
+
                 if (!rawTick) {
                     const fallbackExchange = store.tokenToExchange[token] || 'NSE';
                     rawTick = {
