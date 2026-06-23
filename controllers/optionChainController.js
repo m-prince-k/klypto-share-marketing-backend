@@ -3,6 +3,21 @@ const { OptionChainData, sequelize } = require('../models');
 const { processTargetFolder } = require('../services/ingestionService');
 const path = require('path');
 
+// In-memory cache for unique symbols and expiries
+let cachedSymbols = null;
+let lastSymbolsCacheTime = 0;
+const SYMBOLS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+let cachedExpiries = {}; // Key: stockName (or 'all'), Value: { data, timestamp }
+const EXPIRIES_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Helper to clear caches on demand (e.g., after data ingestion)
+function clearOptionChainCache() {
+    cachedSymbols = null;
+    lastSymbolsCacheTime = 0;
+    cachedExpiries = {};
+}
+
 /**
  * Fetch main data table with filters, sorting, and pagination
  */
@@ -104,18 +119,33 @@ exports.getDataTable = async (req, res) => {
 };
 
 /**
- * Fetch unique symbols for dropdown
+ * Fetch unique symbols for dropdown (optimized with recursive CTE and caching)
  */
 exports.getUniqueSymbols = async (req, res) => {
     try {
-        const symbols = await OptionChainData.findAll({
-            attributes: [
-                [sequelize.fn('DISTINCT', sequelize.col('symbol')), 'symbol']
-            ],
-            order: [['symbol', 'ASC']]
-        });
+        const now = Date.now();
+        if (cachedSymbols && (now - lastSymbolsCacheTime < SYMBOLS_CACHE_DURATION)) {
+            return res.status(200).json({ success: true, data: cachedSymbols });
+        }
+
+        // Fast index-skip scan emulation query for Postgres
+        const query = `
+            WITH RECURSIVE t AS (
+                (SELECT symbol FROM option_chain_data ORDER BY symbol LIMIT 1)
+                UNION ALL
+                SELECT (SELECT symbol FROM option_chain_data WHERE symbol > t.symbol ORDER BY symbol LIMIT 1)
+                FROM t
+                WHERE t.symbol IS NOT NULL
+            )
+            SELECT symbol FROM t WHERE symbol IS NOT NULL;
+        `;
         
-        const symbolList = symbols.map(s => s.symbol).filter(s => s != null);
+        const [results] = await sequelize.query(query);
+        const symbolList = results.map(s => s.symbol).filter(s => s != null);
+
+        cachedSymbols = symbolList;
+        lastSymbolsCacheTime = now;
+
         return res.status(200).json({ success: true, data: symbolList });
     } catch (error) {
         console.error('Error fetching unique symbols:', error);
@@ -124,24 +154,54 @@ exports.getUniqueSymbols = async (req, res) => {
 };
 
 /**
- * Fetch unique expiry dates for dropdown
+ * Fetch unique expiry dates for dropdown (optimized with recursive CTE and caching)
  */
 exports.getUniqueExpiries = async (req, res) => {
     try {
-        const whereClause = {};
-        if (req.query.stockName && req.query.stockName !== 'All Stocks') {
-            whereClause.symbol = req.query.stockName;
+        const stockName = (req.query.stockName && req.query.stockName !== 'All Stocks') ? req.query.stockName : 'all';
+        const now = Date.now();
+
+        if (cachedExpiries[stockName] && (now - cachedExpiries[stockName].timestamp < EXPIRIES_CACHE_DURATION)) {
+            return res.status(200).json({ success: true, data: cachedExpiries[stockName].data });
         }
 
-        const expiries = await OptionChainData.findAll({
-            where: whereClause,
-            attributes: [
-                [sequelize.fn('DISTINCT', sequelize.col('expiry_date')), 'expiry_date']
-            ],
-            order: [['expiry_date', 'ASC']]
-        });
+        let query;
+        if (stockName !== 'all') {
+            // Fast index-skip scan for specific stock using composite index
+            query = `
+                WITH RECURSIVE t AS (
+                    (SELECT expiry_date FROM option_chain_data WHERE symbol = :stockName ORDER BY expiry_date LIMIT 1)
+                    UNION ALL
+                    SELECT (SELECT expiry_date FROM option_chain_data WHERE symbol = :stockName AND expiry_date > t.expiry_date ORDER BY expiry_date LIMIT 1)
+                    FROM t
+                    WHERE t.expiry_date IS NOT NULL
+                )
+                SELECT expiry_date FROM t WHERE expiry_date IS NOT NULL;
+            `;
+        } else {
+            // Fast index-skip scan for all stocks
+            query = `
+                WITH RECURSIVE t AS (
+                    (SELECT expiry_date FROM option_chain_data ORDER BY expiry_date LIMIT 1)
+                    UNION ALL
+                    SELECT (SELECT expiry_date FROM option_chain_data WHERE expiry_date > t.expiry_date ORDER BY expiry_date LIMIT 1)
+                    FROM t
+                    WHERE t.expiry_date IS NOT NULL
+                )
+                SELECT expiry_date FROM t WHERE expiry_date IS NOT NULL;
+            `;
+        }
 
-        const expiryList = expiries.map(e => e.expiry_date).filter(e => e != null);
+        const [results] = await sequelize.query(query, {
+            replacements: { stockName }
+        });
+        const expiryList = results.map(e => e.expiry_date).filter(e => e != null);
+
+        cachedExpiries[stockName] = {
+            data: expiryList,
+            timestamp: now
+        };
+
         return res.status(200).json({ success: true, data: expiryList });
     } catch (error) {
         console.error('Error fetching unique expiries:', error);
@@ -161,6 +221,9 @@ exports.ingestDumpData = async (req, res) => {
         const vikasFolderPath = path.join(__dirname, '../vikas');
 
         const summary = await processTargetFolder(vikasFolderPath, forceReingest);
+
+        // Clear option chain memory cache as new records are loaded
+        clearOptionChainCache();
 
         // Calculate Execution Time
         const totalTimeMs = Date.now() - startTime;
