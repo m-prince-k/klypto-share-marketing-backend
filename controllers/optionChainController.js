@@ -7,7 +7,6 @@ const path = require('path');
 let cachedSymbols = null;
 let lastSymbolsCacheTime = 0;
 const SYMBOLS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
 let cachedExpiries = {}; // Key: stockName (or 'all'), Value: { data, timestamp }
 const EXPIRIES_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
