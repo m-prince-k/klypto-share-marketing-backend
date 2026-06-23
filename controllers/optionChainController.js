@@ -64,10 +64,26 @@ exports.getDataTable = async (req, res) => {
             queryOptions.offset = offset;
         }
 
-        const { count, rows } = await OptionChainData.findAndCountAll(queryOptions);
+        // Use findAll instead of findAndCountAll to avoid the massively slow exact COUNT(*) query
+        const rows = await OptionChainData.findAll(queryOptions);
 
-        // 5. Calculate Pagination Metadata
-        const totalPages = isFetchAll ? 1 : Math.ceil(count / limit);
+        let estimatedCount = rows.length;
+        
+        if (Object.keys(whereClause).length > 0) {
+            // If user applied filters (like stockName), calculate exact count. 
+            // It's fast because we have indexes on symbol and expiry_date.
+            estimatedCount = await OptionChainData.count({ where: whereClause });
+        } else {
+            // Fetch a super fast estimated row count directly from PostgreSQL internal statistics for the full table
+            const [countResult] = await sequelize.query(`SELECT reltuples::bigint AS estimate FROM pg_class WHERE relname = 'option_chain_data';`);
+            if (countResult[0] && countResult[0].estimate > 0) {
+                estimatedCount = parseInt(countResult[0].estimate);
+            }
+        }
+
+        // 5. Calculate Pagination Metadata using the appropriate count
+        const totalPages = isFetchAll ? 1 : Math.ceil(estimatedCount / limit);
+        const count = estimatedCount;
 
         // Map and normalize option_type (CE/PE)
         const formattedRows = rows.map(row => {
@@ -108,14 +124,20 @@ exports.getDataTable = async (req, res) => {
  */
 exports.getUniqueSymbols = async (req, res) => {
     try {
-        const symbols = await OptionChainData.findAll({
-            attributes: [
-                [sequelize.fn('DISTINCT', sequelize.col('symbol')), 'symbol']
-            ],
-            order: [['symbol', 'ASC']]
-        });
+        // Use a Recursive CTE (Loose Index Scan) for lightning-fast distinct values on massive tables
+        // Requires an index on 'symbol' to be fully effective
+        const query = `
+            WITH RECURSIVE t AS (
+                SELECT min(symbol) AS symbol FROM option_chain_data
+                UNION ALL
+                SELECT (SELECT min(symbol) FROM option_chain_data WHERE symbol > t.symbol)
+                FROM t WHERE t.symbol IS NOT NULL
+            )
+            SELECT symbol FROM t WHERE symbol IS NOT NULL;
+        `;
+        const [results] = await sequelize.query(query);
         
-        const symbolList = symbols.map(s => s.symbol).filter(s => s != null);
+        const symbolList = results.map(r => r.symbol).filter(Boolean);
         return res.status(200).json({ success: true, data: symbolList });
     } catch (error) {
         console.error('Error fetching unique symbols:', error);
