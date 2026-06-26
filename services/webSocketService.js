@@ -5,8 +5,32 @@ const alertService = require("./alertService");
 const optionChainService = require("./optionChainService");
 const { handleIndicatorBroadcast } = require('./socket');
 const ENABLE_MARKET_DEBUG_LOGS = process.env.ENABLE_MARKET_DEBUG_LOGS === "true";
+const MARKET_HOLIDAYS = [
+    '2026-01-26', // Republic Day
+    '2026-03-03', // Mahashivratri
+    '2026-03-24', // Holi
+    '2026-04-03', // Good Friday
+    '2026-04-14', // Ambedkar Jayanti
+    '2026-05-01', // Maharashtra Day
+    '2026-06-26', // Muharram
+    '2026-08-15', // Independence Day
+    '2026-10-02', // Gandhi Jayanti
+    '2026-11-08', // Diwali (Approx)
+    '2026-12-25'  // Christmas
+];
+
+function formatLocalYYYYMMDD(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 function isNSEOpen() {
     const now = new Date();
+    const dateStr = formatLocalYYYYMMDD(now);
+    if (MARKET_HOLIDAYS.includes(dateStr)) return false;
+
     const day = now.getDay();
     const currentMinute = now.getHours() * 100 + now.getMinutes();
     // Monday to Friday, 09:15 AM to 03:30 PM (NSE/BSE)
@@ -15,6 +39,9 @@ function isNSEOpen() {
 
 function isMCXOpen() {
     const now = new Date();
+    const dateStr = formatLocalYYYYMMDD(now);
+    if (MARKET_HOLIDAYS.includes(dateStr)) return false;
+
     const day = now.getDay();
     const currentTime = now.getHours() * 100 + now.getMinutes();
     // Monday to Friday, 09:00 AM to 03:30 PM (Restricted by user)

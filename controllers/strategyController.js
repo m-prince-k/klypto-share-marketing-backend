@@ -476,6 +476,17 @@ const runDynamicScanner = async (req, res) => {
             return res.status(400).json({ success: false, message: "strategy_code is required in body" });
         }
 
+        // --- Validate strategy_code content ---
+        // Must contain at least one meaningful strategy keyword
+        const validKeywords = ['plot_markers', 'markers.append', 'df[', 'df.loc', 'signal', 'plotshape', 'plot('];
+        const hasValidCode = validKeywords.some(kw => strategy_code.includes(kw));
+        if (!hasValidCode || strategy_code.trim().length < 20) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid strategy_code. Your code must contain valid strategy logic (e.g., use plot_markers, df[], signal etc.). Received: "${strategy_code.substring(0, 50)}"`
+            });
+        }
+
         // 1. Dry run validation with python backend before starting background process
         try {
             const db = require('../models');
@@ -494,12 +505,23 @@ const runDynamicScanner = async (req, res) => {
 
 
             const axios = require('axios');
-            await axios.post('http://127.0.0.1:8000/api/evaluate-strategy', {
+            const dryRunPayload = {
                 symbol: "DRY_RUN",
                 interval: "FIVE_MINUTE",
                 strategy_code: strategy_code,
                 historical_data: dryRunCandles
-            }, { timeout: 5000 });
+            };
+            
+            // Hit BOTH servers simultaneously (Increased timeout from 5000 to 15000)
+            const results = await Promise.allSettled([
+                axios.post('http://43.205.133.183:8000/web_api/evaluate-strategy', dryRunPayload, { timeout: 15000 }),
+                axios.post('http://127.0.0.1:8000/api/evaluate-strategy', dryRunPayload, { timeout: 15000 })
+            ]);
+
+            // If both failed, throw the error from the live server
+            if (results[0].status === 'rejected' && results[1].status === 'rejected') {
+                throw results[0].reason;
+            }
         } catch (error) {
             const pythonError = error.response ? error.response.data : error.message;
             let errorMessage = pythonError;
@@ -545,14 +567,14 @@ const runDynamicScanner = async (req, res) => {
                 await StrategySignal.destroy({ where: { userId: userId } });
                 console.log(`[Dynamic Scanner] Cleared previous signals for User: ${userId}`);
 
-                // 2. Fetch Master list from DB historical_candles
+                // 2. Fetch Master list from DB historical_candles (LIMITED TO 5 FOR TESTING)
                 const db = require('../models');
                 const symbolDocs = await db.sequelize.query(
-                    "SELECT DISTINCT symbol FROM historical_candles",
+                    "SELECT DISTINCT symbol FROM historical_candles LIMIT 5",
                     { type: db.sequelize.QueryTypes.SELECT }
                 );
                 const symbols = symbolDocs.map(row => row.symbol);
-                console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols...`);
+                console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols (TEST MODE)...`);
 
                 const marketStore = require('../services/marketStore');
                 const smartApi = require('../services/smartApi');
@@ -576,7 +598,7 @@ const runDynamicScanner = async (req, res) => {
 
                         const db = require('../models');
                         const historicalDataDocs = await db.sequelize.query(
-                            "SELECT * FROM historical_candles WHERE symbol = :symbol ORDER BY datetime DESC LIMIT 1650",
+                            "SELECT * FROM historical_candles WHERE symbol = :symbol ORDER BY datetime DESC",
                             {
                                 replacements: { symbol: symbol },
                                 type: db.sequelize.QueryTypes.SELECT
@@ -604,7 +626,7 @@ const runDynamicScanner = async (req, res) => {
                                 const timeoutPromise = new Promise((_, reject) => {
                                     timeoutId = setTimeout(() => reject(new Error('Angel One API timeout after 10s')), 10000);
                                 });
-                                timeoutPromise.catch(() => {}); // Prevent unhandled promise rejection
+                                timeoutPromise.catch(() => { }); // Prevent unhandled promise rejection
 
                                 const fetchPromise = smartApi.getCandleData({
                                     exchange: "NSE",
@@ -657,7 +679,24 @@ const runDynamicScanner = async (req, res) => {
                             continue;
                         }
 
-                        const pythonRes = await axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 120000 });
+                        // Hit BOTH servers simultaneously
+                        const results = await Promise.allSettled([
+                            axios.post('http://43.205.133.183:8000/web_api/evaluate-strategy', payload, { timeout: 600000 }),
+                            axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 600000 })
+                        ]);
+
+                        let pythonRes = null;
+                        
+                        // Prefer the result from the Live server, otherwise use Local server
+                        if (results[0].status === 'fulfilled') {
+                            pythonRes = results[0].value;
+                        } else if (results[1].status === 'fulfilled') {
+                            console.log(`[Dynamic Scanner] Live server failed for ${symbol}, using Local server result.`);
+                            pythonRes = results[1].value;
+                        } else {
+                            console.error(`[Dynamic Scanner] BOTH servers failed for ${symbol}. Skipping.`);
+                            continue;
+                        }
 
                         const resultData = pythonRes.data;
                         if (Array.isArray(resultData) && resultData.length > 0) {
@@ -693,81 +732,89 @@ const runDynamicScanner = async (req, res) => {
                                     }
                                 }
 
-                                // Save only the LAST signal to DB to respect unique constraints
-                                const latestSignal = signals[signals.length - 1];
-                                const sType = latestSignal.type || latestSignal.text || latestSignal.signal;
+                                // Save distinct 9:15 Trades (Entry + Exit) to DB and CSV
+                                const fs = require('fs');
+                                const path = require('path');
+                                const csvPath = path.join(__dirname, '..', 'signal', 'latest_scanner_results.csv');
 
-                                let candleTimeStr = latestSignal.datetime || latestSignal.time;
-                                if (!candleTimeStr && latestSignal.index !== undefined && historicalData[latestSignal.index]) {
-                                    candleTimeStr = historicalData[latestSignal.index].datetime;
-                                }
+                                for (let i = 0; i < signals.length; i++) {
+                                    const sig = signals[i];
+                                    const sigType = String(sig.type || sig.text || sig.signal || '').toUpperCase();
 
-                                let signalTimestamp = new Date();
-                                if (candleTimeStr) {
-                                    signalTimestamp = new Date(candleTimeStr.replace(' ', 'T') + "+05:30");
-                                }
-
-                                let existingSignal = await StrategySignal.findOne({
-                                    where: { symbol: symbol, userId: userId }
-                                });
-
-                                const dbSignalData = {
-                                    symbol: symbol,
-                                    userId: userId,
-                                    signalType: sType,
-                                    indicatorValues: latestSignal,
-                                    timestamp: signalTimestamp
-                                };
-
-                                if (existingSignal) {
-                                    await existingSignal.update(dbSignalData);
-                                } else {
-                                    await StrategySignal.create(dbSignalData);
-                                }
-
-                                console.log(`    => Stored ${sType} signal for ${symbol} at ${candleTimeStr}`);
-                                
-                                // Save latest 9:15 signal to CSV
-                                const nineFifteenSignals = signals.filter(sig => {
-                                    let tStr = sig.datetime || sig.time;
-                                    if (!tStr && sig.index !== undefined && historicalData[sig.index]) {
-                                        tStr = historicalData[sig.index].datetime;
+                                    let cTimeStr = sig.datetime || sig.time;
+                                    if (!cTimeStr && sig.index !== undefined && historicalData[sig.index]) {
+                                        cTimeStr = historicalData[sig.index].datetime;
                                     }
-                                    return tStr && tStr.includes('09:15');
-                                });
 
-                                if (nineFifteenSignals.length > 0) {
-                                    const latest915 = nineFifteenSignals[nineFifteenSignals.length - 1];
-                                    const sigType915 = String(latest915.type || latest915.text || latest915.signal).toUpperCase();
-                                    let tStr915 = latest915.datetime || latest915.time;
-                                    let candle915 = null;
-                                    
-                                    if (latest915.index !== undefined && historicalData[latest915.index]) {
-                                        candle915 = historicalData[latest915.index];
-                                        if (!tStr915) tStr915 = candle915.datetime;
-                                    } else {
-                                        candle915 = historicalData.find(c => c.datetime === tStr915) || {};
-                                    }
-                                    
-                                    const dateOnly = tStr915.split(' ')[0] || '';
-                                    const timeOnly = tStr915.split(' ')[1] || '09:15:00';
-                                    const fs = require('fs');
-                                    const path = require('path');
-                                    const csvPath = path.join(__dirname, '..', 'signal', 'latest_scanner_results.csv');
-                                    
-                                    const row = `${symbol},${dateOnly},${timeOnly},,${sigType915},,${candle915.open||''},${candle915.high||''},${candle915.low||''},${candle915.close||''},${candle915.volume||''}\n`;
-                                    try {
-                                        const dir = path.dirname(csvPath);
-                                        if (!fs.existsSync(dir)) {
-                                            fs.mkdirSync(dir, { recursive: true });
+                                    // Check if this is a 9:15 Entry (BUY) signal
+                                    if (sigType === 'BUY' && cTimeStr && cTimeStr.includes('09:15')) {
+                                        const tradeType = String(sig.text || sig.tradeType || 'CALL').toUpperCase(); // Python should send text: CALL or PUT
+                                        let exitSig = null;
+
+                                        // Look ahead for the corresponding SELL signal
+                                        for (let j = i + 1; j < signals.length; j++) {
+                                            const nextSig = signals[j];
+                                            const nextSigType = String(nextSig.type || nextSig.text || nextSig.signal || '').toUpperCase();
+                                            if (nextSigType === 'SELL') {
+                                                exitSig = nextSig;
+                                                break;
+                                            }
                                         }
-                                        if (!fs.existsSync(csvPath)) {
-                                            fs.writeFileSync(csvPath, "Symbol,Date,EntryTime,ExitTime,SignalType,TradeType,Open,High,Low,Close,Volume\n");
+
+                                        let exitTimeStr = '';
+                                        if (exitSig) {
+                                            exitTimeStr = exitSig.datetime || exitSig.time;
+                                            if (!exitTimeStr && exitSig.index !== undefined && historicalData[exitSig.index]) {
+                                                exitTimeStr = historicalData[exitSig.index].datetime;
+                                            }
                                         }
-                                        fs.appendFileSync(csvPath, row);
-                                        console.log(`    => Wrote 9:15 signal to CSV for ${symbol}`);
-                                    } catch(e) {
-                                        console.error('Error writing to CSV:', e.message);
+
+                                        // Database Storage (Store distinct trades by timestamp)
+                                        let signalTimestamp = new Date(cTimeStr.replace(' ', 'T') + "+05:30");
+                                        const dbSignalData = {
+                                            symbol: symbol,
+                                            userId: userId,
+                                            signalType: sigType, // 'BUY'
+                                            indicatorValues: { ...sig, exitTime: exitTimeStr, tradeType: tradeType },
+                                            timestamp: signalTimestamp
+                                        };
+
+                                        let existingSignal = await StrategySignal.findOne({
+                                            where: {
+                                                symbol: symbol,
+                                                userId: userId,
+                                                timestamp: signalTimestamp // Ensures we don't overwrite other days' trades
+                                            }
+                                        });
+
+                                        if (existingSignal) {
+                                            await existingSignal.update(dbSignalData);
+                                        } else {
+                                            await StrategySignal.create(dbSignalData);
+                                        }
+                                        console.log(`    => Stored Trade for ${symbol}: ${tradeType} Entry at ${cTimeStr}, Exit at ${exitTimeStr}`);
+
+                                        // CSV Logging
+                                        const dateOnly = cTimeStr.split(' ')[0] || '';
+                                        const timeOnly = cTimeStr.split(' ')[1] || '09:15:00';
+                                        const exitTimeOnly = exitTimeStr ? exitTimeStr.split(' ')[1] || exitTimeStr : '';
+
+                                        let candle915 = null;
+                                        if (sig.index !== undefined && historicalData[sig.index]) {
+                                            candle915 = historicalData[sig.index];
+                                        } else {
+                                            candle915 = historicalData.find(c => c.datetime === cTimeStr) || {};
+                                        }
+
+                                        const row = `${symbol},${dateOnly},${timeOnly},${exitTimeOnly},${sigType},${tradeType},${candle915.open || ''},${candle915.high || ''},${candle915.low || ''},${candle915.close || ''},${candle915.volume || ''}\n`;
+                                        try {
+                                            const dir = path.dirname(csvPath);
+                                            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                                            if (!fs.existsSync(csvPath)) fs.writeFileSync(csvPath, "Symbol,Date,EntryTime,ExitTime,SignalType,TradeType,Open,High,Low,Close,Volume\n");
+                                            fs.appendFileSync(csvPath, row);
+                                        } catch (e) {
+                                            console.error('Error writing to CSV:', e.message);
+                                        }
                                     }
                                 }
                             } else {

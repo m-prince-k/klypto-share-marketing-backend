@@ -3,12 +3,14 @@ const router = express.Router();
 const stockController = require('../controllers/stockController');
 const historicalController = require('../controllers/historicalController');
 const optionChainController = require('../controllers/optionChainController');
+const authMiddleware = require('../middleware/authMiddleware');
 
 // --- Data Table APIs ---
 router.get('/data-table', optionChainController.getDataTable);
-router.get('/symbols', optionChainController.getUniqueSymbols);
-router.get('/expiries', optionChainController.getUniqueExpiries);
-router.get('/ingest-dump', optionChainController.ingestDumpData);
+router.get('/date-range', optionChainController.getDateRange);
+router.get('/symbols', authMiddleware, optionChainController.getUniqueSymbols);
+router.get('/expiries', authMiddleware, optionChainController.getUniqueExpiries);
+router.get('/ingest-dump', authMiddleware, optionChainController.ingestDumpData);
 // -----------------------
 
 router.get('/live', stockController.getLiveOptions);
