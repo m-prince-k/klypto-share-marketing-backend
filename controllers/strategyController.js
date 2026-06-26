@@ -572,14 +572,14 @@ const runDynamicScanner = async (req, res) => {
                 await StrategySignal.destroy({ where: { userId: userId } });
                 console.log(`[Dynamic Scanner] Cleared previous signals for User: ${userId}`);
 
-                // 2. Fetch Master list from DB historical_candles (LIMITED TO 5 FOR TESTING)
+                // 2. Fetch Master list from DB historical_candles
                 const db = require('../models');
                 const symbolDocs = await db.sequelize.query(
-                    "SELECT DISTINCT symbol FROM historical_candles LIMIT 5",
+                    "SELECT DISTINCT symbol FROM historical_candles",
                     { type: db.sequelize.QueryTypes.SELECT }
                 );
                 const symbols = symbolDocs.map(row => row.symbol);
-                console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols (TEST MODE)...`);
+                console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols...`);
 
                 const marketStore = require('../services/marketStore');
                 const smartApi = require('../services/smartApi');
