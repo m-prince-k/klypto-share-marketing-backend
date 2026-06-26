@@ -79,7 +79,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['timestamp_epoch'] },
       { fields: ['timestamp_ist'] },
       { fields: ['option_side'] },
-      { fields: ['symbol', 'expiry_date', 'strike', 'option_side'] }
+      { fields: ['symbol', 'expiry_date', 'strike', 'option_side'] },
+      { fields: ['symbol', 'expiry_date', 'timestamp_epoch'] }
     ]
   });
   return OptionChainData;
