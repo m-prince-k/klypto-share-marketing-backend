@@ -56,7 +56,10 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
             }
         }
 
-        if (!token) throw new Error(`Symbol ${symbol} not found in master list for ${finalExchange}.`);
+        if (!token) {
+            console.warn(`[AngelOne Service] 🛑 Note: Token not found for ${symbol} in ${finalExchange} master list. Skipping fetch.`);
+            return [];
+        }
 
         // 3. Map shorthand intervals if needed
         const intervalMap = {
@@ -156,7 +159,11 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
             if (response && response.status && response.data) {
                 allCandles.push(...response.data);
             } else {
-                console.log(`[AngelOne API] Error or empty response:`, JSON.stringify(response));
+                if (response && (response.data === null || (Array.isArray(response.data) && response.data.length === 0) || !response.status)) {
+                    console.log(`[AngelOne API] 🛑 Note: No data received for ${symbol}. Market might be closed (Holiday/Weekend) or symbol is inactive.`);
+                } else {
+                    console.log(`[AngelOne API] Error or empty response for ${symbol}:`, JSON.stringify(response));
+                }
                 
                 // --- SELF HEALING: Token Expiry / 403 Recovery ---
                 if (response && (String(response.status) === "403" || response.errorcode === "AB1004" || String(response.message).includes("Invalid Token"))) {
@@ -224,8 +231,10 @@ async function getHistoricalCandle({symbol, interval, fromDate, toDate, exchange
         if (uniqueData.length > 0 && !skipSave) {
             try {
                 // Candle bulkCreate handles duplicates based on composite unique key
-                await Candle.bulkCreate(uniqueData, { ignoreDuplicates: true });
-                console.log(`[AngelOne Service] Saved ${uniqueData.length} candles to DB for ${symbol}`);
+                await Candle.bulkCreate(uniqueData, { 
+                    updateOnDuplicate: ['open', 'high', 'low', 'close', 'volume'] 
+                });
+                console.log(`[AngelOne Service] Saved/Updated ${uniqueData.length} candles in DB for ${symbol}`);
             } catch (dbErr) {
                 console.error(`[AngelOne Service] Failed to save to DB for ${symbol}:`, dbErr.message);
             }

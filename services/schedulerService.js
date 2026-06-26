@@ -32,7 +32,9 @@ function startSchedulers() {
         }).filter(c => c.exchange !== "MCX"); // Do not save MCX data to DB as per user request
 
         try {
-            await Candle.bulkCreate(candleData, { ignoreDuplicates: true });
+            await Candle.bulkCreate(candleData, { 
+                updateOnDuplicate: ['open', 'high', 'low', 'close', 'volume'] 
+            });
         } catch (err) {
             console.error("[Aggregator] DB Save Error:", err.message);
         }

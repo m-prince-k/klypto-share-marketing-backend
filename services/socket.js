@@ -78,10 +78,16 @@ const connectSocket = (server) => {
                 const token = store.symbolToTokenMaster && (store.symbolToTokenMaster[cleanSymbol] || store.symbolToTokenMaster[`${cleanSymbol}:NSE`]);
                 console.log(`[Socket] Resolved token for ${cleanSymbol}: ${token}`);
                 
-                // 1. FAST EMIT FROM CACHE IMMEDIATELY
-                let rawTick = (store.latestMarketData && (store.latestMarketData[cleanSymbol] || store.latestMarketData[`${cleanSymbol}:NSE`])) || null;
+                // 1. FAST EMIT FROM CACHE IMMEDIATELY (Only if market is open, else force API fetch to get latest snapshot)
+                const { isAnyMarketOpen } = require('./webSocketService');
+                const marketOpen = isAnyMarketOpen();
                 
-                // If not in cache, we MUST fetch it from Angel One API so frontend gets at least the last known price!
+                let rawTick = null;
+                if (marketOpen) {
+                    rawTick = (store.latestMarketData && (store.latestMarketData[cleanSymbol] || store.latestMarketData[`${cleanSymbol}:NSE`])) || null;
+                }
+                
+                // If not in cache (or market is closed), we MUST fetch it from Angel One API so frontend gets at least the last known price!
                 if (!rawTick && token) {
                     const smartApi = require('./smartApi');
                     try {
@@ -89,16 +95,23 @@ const connectSocket = (server) => {
                         const resp = await smartApi.marketData({ mode: 'FULL', exchangeTokens: { [exchange]: [token] } });
                         if (resp && resp.data && resp.data.fetched && resp.data.fetched.length > 0) {
                             let apiTick = resp.data.fetched[0];
+                            
+                            const ltp = parseFloat(apiTick.ltp || apiTick.last_traded_price || 0);
+                            const openPrice = parseFloat(apiTick.open_price || apiTick.open || 0) || ltp;
+                            const highPrice = parseFloat(apiTick.high_price || apiTick.high || 0) || ltp;
+                            const lowPrice = parseFloat(apiTick.low_price || apiTick.low || 0) || ltp;
+                            const closePrice = parseFloat(apiTick.close_price || apiTick.close || 0) || ltp;
+
                             // Map API format to exactly match WebSocket format
                             rawTick = {
                                 ...apiTick,
-                                last_traded_price: apiTick.ltp || apiTick.last_traded_price || 0,
+                                last_traded_price: ltp,
                                 exchange_timestamp: apiTick.exchTradeTime || apiTick.exchange_timestamp || new Date().toISOString(),
                                 last_update_time: apiTick.exchTradeTime || apiTick.last_update_time || new Date().toISOString(),
-                                open: apiTick.open_price || apiTick.open || apiTick.ltp || 0,
-                                high: apiTick.high_price || apiTick.high || apiTick.ltp || 0,
-                                low: apiTick.low_price || apiTick.low || apiTick.ltp || 0,
-                                close: apiTick.close_price || apiTick.close || apiTick.ltp || 0,
+                                open: openPrice,
+                                high: highPrice,
+                                low: lowPrice,
+                                close: closePrice,
                                 volume: apiTick.trade_volume || apiTick.volume || 0,
                                 percent_change: apiTick.percent_change || apiTick.pChange || 0,
                                 best_five_buy: (apiTick.depth && apiTick.depth.buy) ? apiTick.depth.buy : (apiTick.best5Buy || apiTick.best_five_buy || []),
@@ -107,10 +120,42 @@ const connectSocket = (server) => {
                                 symbol: symbol,
                                 exchange: exchange
                             };
-                            console.log(`[Socket] Fetched rawTick from API for ${symbol}`);
+                            console.log(`[Socket] Fetched rawTick from API for ${symbol} (Market Open: ${marketOpen})`);
                         }
                     } catch (e) {
                         console.warn(`[Socket] GET_LIVE_TICK Angel One fetch failed for ${symbol}:`, e.message);
+                    }
+                }
+
+                // If not in cache and Angel One fetch is empty/failed, use database historical candle as fallback
+                if ((!rawTick || parseFloat(rawTick.last_traded_price || 0) === 0) && cleanSymbol) {
+                    try {
+                        const { Candle } = require('../models');
+                        const lastCandle = await Candle.findOne({
+                            where: { symbol: cleanSymbol },
+                            order: [['timestamp', 'DESC']]
+                        });
+                        if (lastCandle) {
+                            console.log(`[Socket] Found DB fallback candle for ${cleanSymbol}: ltp=${lastCandle.close}`);
+                            const ltp = parseFloat(lastCandle.close || 0);
+                            rawTick = {
+                                last_traded_price: ltp,
+                                open: parseFloat(lastCandle.open || ltp),
+                                high: parseFloat(lastCandle.high || ltp),
+                                low: parseFloat(lastCandle.low || ltp),
+                                close: parseFloat(lastCandle.close || ltp),
+                                volume: parseFloat(lastCandle.volume || 0),
+                                percent_change: 0,
+                                exchange_timestamp: lastCandle.timestamp ? new Date(lastCandle.timestamp).toISOString() : new Date().toISOString(),
+                                exchange: store.tokenToExchange[token] || 'NSE',
+                                best_five_buy: [],
+                                best_five_sell: [],
+                                token: token,
+                                symbol: symbol
+                            };
+                        }
+                    } catch (dbErr) {
+                        console.error(`[Socket] DB fallback candle fetch error for ${cleanSymbol}:`, dbErr.message);
                     }
                 }
 
@@ -132,13 +177,23 @@ const connectSocket = (server) => {
                 }
                 
                 const candle = store.liveCandles[token] || {};
-                const fallbackPrice = rawTick.last_traded_price || rawTick.close_price || rawTick.close || 0;
+                const fallbackPrice = parseFloat(rawTick.last_traded_price || rawTick.close_price || rawTick.close || 0);
                 
+                const openPriceRaw = candle.open || rawTick.open || rawTick.open_price || fallbackPrice;
+                const highPriceRaw = candle.high || rawTick.high || rawTick.high_price || fallbackPrice;
+                const lowPriceRaw = candle.low || rawTick.low || rawTick.low_price || fallbackPrice;
+                const closePriceRaw = candle.close || rawTick.close || rawTick.close_price || fallbackPrice;
+
+                const openPriceVal = parseFloat(openPriceRaw || 0) || fallbackPrice;
+                const highPriceVal = parseFloat(highPriceRaw || 0) || fallbackPrice;
+                const lowPriceVal = parseFloat(lowPriceRaw || 0) || fallbackPrice;
+                const closePriceVal = parseFloat(closePriceRaw || 0) || fallbackPrice;
+
                 const filterTick = {
-                    "open": candle.open || rawTick.open || rawTick.open_price || fallbackPrice,
-                    "high": candle.high || rawTick.high || rawTick.high_price || fallbackPrice,
-                    "low": candle.low || rawTick.low || rawTick.low_price || fallbackPrice,
-                    "close": candle.close || rawTick.close || rawTick.close_price || fallbackPrice,
+                    "open": openPriceVal,
+                    "high": highPriceVal,
+                    "low": lowPriceVal,
+                    "close": closePriceVal,
                     "volume": candle.volume || rawTick.volume || rawTick.trade_volume || 0,
                     "datetime": rawTick.exchange_timestamp || rawTick.exchTradeTime || rawTick.last_update_time || new Date().toISOString()
                 };
@@ -159,11 +214,11 @@ const connectSocket = (server) => {
                     open_interest: rawTick.opnInterest || rawTick.open_interest || 0,
                     net_change: rawTick.netChange || rawTick.net_change || 0,
                     percent_change: rawTick.percentChange || rawTick.percent_change || 0,
-                    last_traded_price: rawTick.ltp || rawTick.last_traded_price || fallbackPrice,
-                    day_high: rawTick.high || rawTick.high_price_day || rawTick.high_price || fallbackPrice,
-                    day_low: rawTick.low || rawTick.low_price_day || rawTick.low_price || fallbackPrice,
-                    open: rawTick.open || rawTick.open_price_day || rawTick.open_price || fallbackPrice,
-                    close: rawTick.close || rawTick.close_price || fallbackPrice
+                    last_traded_price: parseFloat(rawTick.ltp || rawTick.last_traded_price || 0) || fallbackPrice,
+                    day_high: parseFloat(rawTick.high || rawTick.high_price_day || rawTick.high_price || 0) || fallbackPrice,
+                    day_low: parseFloat(rawTick.low || rawTick.low_price_day || rawTick.low_price || 0) || fallbackPrice,
+                    open: parseFloat(rawTick.open || rawTick.open_price_day || rawTick.open_price || 0) || fallbackPrice,
+                    close: parseFloat(rawTick.close || rawTick.close_price || 0) || fallbackPrice
                 };
 
                 socket.emit(EVENTS.STRATEGY_LIVE_TICK, {
@@ -176,21 +231,28 @@ const connectSocket = (server) => {
 
                 // 2. AVOID REDUNDANT WEBSOCKET SUBSCRIPTIONS
                 // The global webSocketService already subscribes to equities, futures, and MCX.
-                // Dynamic options/equities are handled in stockController.js
-                // Sending redundant subscriptions here was causing Angel One to drop the WebSocket connection!
+                // Only subscribe if this specific token is NOT already being tracked.
+                // Sending redundant subscriptions was causing Angel One to DROP the WebSocket connection!
                 if (token && store.wsClient) {
-                    const actualExchange = store.tokenToExchange[token] || 'NSE';
-                    const exchangeTypeMap = { "NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5 };
-                    const exchType = exchangeTypeMap[actualExchange] || 1;
+                    if (!store.subscribedTokens) store.subscribedTokens = new Set();
                     
-                    store.wsClient.fetchData({
-                        correlationID: "live_tick_" + token,
-                        action: 1, 
-                        mode: 3, // FULL mode for all depth keys
-                        exchangeType: exchType,
-                        tokens: [token]
-                    });
-                    console.log(`[Socket] Added ${cleanSymbol} (${token}) to live WebSocket stream in FULL mode!`);
+                    if (!store.subscribedTokens.has(token)) {
+                        const actualExchange = store.tokenToExchange[token] || 'NSE';
+                        const exchangeTypeMap = { "NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5 };
+                        const exchType = exchangeTypeMap[actualExchange] || 1;
+                        
+                        store.wsClient.fetchData({
+                            correlationID: "live_tick_" + token,
+                            action: 1, 
+                            mode: 3, // FULL mode for all depth keys
+                            exchangeType: exchType,
+                            tokens: [token]
+                        });
+                        store.subscribedTokens.add(token);
+                        console.log(`[Socket] NEW subscription: ${cleanSymbol} (${token}) in FULL mode!`);
+                    } else {
+                        console.log(`[Socket] ${cleanSymbol} (${token}) already subscribed. Skipping duplicate fetchData.`);
+                    }
                 }
             } catch (err) {
                 console.error("[Socket] GET_LIVE_TICK Error:", err.message);
@@ -313,7 +375,7 @@ const connectSocket = (server) => {
                     "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
                 ];
 
-                let finalToken = store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}:NSE`];
                 if (uSym === "GOLD") finalToken = "234454";
                 if (uSym === "SILVER") finalToken = "234455";
 
@@ -426,7 +488,7 @@ const connectSocket = (server) => {
                     "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
                 ];
 
-                let finalToken = store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}:NSE`];
                 if (uSym === "GOLD") finalToken = "234454";
                 if (uSym === "SILVER") finalToken = "234455";
 
@@ -459,20 +521,27 @@ const connectSocket = (server) => {
                 
                 // --- AUTO-SUBSCRIBE TO WEBSOCKET IF NOT ALREADY TRACKED ---
                 if (store.wsClient && !store.liveCandles[finalToken]) {
-                    console.log(`[LiveIndicator] Auto-subscribing WebSocket for ${uSym} (Token: ${finalToken}, Exchange: ${mappedExchange})`);
+                    if (!store.subscribedTokens) store.subscribedTokens = new Set();
                     
-                    // Add to mappings so formatter knows what it is
-                    store.tokenToName[finalToken] = uSym;
-                    store.tokenToExchange[finalToken] = mappedExchange;
+                    if (!store.subscribedTokens.has(finalToken)) {
+                        console.log(`[LiveIndicator] Auto-subscribing WebSocket for ${uSym} (Token: ${finalToken}, Exchange: ${mappedExchange})`);
+                        
+                        // Add to mappings so formatter knows what it is
+                        store.tokenToName[finalToken] = uSym;
+                        store.tokenToExchange[finalToken] = mappedExchange;
 
-                    // Action 1 = Subscribe, Mode 2 = Full (or 3 for Quote)
-                    store.wsClient.fetchData({
-                        correlationID: `live_ind_${uSym}_${Date.now()}`,
-                        action: 1, 
-                        mode: 2, 
-                        exchangeType: mappedExchange === "NFO" ? 2 : (mappedExchange === "MCX" ? 5 : 1),
-                        tokens: [finalToken]
-                    });
+                        // Action 1 = Subscribe, Mode 2 = Full (or 3 for Quote)
+                        store.wsClient.fetchData({
+                            correlationID: `live_ind_${uSym}_${Date.now()}`,
+                            action: 1, 
+                            mode: 2, 
+                            exchangeType: mappedExchange === "NFO" ? 2 : (mappedExchange === "MCX" ? 5 : 1),
+                            tokens: [finalToken]
+                        });
+                        store.subscribedTokens.add(finalToken);
+                    } else {
+                        console.log(`[LiveIndicator] ${uSym} (${finalToken}) already subscribed. Skipping duplicate.`);
+                    }
                 }
                 // --- AUTOMATIC LOOKBACK FOR WARMUP (5 Days for 1m) ---
                 let dynamicFrom = null;
@@ -679,7 +748,7 @@ const connectSocket = (server) => {
                     "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
                 ];
 
-                let finalToken = store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}:NSE`];
                 if (uSym === "GOLD") finalToken = "234454";
                 if (uSym === "SILVER") finalToken = "234455";
                 let extraInfo = null;

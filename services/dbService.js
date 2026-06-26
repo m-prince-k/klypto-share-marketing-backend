@@ -115,7 +115,7 @@ const formatDate = (date, time, interval) => {
 async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null, forceApi = false) {
     try {
         const isOption = extraInfo !== null || exchange === "NFO" || exchange === "BFO";
-        const ModelToUse = isOption ? OptionChain : Candle;
+        const ModelToUse = (isOption && extraInfo) ? OptionChain : Candle;
         
         console.log(`[dbService] Fetching ${symbol} | Exchange: ${exchange} | isOption: ${isOption} | Model: ${ModelToUse?.name} | forceApi: ${forceApi}`);
 
@@ -138,6 +138,17 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             },
             order: [['timestamp', 'ASC']]
         });
+
+        // Self-healing: if the DB has premature candles (where open === close === high for all checked candles),
+        // we force an API fetch to overwrite them with fully-formed candles.
+        if (!forceApi && dbCandles.length > 5) {
+            const sampleCandles = dbCandles.slice(0, 15);
+            const allIdentical = sampleCandles.every(c => parseFloat(c.open) === parseFloat(c.close) && parseFloat(c.open) === parseFloat(c.high));
+            if (allIdentical) {
+                console.log(`[dbService] DB candles for ${symbol} look premature (open === close === high). Forcing API fetch to self-heal...`);
+                forceApi = true;
+            }
+        }
 
         // Only serve from DB if we have enough data and forceApi is false
         if (!forceApi && dbCandles.length > 0) {
@@ -246,9 +257,10 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
             }
             // --------------------------------------------------------
 
+                const gapFilledData = fillIntradayGaps(finalData, interval, exchange, fromDate, toDate);
                 return { 
                     source: "database", 
-                    data: finalData,
+                    data: gapFilledData,
                     raw_response: null 
                 };
             }
@@ -479,16 +491,61 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
         });
 
         if (filteredData.length > 0 && exchange !== "MCX") {
-            await ModelToUse.bulkCreate(filteredData, { ignoreDuplicates: true });
-            console.log(`[API Fallback] Saved ${filteredData.length} records to ${ModelToUse.name} for ${symbol}`);
+            await ModelToUse.bulkCreate(filteredData, { 
+                updateOnDuplicate: ['open', 'high', 'low', 'close', 'volume'] 
+            });
+            console.log(`[API Fallback] Saved/Updated ${filteredData.length} records in ${ModelToUse.name} for ${symbol}`);
         }
 
 
 
-        return { source: "api_chunked", data: filteredData, raw_response: null };
+        const gapFilledData = fillIntradayGaps(filteredData, interval, exchange, fromDate, toDate);
+        return { source: "api_chunked", data: gapFilledData, raw_response: null };
     } catch (err) {
         throw err;
     }
+}
+
+// Helper to filter out future candles, weekends, and prevent duplicate identical flat candles
+function fillIntradayGaps(candles, interval, exchange, fromDate, toDate) {
+    if (!candles || candles.length === 0) return candles;
+
+    // Sort candles by timestamp to ensure chronological order
+    const sortedCandles = [...candles].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    const currentSec = Math.floor(Date.now() / 1000);
+    const filtered = [];
+    
+    for (let i = 0; i < sortedCandles.length; i++) {
+        const c = sortedCandles[i];
+        
+        // 1. Don't include future candles
+        if (c.time > currentSec) continue;
+
+        if (interval !== "ONE_DAY") {
+            const ms = c.time * 1000;
+            const istDate = new Date(ms + 5.5 * 60 * 60 * 1000);
+            const dayOfWeek = istDate.getUTCDay();
+            
+            // 2. Skip Saturday (6) and Sunday (0)
+            if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+        }
+        
+        // 3. Make sure OHLCV values cannot be exactly the same (except real data). 
+        // We filter out artificially padded flat candles (volume=0 and O=H=L=C) that match the previous candle
+        if (filtered.length > 0) {
+            const prev = filtered[filtered.length - 1];
+            if (c.volume === 0 && c.open === c.high && c.high === c.low && c.low === c.close) {
+                if (prev.close === c.close) {
+                    continue; // Skip this identical padded candle
+                }
+            }
+        }
+        
+        filtered.push(c);
+    }
+
+    return filtered;
 }
 
 module.exports = {

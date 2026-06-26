@@ -35,6 +35,10 @@ const { calculateSupertrend } = require("./Indicators/Supertrend.js");
 const { calculateStdev } = require("./Indicators/Standard_Deviation.js");
 const { calculateClassicPivots } = require("./Indicators/Classic Pivot Points.js");
 const { calculateSSLHybrid } = require("./Indicators/ssl-hybrid.js");
+const { body915DNAOscillator } = require("./Indicators/Body915DNAOscillator.js");
+const { healthyCandleBoxOscillator } = require("./Indicators/HealthyCandleBoxOscillator.js");
+const { hma60BoxDistanceOscillator } = require("./Indicators/HMA60BoxDistanceOscillator.js");
+const { superSmootherMAOscillator } = require("./Indicators/SuperSmootherMAOscillator.js");
 
 const { calculatePVO } = require("./Indicators/Percentage_Volume_Oscillator_PVO.js");
 const { calculateKlingerOscillator } = require("./Indicators/Klinger-Oscillator.js");
@@ -442,6 +446,35 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
         case "VO":
           return await calculateVolumeOscillator(candle, config);
 
+        case "BODY915DNA":
+          return body915DNAOscillator(candle, config);
+
+        case "HEALTHY_BOX": {
+          const { calculateATR } = require("./Indicators/Average_True_Range_ATR.js");
+          const atrDataHCB = await calculateATR(candle, { length: config.atrLength || 14, smoothing: config.smoothing || "RMA" });
+          return candle.map((c, i) => {
+             const atrValue = atrDataHCB[i] ? atrDataHCB[i].atr : 0;
+             const res = healthyCandleBoxOscillator(c, atrValue, config);
+             return { ...c, ...res };
+          });
+        }
+
+        case "HMA60_BOX_DISTANCE": {
+          const { calculateATR: calcATR } = require("./Indicators/Average_True_Range_ATR.js");
+          const { calculateHMA: calcHMA } = require("./Indicators/HMA.js");
+          const atrDataHMA = await calcATR(candle, { length: config.atrLength || 14, smoothing: config.smoothing || "RMA" });
+          const hmaData = await calcHMA(candle, { length: config.hmaLength || 60, source: config.source || "close" });
+          return candle.map((c, i) => {
+             const atrValue = atrDataHMA[i] ? atrDataHMA[i].atr : 0;
+             const hmaValue = hmaData[i] ? hmaData[i].hma : 0;
+             const res = hma60BoxDistanceOscillator(c, hmaValue, atrValue, config);
+             return { ...c, ...res };
+          });
+        }
+
+        case "SUPERSMOOTHER":
+          return superSmootherMAOscillator(candle, config);
+
         case "ALL":
           {
             const indicators = [
@@ -463,7 +496,11 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
               { type: "BBPERB", name: "bbperb" },
               { type: "VO", name: "vo" },
               { type: "SVP", name: "svp" },
-              { type: "FRVP", name: "frvp" }
+              { type: "FRVP", name: "frvp" },
+              { type: "BODY915DNA", name: "body915dna" },
+              { type: "HEALTHY_BOX", name: "healthy_box" },
+              { type: "HMA60_BOX_DISTANCE", name: "hma60_box_distance" },
+              { type: "SUPERSMOOTHER", name: "supersmoother" }
             ];
 
             const resultsMap = new Map();

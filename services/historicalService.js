@@ -62,7 +62,7 @@ async function fetchManualHistoricalData(payload) {
         const mappedExchange = finalExchange; 
 
 
-        // Explicit Token Resolution with Hardcoded Map for Top Stocks
+        // Explicit Token Resolution with Hardcoded Map for Top Stocks (Only for Equity/Cash)
         const topStocksMap = {
             "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
             "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
@@ -71,10 +71,18 @@ async function fetchManualHistoricalData(payload) {
             "GOLD": "234454", "SILVER": "234455"
         };
 
-        let finalToken = topStocksMap[uSym] || 
-                         store.symbolToTokenMaster[uSym] || 
+        let finalToken = null;
+        
+        // Use topStocksMap ONLY if it's not an NFO request
+        if (mappedExchange !== "NFO" && mappedExchange !== "MCX") {
+            finalToken = topStocksMap[uSym];
+        }
+        
+        if (!finalToken) {
+            finalToken = store.symbolToTokenMaster[uSym] || 
                          store.symbolToTokenMaster[`${uSym}-EQ`] ||
                          store.symbolToTokenMaster[`${uSym}_${mappedExchange}`];
+        }
         
         // Manual fallback for Indices
         if (!finalToken) {
@@ -100,6 +108,23 @@ async function fetchManualHistoricalData(payload) {
                     const nearest = active.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
                     finalToken = nearest.token;
                     symbol = nearest.symbol; // Use the actual contract symbol (e.g. GOLD05JUN26FUT)
+                }
+            }
+        }
+
+        // Auto-resolve base symbols to NFO near-month futures if requested exchange is NFO
+        if (!finalToken && mappedExchange === "NFO" && !uSym.endsWith("CE") && !uSym.endsWith("PE") && !uSym.includes("FUT")) {
+            const nfoFutures = (store.nfoMasterData || []).filter(s => 
+                s.name === uSym && s.instrumenttype === 'FUTSTK'
+            );
+            if (nfoFutures.length > 0) {
+                const todayForExpiry = new Date();
+                todayForExpiry.setHours(0, 0, 0, 0);
+                const active = nfoFutures.filter(c => new Date(c.expiry) >= todayForExpiry);
+                if (active.length > 0) {
+                    const nearest = active.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+                    finalToken = nearest.token;
+                    symbol = nearest.symbol;
                 }
             }
         }
@@ -131,7 +156,10 @@ async function fetchManualHistoricalData(payload) {
             }
         }
 
-        if (!finalToken) throw new Error(`Token not found for symbol: ${symbol}`);
+        if (!finalToken) {
+            console.warn(`[HistoricalService] 🛑 Note: Token not found for symbol: ${symbol}. Master list might still be loading or symbol is invalid.`);
+            return;
+        }
             
             // Subscribe via Angel One WebSocket
         // Add to tracked stocks if not present
