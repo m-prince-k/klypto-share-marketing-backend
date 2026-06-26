@@ -4,43 +4,85 @@ const { getMarkers, forwardToPredict, evaluatePythonStrategy, getScannerDashboar
 
 /**
  * GET /api/strategy/markers
- * Query params:
- *   symbol  - e.g. BOSCHLTD (default: BOSCHLTD)
- *   months  - e.g. 6 (default: 6)
- *   type    - BUY | SELL | ALL (default: ALL)
  */
 router.get('/markers', getMarkers);
 
-
-
 // GET /api/strategy/internal-sync
-// Internal API to trigger background generation of BOSLIM cache (called by PM2 Cron)
 const { generateInternalBoslimCache } = require('../controllers/strategyController');
 router.get('/internal-sync', generateInternalBoslimCache);
 
 // POST /api/strategy/predict
-// Forwards generated historic_data and tick to an external predict endpoint.
 router.all('/predict', forwardToPredict);
 
 // POST /api/strategy/evaluate-python
-// Evaluates the Python strategy via the local FastAPI server
 router.post('/evaluate-python', evaluatePythonStrategy);
 
 const authMiddleware = require('../middleware/authMiddleware');
 
 // GET /api/strategy/scanner-dashboard
-// Dashboard route for the Multi-Stock Screener
 router.get('/scanner-dashboard', authMiddleware, getScannerDashboard);
 
 // POST /api/strategy/run-scanner
-// Dynamically runs the background scanner based on strategy_code sent from frontend
 router.post('/run-scanner', authMiddleware, runDynamicScanner);
 
 
+// ---------------------------------------------------------
+// Internal Webhooks — called by Python scanner to push
+// progress/signals back to frontend via Socket.io
+// NO auth needed (internal only, called from localhost)
+// ---------------------------------------------------------
+router.post('/internal/scanner-progress', (req, res) => {
+    try {
+        const io = require('../services/socket').getIO();
+        const EVENTS = require('../constants/socketEvents');
+        const { userId, processed, total, current_stock } = req.body;
+        if (io && userId) {
+            io.to(userId).emit(EVENTS.SCANNER_PROGRESS, { processed, total, current_stock });
+        }
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false }); }
+});
 
+router.post('/internal/scanner-signal', (req, res) => {
+    try {
+        const io = require('../services/socket').getIO();
+        const EVENTS = require('../constants/socketEvents');
+        const { userId, symbol, signalData } = req.body;
+        if (io && userId) {
+            io.to(userId).emit(EVENTS.NEW_SCANNER_SIGNAL, { symbol, ...signalData });
+        }
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false }); }
+});
 
-//shubam AI BUY/SELL LOGIN ENTPROINT CONFIGURE
+router.post('/internal/scanner-error', (req, res) => {
+    try {
+        const io = require('../services/socket').getIO();
+        const EVENTS = require('../constants/socketEvents');
+        const { userId, symbol, error } = req.body;
+        if (io && userId) {
+            io.to(userId).emit(EVENTS.SCANNER_ERROR, { symbol, error });
+        }
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false }); }
+});
 
+router.post('/internal/scanner-complete', (req, res) => {
+    try {
+        const io = require('../services/socket').getIO();
+        const EVENTS = require('../constants/socketEvents');
+        const { userId, success, message } = req.body;
+        if (io && userId) {
+            io.to(userId).emit(EVENTS.SCANNER_COMPLETE, { success, message });
+        }
+        console.log(`[Scanner] Python scan complete for ${userId}: ${message}`);
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false }); }
+});
 
 
 module.exports = router;
+
+
+
+
