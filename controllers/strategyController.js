@@ -494,14 +494,19 @@ const runDynamicScanner = async (req, res) => {
                 "SELECT * FROM historical_candles ORDER BY datetime DESC LIMIT 50",
                 { type: db.sequelize.QueryTypes.SELECT }
             );
-            const dryRunCandles = dryRunDocs.reverse().map(c => ({
-                datetime: new Date(c.datetime).toISOString().replace('T', ' ').substring(0, 19),
+            const dryRunCandles = dryRunDocs.reverse().map(c => {
+                let dt = new Date(c.datetime);
+                let pad = n => String(n).padStart(2, '0');
+                let localTimeStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
+                return {
+                    datetime: localTimeStr,
                 open: parseFloat(c.open),
                 high: parseFloat(c.high),
                 low: parseFloat(c.low),
                 close: parseFloat(c.close),
                 volume: parseInt(c.volume)
-            }));
+            };
+        });
 
 
             const axios = require('axios');
@@ -605,14 +610,20 @@ const runDynamicScanner = async (req, res) => {
                             }
                         );
 
-                        let historicalData = historicalDataDocs.reverse().map(d => ({
-                            datetime: new Date(d.datetime).toISOString().replace('T', ' ').substring(0, 19),
-                            open: parseFloat(d.open),
-                            high: parseFloat(d.high),
-                            low: parseFloat(d.low),
-                            close: parseFloat(d.close),
-                            volume: parseInt(d.volume)
-                        }));
+                        let historicalData = historicalDataDocs.reverse().map(d => {
+                            let dt = new Date(d.datetime);
+                            let pad = n => String(n).padStart(2, '0');
+                            let localTimeStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
+
+                            return {
+                                datetime: localTimeStr,
+                                open: parseFloat(d.open),
+                                high: parseFloat(d.high),
+                                low: parseFloat(d.low),
+                                close: parseFloat(d.close),
+                                volume: parseInt(d.volume)
+                            };
+                        });
 
                         // Load latest data ONLY if use_historical_only is false
                         let latestData = [];
