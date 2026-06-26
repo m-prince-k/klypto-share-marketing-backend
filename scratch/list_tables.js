@@ -1,14 +1,8 @@
-const { sequelize } = require('../models');
-
+const db = require('./models');
 async function listTables() {
-    try {
-        const [results] = await sequelize.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public'");
-        console.log("Tables in DB:", results.map(r => r.table_name));
-        process.exit(0);
-    } catch (err) {
-        console.error("Error:", err.message);
-        process.exit(1);
-    }
+    await db.sequelize.authenticate();
+    const tables = await db.sequelize.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", { type: db.sequelize.QueryTypes.SELECT });
+    console.log(tables.map(t => t.table_name));
+    process.exit();
 }
-
 listTables();

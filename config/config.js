@@ -9,7 +9,7 @@ let credential = {
   dialect: process.env.DB_DIALECT,
   logging: false,
   pool: {
-    max: 10,
+    max: 60,
     min: 0,
     acquire: 60000,
     idle: 10000

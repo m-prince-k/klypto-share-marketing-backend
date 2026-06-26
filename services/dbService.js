@@ -115,7 +115,7 @@ const formatDate = (date, time, interval) => {
 async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null, forceApi = false) {
     try {
         const isOption = extraInfo !== null || exchange === "NFO" || exchange === "BFO";
-        const ModelToUse = isOption ? OptionChain : Candle;
+        const ModelToUse = (isOption && extraInfo) ? OptionChain : Candle;
         
         console.log(`[dbService] Fetching ${symbol} | Exchange: ${exchange} | isOption: ${isOption} | Model: ${ModelToUse?.name} | forceApi: ${forceApi}`);
 
@@ -506,72 +506,46 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
     }
 }
 
-// Helper to fill intraday gaps by forward-filling missing timestamps
+// Helper to filter out future candles, weekends, and prevent duplicate identical flat candles
 function fillIntradayGaps(candles, interval, exchange, fromDate, toDate) {
-    if (interval === "ONE_DAY" || !candles || candles.length === 0) return candles;
+    if (!candles || candles.length === 0) return candles;
 
-    const intervalMinutes = {
-        "ONE_MINUTE": 1, "THREE_MINUTE": 3, "FIVE_MINUTE": 5,
-        "TEN_MINUTE": 10, "FIFTEEN_MINUTE": 15, "THIRTY_MINUTE": 30,
-        "ONE_HOUR": 60
-    }[interval] || 1;
-
-    const stepSec = intervalMinutes * 60;
-    
     // Sort candles by timestamp to ensure chronological order
     const sortedCandles = [...candles].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
-    const candleMap = new Map();
-    sortedCandles.forEach(c => {
-        candleMap.set(Number(c.time), c);
-    });
-
-    const filled = [];
-    let lastKnown = sortedCandles[0];
-
-    const startSec = Math.floor(new Date(fromDate).getTime() / 1000);
-    const endSec = Math.floor(new Date(toDate).getTime() / 1000);
-
-    for (let timeSec = startSec; timeSec <= endSec; timeSec += stepSec) {
-        const ms = timeSec * 1000;
-        const d = new Date(ms);
+    const currentSec = Math.floor(Date.now() / 1000);
+    const filtered = [];
+    
+    for (let i = 0; i < sortedCandles.length; i++) {
+        const c = sortedCandles[i];
         
-        // Filter by market hours (IST)
-        const istDate = new Date(ms + 5.5 * 60 * 60 * 1000);
-        const timeVal = istDate.getUTCHours() * 100 + istDate.getUTCMinutes();
-        
-        let inMarketHours = false;
-        if (exchange === "MCX") {
-            inMarketHours = timeVal >= 900 && timeVal <= 1530;
-        } else {
-            inMarketHours = timeVal >= 915 && timeVal <= 1530;
-        }
+        // 1. Don't include future candles
+        if (c.time > currentSec) continue;
 
-        if (!inMarketHours) continue;
-
-        if (candleMap.has(timeSec)) {
-            const current = candleMap.get(timeSec);
-            filled.push(current);
-            lastKnown = current;
-        } else if (lastKnown) {
-            // Forward fill
-            const closeVal = parseFloat(lastKnown.close || lastKnown.ltp || 0);
+        if (interval !== "ONE_DAY") {
+            const ms = c.time * 1000;
+            const istDate = new Date(ms + 5.5 * 60 * 60 * 1000);
+            const dayOfWeek = istDate.getUTCDay();
             
-            const newCandle = {
-                ...lastKnown,
-                timestamp: d,
-                time: timeSec,
-                open: closeVal,
-                high: closeVal,
-                low: closeVal,
-                close: closeVal,
-                volume: 0
-            };
-            filled.push(newCandle);
+            // 2. Skip Saturday (6) and Sunday (0)
+            if (dayOfWeek === 0 || dayOfWeek === 6) continue;
         }
+        
+        // 3. Make sure OHLCV values cannot be exactly the same (except real data). 
+        // We filter out artificially padded flat candles (volume=0 and O=H=L=C) that match the previous candle
+        if (filtered.length > 0) {
+            const prev = filtered[filtered.length - 1];
+            if (c.volume === 0 && c.open === c.high && c.high === c.low && c.low === c.close) {
+                if (prev.close === c.close) {
+                    continue; // Skip this identical padded candle
+                }
+            }
+        }
+        
+        filtered.push(c);
     }
 
-    return filled;
+    return filtered;
 }
 
 module.exports = {

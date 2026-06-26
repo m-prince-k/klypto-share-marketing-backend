@@ -199,7 +199,7 @@ function candle_filter(df, gap_threshold = 0.01, body_threshold = 0.015, wick_ra
 }
 
 async function process_stock_tick(stock, tick) {
-    console.log(`[ENTER] ${stock}`);
+    // console.log(`[ENTER] ${stock}`);
     try {
 
         let stock_obj = await get_historical_for_engine(stock);
@@ -245,7 +245,7 @@ async function process_stock_tick(stock, tick) {
         if (!trend) {
             stock_obj.df = df;
             stock_obj.last_seen = tick.datetime;
-            console.log(`[REJECT] ${stock} no trend`);
+            // console.log(`[REJECT] ${stock} no trend`);
             return;
         }
 
@@ -255,21 +255,21 @@ async function process_stock_tick(stock, tick) {
         if (rsi === null || rsi === undefined || isNaN(rsi)) {
             stock_obj.df = df;
             stock_obj.last_seen = tick.datetime;
-            console.log(`[REJECT] ${stock} RSI NaN`);
+            // console.log(`[REJECT] ${stock} RSI NaN`);
             return;
         }
 
         if (trend === "UP" && rsi <= 70) {
             stock_obj.df = df;
             stock_obj.last_seen = tick.datetime;
-            console.log(`[REJECT] ${stock} RSI weak for CALL`);
+            // console.log(`[REJECT] ${stock} RSI weak for CALL`);
             return;
         }
 
         if (trend === "DOWN" && rsi > 30) {
             stock_obj.df = df;
             stock_obj.last_seen = tick.datetime;
-            console.log(`[REJECT] ${stock} RSI weak for PUT`);
+            // console.log(`[REJECT] ${stock} RSI weak for PUT`);
             return;
         }
 
@@ -279,7 +279,7 @@ async function process_stock_tick(stock, tick) {
         if (!valid_candle) {
             stock_obj.df = df;
             stock_obj.last_seen = tick.datetime;
-            console.log(`[REJECT] ${stock} candle fail -> ${JSON.stringify(candle_info)}`);
+            // console.log(`[REJECT] ${stock} candle fail -> ${JSON.stringify(candle_info)}`);
             return;
         }
 
@@ -295,7 +295,7 @@ async function process_stock_tick(stock, tick) {
         if (!(ssl_between || ssl_pct <= 0.005)) {
             stock_obj.df = df;
             stock_obj.last_seen = tick.datetime;
-            console.log(`[REJECT] ${stock} SSL fail`);
+            // console.log(`[REJECT] ${stock} SSL fail`);
             return;
         }
 
@@ -334,7 +334,7 @@ async function process_stock_tick(stock, tick) {
         };
         return trade_signal;
     } catch (e) {
-        console.error(`[PROCESS ERROR] ${stock}: ${e.message}`);
+        // console.error(`[PROCESS ERROR] ${stock}: ${e.message}`);
     }
 }
 

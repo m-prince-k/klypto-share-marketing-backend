@@ -231,21 +231,28 @@ const connectSocket = (server) => {
 
                 // 2. AVOID REDUNDANT WEBSOCKET SUBSCRIPTIONS
                 // The global webSocketService already subscribes to equities, futures, and MCX.
-                // Dynamic options/equities are handled in stockController.js
-                // Sending redundant subscriptions here was causing Angel One to drop the WebSocket connection!
+                // Only subscribe if this specific token is NOT already being tracked.
+                // Sending redundant subscriptions was causing Angel One to DROP the WebSocket connection!
                 if (token && store.wsClient) {
-                    const actualExchange = store.tokenToExchange[token] || 'NSE';
-                    const exchangeTypeMap = { "NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5 };
-                    const exchType = exchangeTypeMap[actualExchange] || 1;
+                    if (!store.subscribedTokens) store.subscribedTokens = new Set();
                     
-                    store.wsClient.fetchData({
-                        correlationID: "live_tick_" + token,
-                        action: 1, 
-                        mode: 3, // FULL mode for all depth keys
-                        exchangeType: exchType,
-                        tokens: [token]
-                    });
-                    console.log(`[Socket] Added ${cleanSymbol} (${token}) to live WebSocket stream in FULL mode!`);
+                    if (!store.subscribedTokens.has(token)) {
+                        const actualExchange = store.tokenToExchange[token] || 'NSE';
+                        const exchangeTypeMap = { "NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5 };
+                        const exchType = exchangeTypeMap[actualExchange] || 1;
+                        
+                        store.wsClient.fetchData({
+                            correlationID: "live_tick_" + token,
+                            action: 1, 
+                            mode: 3, // FULL mode for all depth keys
+                            exchangeType: exchType,
+                            tokens: [token]
+                        });
+                        store.subscribedTokens.add(token);
+                        console.log(`[Socket] NEW subscription: ${cleanSymbol} (${token}) in FULL mode!`);
+                    } else {
+                        console.log(`[Socket] ${cleanSymbol} (${token}) already subscribed. Skipping duplicate fetchData.`);
+                    }
                 }
             } catch (err) {
                 console.error("[Socket] GET_LIVE_TICK Error:", err.message);
@@ -368,7 +375,7 @@ const connectSocket = (server) => {
                     "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
                 ];
 
-                let finalToken = store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}:NSE`];
                 if (uSym === "GOLD") finalToken = "234454";
                 if (uSym === "SILVER") finalToken = "234455";
 
@@ -481,7 +488,7 @@ const connectSocket = (server) => {
                     "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
                 ];
 
-                let finalToken = store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}:NSE`];
                 if (uSym === "GOLD") finalToken = "234454";
                 if (uSym === "SILVER") finalToken = "234455";
 
@@ -514,20 +521,27 @@ const connectSocket = (server) => {
                 
                 // --- AUTO-SUBSCRIBE TO WEBSOCKET IF NOT ALREADY TRACKED ---
                 if (store.wsClient && !store.liveCandles[finalToken]) {
-                    console.log(`[LiveIndicator] Auto-subscribing WebSocket for ${uSym} (Token: ${finalToken}, Exchange: ${mappedExchange})`);
+                    if (!store.subscribedTokens) store.subscribedTokens = new Set();
                     
-                    // Add to mappings so formatter knows what it is
-                    store.tokenToName[finalToken] = uSym;
-                    store.tokenToExchange[finalToken] = mappedExchange;
+                    if (!store.subscribedTokens.has(finalToken)) {
+                        console.log(`[LiveIndicator] Auto-subscribing WebSocket for ${uSym} (Token: ${finalToken}, Exchange: ${mappedExchange})`);
+                        
+                        // Add to mappings so formatter knows what it is
+                        store.tokenToName[finalToken] = uSym;
+                        store.tokenToExchange[finalToken] = mappedExchange;
 
-                    // Action 1 = Subscribe, Mode 2 = Full (or 3 for Quote)
-                    store.wsClient.fetchData({
-                        correlationID: `live_ind_${uSym}_${Date.now()}`,
-                        action: 1, 
-                        mode: 2, 
-                        exchangeType: mappedExchange === "NFO" ? 2 : (mappedExchange === "MCX" ? 5 : 1),
-                        tokens: [finalToken]
-                    });
+                        // Action 1 = Subscribe, Mode 2 = Full (or 3 for Quote)
+                        store.wsClient.fetchData({
+                            correlationID: `live_ind_${uSym}_${Date.now()}`,
+                            action: 1, 
+                            mode: 2, 
+                            exchangeType: mappedExchange === "NFO" ? 2 : (mappedExchange === "MCX" ? 5 : 1),
+                            tokens: [finalToken]
+                        });
+                        store.subscribedTokens.add(finalToken);
+                    } else {
+                        console.log(`[LiveIndicator] ${uSym} (${finalToken}) already subscribed. Skipping duplicate.`);
+                    }
                 }
                 // --- AUTOMATIC LOOKBACK FOR WARMUP (5 Days for 1m) ---
                 let dynamicFrom = null;
@@ -734,7 +748,7 @@ const connectSocket = (server) => {
                     "WAAREEENER", "WIPRO", "YESBANK", "ETERNAL"
                 ];
 
-                let finalToken = store.symbolToTokenMaster[uSym];
+                let finalToken = store.symbolToTokenMaster[uSym] || store.symbolToTokenMaster[`${uSym}:NSE`];
                 if (uSym === "GOLD") finalToken = "234454";
                 if (uSym === "SILVER") finalToken = "234455";
                 let extraInfo = null;

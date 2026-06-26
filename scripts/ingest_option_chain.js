@@ -48,15 +48,9 @@ async function ingestSingleStockFolder(folderPath) {
 
         try {
             // Layer 1: File-Level Deduplication
-            const existingFile = await OptionChainData.findOne({
-                where: { import_file: file },
-                attributes: ['id']
+            const existingRowsCount = await OptionChainData.count({
+                where: { import_file: file }
             });
-
-            if (existingFile) {
-                console.log(`Skipping ${file} (Already ingested)`);
-                continue;
-            }
 
             // Parse Excel
             console.log(`Reading file: ${file}... This might take a moment.`);
@@ -150,27 +144,31 @@ async function ingestSingleStockFolder(folderPath) {
                 };
             });
 
+            if (existingRowsCount >= mappedData.length) {
+                console.log(`[${symbol}] Skipping ${file} (Already fully ingested: ${existingRowsCount}/${mappedData.length} rows)`);
+                continue;
+            } else if (existingRowsCount > 0) {
+                console.log(`[${symbol}] Resuming ${file} from row ${existingRowsCount} (Found ${existingRowsCount}/${mappedData.length} rows in DB)`);
+            }
+
             // Batch insertion
             const BATCH_SIZE = 5000;
-            for (let i = 0; i < mappedData.length; i += BATCH_SIZE) {
+            // Start loop from existingRowsCount to resume where it left off
+            for (let i = existingRowsCount; i < mappedData.length; i += BATCH_SIZE) {
                 const chunk = mappedData.slice(i, i + BATCH_SIZE);
-                console.log(`Inserting batch ${i / BATCH_SIZE + 1} of ${Math.ceil(mappedData.length/BATCH_SIZE)} (${chunk.length} rows) for ${file}`);
+                console.log(`[${symbol}] Inserting batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(mappedData.length/BATCH_SIZE)} (${chunk.length} rows) for ${file}`);
                 
-                const transaction = await db.sequelize.transaction();
                 try {
-                    // Layer 2: Row-level deduplication via updateOnDuplicate
+                    // Layer 2: Row-level deduplication via ignoreDuplicates (SUPER FAST)
+                    // We removed the transaction and updateOnDuplicate to speed this up massively.
                     await OptionChainData.bulkCreate(chunk, { 
-                        transaction,
                         logging: false, // EXTREMELY IMPORTANT: Prevents terminal from freezing with massive SQL logs
-                        updateOnDuplicate: [
-                            'close', 'open', 'high', 'low', 'oi', 'volume', 'iv', 'delta', 'theta', 'gamma', 'vega', 'market_price'
-                        ]
+                        ignoreDuplicates: true, // Just ignores existing rows without trying to update them
+                        validate: false // Bypasses Sequelize JS-level validations for maximum speed
                     });
-                    await transaction.commit();
                 } catch (error) {
-                    await transaction.rollback();
-                    console.error(`Error inserting batch for ${file}:`, error);
-                    fs.appendFileSync('ingestion_errors.log', `[${new Date().toISOString()}] Error in ${file} batch ${i / BATCH_SIZE + 1}: ${error.message}\n`);
+                    console.error(`[${symbol}] Error inserting batch for ${file}: ${error.message}`);
+                    fs.appendFileSync('ingestion_errors.log', `[${new Date().toISOString()}] Error in ${file} batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}\n`);
                 }
             }
 
