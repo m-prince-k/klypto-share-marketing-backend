@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node ./node_modules/nodemon/bin/nodemon.js -V index.js",
+    "dev": "node ./node_modules/nodemon/bin/nodemon.js index.js",
     "seed-indicator": "node add_ma_ribbon.js",
     "fetch-missing": "node scratch/fetch_missing_csv.js",
     "fetch-data": "node scratch/fetch_7_months_with_histogram.js",

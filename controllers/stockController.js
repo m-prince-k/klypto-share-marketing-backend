@@ -1500,7 +1500,7 @@ const generateMasterWatchlistData = async () => {
         });
 
         // Helper to get trending options internally
-        const getInternalTrending = async (symbol) => {
+        const getInternalTrendingContracts = (symbol) => {
             try {
                 const underlyingToken = store.symbolToTokenMaster[symbol];
                 const underlyingKey = `${symbol}:${store.tokenToExchange[underlyingToken] || "NSE"}`;
@@ -1530,41 +1530,48 @@ const generateMasterWatchlistData = async () => {
                     if (pe) selected.push(pe);
                 });
 
-                const tokens = selected.map(c => c.token);
-                const livePrices = await optionChainService.getLivePricesForTokens(tokens);
-
-                // Auto-subscribe to these options for WebSocket updates if market is open
-                if (store.wsClient && tokens.length > 0) {
-                    store.wsClient.fetchData({
-                        correlationID: `trending_opts_sub_${symbol}`,
-                        action: 1, mode: 2, exchangeType: 2, // 2 is NFO
-                        tokens: tokens
-                    });
-                }
-
-                return selected.map(c => {
-                    const live = livePrices[c.token] || {};
-                    const ltp = live.ltp || live.last_traded_price || "0.00";
-                    const change = live.netChange || live.net_change || live.change || "0.00";
-                    const pChange = live.percentChange || live.pChange || "0.00";
-
-                    return {
-                        name: `${c.name} ${c.expiry} ${parseFloat(c.strike) / 100} ${c.symbol.endsWith("CE") ? "CE" : "PE"}`,
-                        token: c.token,
-                        ltp: ltp,
-                        change: (parseFloat(change) > 0 ? "+" : "") + parseFloat(change).toFixed(2),
-                        pChange: parseFloat(pChange).toFixed(2)
-                    };
-                });
+                return selected;
             } catch (e) { return []; }
         };
 
-        const trendingOptions = [
-            ...(await getInternalTrending("NIFTY")),
-            ...(await getInternalTrending("BANKNIFTY")),
-            ...(await getInternalTrending("FINNIFTY")),
-            ...(await getInternalTrending("MIDCPNIFTY"))
+        const allSelectedContracts = [
+            ...getInternalTrendingContracts("NIFTY"),
+            ...getInternalTrendingContracts("BANKNIFTY"),
+            ...getInternalTrendingContracts("FINNIFTY"),
+            ...getInternalTrendingContracts("MIDCPNIFTY")
         ];
+
+        const allTokens = allSelectedContracts.map(c => c.token);
+        let allLivePrices = {};
+
+        if (allTokens.length > 0) {
+            allLivePrices = await optionChainService.getLivePricesForTokens(allTokens);
+            
+            // Auto-subscribe to these options for WebSocket updates if market is open
+            if (store.wsClient) {
+                store.wsClient.fetchData({
+                    correlationID: `trending_opts_sub_all`,
+                    action: 1, mode: 2, exchangeType: 2, // 2 is NFO
+                    tokens: allTokens
+                });
+            }
+        }
+
+        const trendingOptions = allSelectedContracts.map(c => {
+            // Priority: REST API -> Live Market Data -> Fallback
+            const live = allLivePrices[c.token] || store.latestMarketData[`${c.symbol}:NFO`] || {};
+            const ltp = live.ltp || live.last_traded_price || "0.00";
+            const change = live.netChange || live.net_change || live.change || "0.00";
+            const pChange = live.percentChange || live.pChange || "0.00";
+
+            return {
+                name: `${c.name} ${c.expiry} ${parseFloat(c.strike) / 100} ${c.symbol.endsWith("CE") ? "CE" : "PE"}`,
+                token: c.token,
+                ltp: ltp,
+                change: (parseFloat(change) > 0 ? "+" : "") + parseFloat(change).toFixed(2),
+                pChange: parseFloat(pChange).toFixed(2)
+            };
+        });
 
         return {
             indices,
