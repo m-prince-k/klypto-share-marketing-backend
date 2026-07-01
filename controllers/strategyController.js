@@ -219,7 +219,7 @@ const generateInternalBoslimCache = async (req, res) => {
 
 const forwardToPredict = async (req, res) => {
     try {
-        const targetUrl = req.query.url || 'http://43.205.133.183:8000/predict';
+        const targetUrl = req.query.url || 'http://13.207.78.205:8000/predict';
         const fs = require('fs');
         const path = require('path');
         const axios = require('axios');
@@ -491,7 +491,7 @@ const runDynamicScanner = async (req, res) => {
         try {
             const db = require('../models');
             const dryRunDocs = await db.sequelize.query(
-                "SELECT * FROM historical_candles ORDER BY datetime DESC LIMIT 50",
+                "SELECT * FROM historical_candles ORDER BY datetime DESC LIMIT 10",
                 { type: db.sequelize.QueryTypes.SELECT }
             );
             const dryRunCandles = dryRunDocs.reverse().map(c => {
@@ -500,13 +500,13 @@ const runDynamicScanner = async (req, res) => {
                 let localTimeStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
                 return {
                     datetime: localTimeStr,
-                open: parseFloat(c.open),
-                high: parseFloat(c.high),
-                low: parseFloat(c.low),
-                close: parseFloat(c.close),
-                volume: parseInt(c.volume)
-            };
-        });
+                    open: parseFloat(c.open),
+                    high: parseFloat(c.high),
+                    low: parseFloat(c.low),
+                    close: parseFloat(c.close),
+                    volume: parseInt(c.volume)
+                };
+            });
 
 
             const axios = require('axios');
@@ -516,10 +516,10 @@ const runDynamicScanner = async (req, res) => {
                 strategy_code: strategy_code,
                 historical_data: dryRunCandles
             };
-            
+
             // Hit BOTH servers simultaneously (Increased timeout from 5000 to 15000)
             const results = await Promise.allSettled([
-                axios.post('http://43.205.133.183:8000/web_api/evaluate-strategy', dryRunPayload, { timeout: 15000 }),
+                axios.post('http://13.207.78.205:8000/web_api/evaluate-strategy', dryRunPayload, { timeout: 15000 }),
                 axios.post('http://127.0.0.1:8000/api/evaluate-strategy', dryRunPayload, { timeout: 15000 })
             ]);
 
@@ -572,14 +572,27 @@ const runDynamicScanner = async (req, res) => {
                 await StrategySignal.destroy({ where: { userId: userId } });
                 console.log(`[Dynamic Scanner] Cleared previous signals for User: ${userId}`);
 
-                // 2. Fetch Master list from DB historical_candles (LIMITED TO 5 FOR TESTING)
+                // 2. Fetch Master list from DB historical_candles
                 const db = require('../models');
                 const symbolDocs = await db.sequelize.query(
-                    "SELECT DISTINCT symbol FROM historical_candles LIMIT 5",
+                    "SELECT DISTINCT symbol FROM historical_candles",
                     { type: db.sequelize.QueryTypes.SELECT }
                 );
                 const symbols = symbolDocs.map(row => row.symbol);
-                console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols (TEST MODE)...`);
+                console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols...`);
+
+                // Initialize CSV File
+                const fs = require('fs');
+                const path = require('path');
+                const csvPath = path.join(__dirname, '..', 'signal', 'latest_scanner_results.csv');
+                try {
+                    const dir = path.dirname(csvPath);
+                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                    fs.writeFileSync(csvPath, "Symbol,Date,EntryTime,ExitTime,SignalType,TradeType,Open,High,Low,Close,Volume\n");
+                    console.log(`[Dynamic Scanner] Re-initialized CSV file.`);
+                } catch (e) {
+                    console.error('Error initializing CSV:', e.message);
+                }
 
                 const marketStore = require('../services/marketStore');
                 const smartApi = require('../services/smartApi');
@@ -676,6 +689,10 @@ const runDynamicScanner = async (req, res) => {
                         }
                         historicalData.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
 
+                        // Filter data from 1st Jan 2025 as requested
+                        const cutoffDate = new Date('2025-01-01T00:00:00');
+                        historicalData = historicalData.filter(c => new Date(c.datetime) >= cutoffDate);
+
                         const payload = {
                             symbol: symbol,
                             interval: "FIVE_MINUTE",
@@ -690,14 +707,14 @@ const runDynamicScanner = async (req, res) => {
                             continue;
                         }
 
-                        // Hit BOTH servers simultaneously
+                        // Hit BOTH servers simultaneously (Increased timeout to 60 seconds for large data)
                         const results = await Promise.allSettled([
-                            axios.post('http://43.205.133.183:8000/web_api/evaluate-strategy', payload, { timeout: 600000 }),
-                            axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 600000 })
+                            axios.post('http://13.207.78.205:8000/web_api/evaluate-strategy', payload, { timeout: 60000 }),
+                            axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 60000 })
                         ]);
 
                         let pythonRes = null;
-                        
+
                         // Prefer the result from the Live server, otherwise use Local server
                         if (results[0].status === 'fulfilled') {
                             pythonRes = results[0].value;
@@ -748,6 +765,8 @@ const runDynamicScanner = async (req, res) => {
                                 const path = require('path');
                                 const csvPath = path.join(__dirname, '..', 'signal', 'latest_scanner_results.csv');
 
+                                const processed915Times = new Set();
+
                                 for (let i = 0; i < signals.length; i++) {
                                     const sig = signals[i];
                                     const sigType = String(sig.type || sig.text || sig.signal || '').toUpperCase();
@@ -759,6 +778,9 @@ const runDynamicScanner = async (req, res) => {
 
                                     // Check if this is a 9:15 Entry (BUY) signal
                                     if (sigType === 'BUY' && cTimeStr && cTimeStr.includes('09:15')) {
+                                        if (processed915Times.has(cTimeStr)) continue; // Prevent duplicates!
+                                        processed915Times.add(cTimeStr);
+
                                         const tradeType = String(sig.text || sig.tradeType || 'CALL').toUpperCase(); // Python should send text: CALL or PUT
                                         let exitSig = null;
 
@@ -814,14 +836,11 @@ const runDynamicScanner = async (req, res) => {
                                         if (sig.index !== undefined && historicalData[sig.index]) {
                                             candle915 = historicalData[sig.index];
                                         } else {
-                                            candle915 = historicalData.find(c => c.datetime === cTimeStr) || {};
+                                            candle915 = historicalData.find(c => c.datetime.replace(' ', 'T') === cTimeStr.replace(' ', 'T')) || {};
                                         }
 
                                         const row = `${symbol},${dateOnly},${timeOnly},${exitTimeOnly},${sigType},${tradeType},${candle915.open || ''},${candle915.high || ''},${candle915.low || ''},${candle915.close || ''},${candle915.volume || ''}\n`;
                                         try {
-                                            const dir = path.dirname(csvPath);
-                                            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                                            if (!fs.existsSync(csvPath)) fs.writeFileSync(csvPath, "Symbol,Date,EntryTime,ExitTime,SignalType,TradeType,Open,High,Low,Close,Volume\n");
                                             fs.appendFileSync(csvPath, row);
                                         } catch (e) {
                                             console.error('Error writing to CSV:', e.message);
