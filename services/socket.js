@@ -296,15 +296,29 @@ const connectSocket = (server) => {
         });
 
         // --- 3. TECHNICAL INDICATORS EVENTS ---
-        const candleCache = new Map();
-
-        socket.on(EVENTS.GET_INDICATOR_DETAILS, async (payload) => {
+socket.on(EVENTS.GET_INDICATOR_DETAILS, async (payload) => {
             const start = Date.now();
             try {
-                const { type, symbol, interval, fromDate, toDate, fromdate, todate, exchange } = payload;
+                if (!payload) payload = {};
+                
+                // Ensure payload structure is correct based on what frontend sends
+                const symbol = payload.symbol || payload.body?.symbol;
+                const type = payload.type || payload.body?.type;
+                const interval = payload.interval || payload.body?.interval || "1m";
+                let fD = payload.fromDate || payload.body?.fromDate;
+                let tD = payload.toDate || payload.body?.toDate;
+                let extraInfo = payload.extraInfo || payload.body?.extraInfo || null;
+
+                if (!symbol) {
+                    console.warn("[Socket] GET_INDICATOR_DETAILS missing symbol");
+                    return socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: false, message: "Symbol missing", data: [] });
+                }
+
+                let cleanSymbol = symbol.endsWith('-EQ') ? symbol.replace('-EQ', '') : symbol;
+                const { exchange } = payload;
                 // Normalize parameter names
-                const finalFromDateInput = fromDate || fromdate;
-                const finalToDateInput = toDate || todate;
+                const finalFromDateInput = fD || payload.fromdate;
+                const finalToDateInput = tD || payload.todate;
 
                 const intervalMap = {
                     "1": "ONE_MINUTE", "1m": "ONE_MINUTE", "one_minute": "ONE_MINUTE",
@@ -329,7 +343,7 @@ const connectSocket = (server) => {
                 const mappedExchange = finalExchange;
 
                 // Normalize dates
-                let fD = finalFromDateInput, tD = finalToDateInput;
+                fD = finalFromDateInput; tD = finalToDateInput;
                 if (typeof fD === 'string' && fD.length === 10) fD = formatDate(new Date(fD), isCommodity ? "09:00" : "09:15", finalInterval);
                 if (typeof tD === 'string' && tD.length === 10) tD = formatDate(new Date(tD), isCommodity ? "23:55" : "15:30", finalInterval);
 
@@ -379,8 +393,6 @@ const connectSocket = (server) => {
                 if (uSym === "GOLD") finalToken = "234454";
                 if (uSym === "SILVER") finalToken = "234455";
 
-                let extraInfo = null;
-
                 if (!finalToken) {
                     // Try robust NFO resolution
                     const noSpaceSym = uSym.replace(/\s+/g, '');
@@ -412,7 +424,7 @@ const connectSocket = (server) => {
 
                 const configPayload = { ...payload, ...(payload.body || {}) };
                 const results = await prepareCandlesWithIndicators(type, candles, { json: d => d, send: d => d }, configPayload);
-                const finalResults = withDateTime(results);
+                const finalResults = withDateTime(results) || [];
                 
                 // If we had a warmup, slice the data back to user's requested fromDate
                 let filteredResults = finalResults;

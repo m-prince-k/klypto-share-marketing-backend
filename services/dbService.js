@@ -525,21 +525,28 @@ function fillIntradayGaps(candles, interval, exchange, fromDate, toDate) {
         // 1. Don't include future candles
         if (c.time > currentSec) continue;
 
-        if (interval !== "ONE_DAY") {
-            const ms = c.time * 1000;
-            const istDate = new Date(ms + 5.5 * 60 * 60 * 1000);
-            const dayOfWeek = istDate.getUTCDay();
-            
-            // 2. Skip Saturday (6) and Sunday (0)
-            if (dayOfWeek === 0 || dayOfWeek === 6) continue;
-        }
+        const ms = c.time * 1000;
+        const istDate = new Date(ms + 5.5 * 60 * 60 * 1000);
+        const dayOfWeek = istDate.getUTCDay();
         
+        // 2. Skip Saturday (6) and Sunday (0) ALWAYS (even for ONE_DAY interval)
+        if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+
+        // 2.5 Skip known market holidays (e.g. Muharram 26 June 2026)
+        const dateStr = istDate.toISOString().split('T')[0];
+        const NSE_HOLIDAYS_2026 = [
+            "2026-01-26", "2026-03-03", "2026-03-24", "2026-04-03", "2026-04-14", 
+            "2026-04-20", "2026-05-01", "2026-06-26", "2026-08-15", "2026-08-27", 
+            "2026-10-02", "2026-10-19", "2026-11-08", "2026-11-23", "2026-12-25"
+        ];
+        if (NSE_HOLIDAYS_2026.includes(dateStr)) continue;
+
         // 3. Make sure OHLCV values cannot be exactly the same (except real data). 
         // We filter out artificially padded flat candles (volume=0 and O=H=L=C) that match the previous candle
         if (filtered.length > 0) {
             const prev = filtered[filtered.length - 1];
-            if (c.volume === 0 && c.open === c.high && c.high === c.low && c.low === c.close) {
-                if (prev.close === c.close) {
+            if (Number(c.volume) === 0 && Number(c.open) === Number(c.high) && Number(c.high) === Number(c.low) && Number(c.low) === Number(c.close)) {
+                if (Number(prev.close) === Number(c.close)) {
                     continue; // Skip this identical padded candle
                 }
             }
