@@ -219,7 +219,7 @@ const generateInternalBoslimCache = async (req, res) => {
 
 const forwardToPredict = async (req, res) => {
     try {
-        const targetUrl = req.query.url || 'http://43.205.133.183:8000/predict';
+        const targetUrl = req.query.url || 'http://13.207.78.205:8000/predict';
         const fs = require('fs');
         const path = require('path');
         const axios = require('axios');
@@ -500,13 +500,13 @@ const runDynamicScanner = async (req, res) => {
                 let localTimeStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
                 return {
                     datetime: localTimeStr,
-                open: parseFloat(c.open),
-                high: parseFloat(c.high),
-                low: parseFloat(c.low),
-                close: parseFloat(c.close),
-                volume: parseInt(c.volume)
-            };
-        });
+                    open: parseFloat(c.open),
+                    high: parseFloat(c.high),
+                    low: parseFloat(c.low),
+                    close: parseFloat(c.close),
+                    volume: parseInt(c.volume)
+                };
+            });
 
 
             const axios = require('axios');
@@ -516,10 +516,10 @@ const runDynamicScanner = async (req, res) => {
                 strategy_code: strategy_code,
                 historical_data: dryRunCandles
             };
-            
+
             // Hit BOTH servers simultaneously (Increased timeout from 5000 to 15000)
             const results = await Promise.allSettled([
-                axios.post('http://43.205.133.183:8000/web_api/evaluate-strategy', dryRunPayload, { timeout: 15000 }),
+                axios.post('http://13.207.78.205:8000/web_api/evaluate-strategy', dryRunPayload, { timeout: 15000 }),
                 axios.post('http://127.0.0.1:8000/api/evaluate-strategy', dryRunPayload, { timeout: 15000 })
             ]);
 
@@ -709,12 +709,12 @@ const runDynamicScanner = async (req, res) => {
 
                         // Hit BOTH servers simultaneously (Increased timeout to 60 seconds for large data)
                         const results = await Promise.allSettled([
-                            axios.post('http://43.205.133.183:8000/web_api/evaluate-strategy', payload, { timeout: 60000 }),
+                            axios.post('http://13.207.78.205:8000/web_api/evaluate-strategy', payload, { timeout: 60000 }),
                             axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 60000 })
                         ]);
 
                         let pythonRes = null;
-                        
+
                         // Prefer the result from the Live server, otherwise use Local server
                         if (results[0].status === 'fulfilled') {
                             pythonRes = results[0].value;

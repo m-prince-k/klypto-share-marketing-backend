@@ -158,7 +158,7 @@ async function fetchManualHistoricalData(payload) {
 
         if (!finalToken) {
             console.warn(`[HistoricalService] 🛑 Note: Token not found for symbol: ${symbol}. Master list might still be loading or symbol is invalid.`);
-            return;
+            throw new Error(`Token not found for symbol: ${symbol}. Master list might still be loading or symbol is invalid.`);
         }
             
             // Subscribe via Angel One WebSocket

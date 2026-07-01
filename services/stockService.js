@@ -3,6 +3,10 @@ const store = require("./marketStore");
 const { Stock, LivePrice, Candle, Future } = require('../models');
 const smartApi = require('./smartApi');
 const { formatDate } = require('./dbService');
+const fs = require('fs');
+const path = require('path');
+const CACHE_FILE = path.join(__dirname, '../data/scrip_master_cache.json');
+
 
 const userSymbols = [
     "ABB", "ABBPOW", "ADAENT", "ADAGRE", "ADAPOR", "ADATRA", "ADICAP", "ALKLAB", "AMBCE", "AMBEN",
@@ -100,9 +104,30 @@ const manualMap = {
 
 async function fetchTop200Stocks() {
     try {
-        console.log("Fetching Master Scrip list...");
-        const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
-        const allScrips = response.data;
+        let allScrips = [];
+        try {
+            if (fs.existsSync(CACHE_FILE)) {
+                console.log("[MasterScrip] Loading from local cache for instant startup...");
+                allScrips = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+                // Trigger background update to keep cache fresh for new expiries
+                axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json").then(res => {
+                    fs.writeFileSync(CACHE_FILE, JSON.stringify(res.data));
+                    console.log("[MasterScrip] Background cache updated successfully.");
+                }).catch(e => console.error("[MasterScrip] Background update failed:", e.message));
+            } else {
+                console.log("Fetching Master Scrip list from API (first time)...");
+                const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
+                allScrips = response.data;
+                const dir = path.dirname(CACHE_FILE);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(CACHE_FILE, JSON.stringify(allScrips));
+            }
+        } catch (err) {
+            console.error("[MasterScrip] Cache/Fetch Error:", err.message);
+            console.log("Falling back to direct API fetch...");
+            const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
+            allScrips = response.data;
+        }
 
         const nseEquity = allScrips.filter(s => s.exch_seg === "NSE" && s.instrumenttype === "");
         const bseEquity = allScrips.filter(s => s.exch_seg === "BSE" && s.instrumenttype === "");

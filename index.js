@@ -126,6 +126,15 @@ app.get("/health", (req, res) => {
 
 async function bootstrap() {
   try {
+    console.log("[Startup] Loading stock master data...");
+    await fetchTop200Stocks();
+
+    console.log("[Startup] Synchronizing database in background...");
+    sequelize.sync().then(() => {
+        startupState.databaseReady = true;
+        console.log("[Startup] Database synchronized.");
+    }).catch(err => console.error("[Startup] Database sync failed:", err.message));
+
     server.listen(PORT, HOST, () => {
       console.log(`\n=================================================`);
       console.log(`🚀 SERVER RUNNING AT: http://${HOST}:${PORT}`);
@@ -136,16 +145,9 @@ async function bootstrap() {
       console.log(`🔮 FUTURES LIVE:     http://${HOST}:${PORT}/futures/live`);
       console.log(`🩺 HEALTH:   http://${HOST}:${PORT}/health`);
       console.log(`=================================================\n`);
-      // Run slow startup tasks after the HTTP server is already accepting requests.
+      // Run Angel One login tasks after the HTTP server is already accepting requests.
       (async () => {
         try {
-          console.log("[Startup] Synchronizing database in background...");
-          await sequelize.sync();
-          startupState.databaseReady = true;
-          console.log("[Startup] Database synchronized.");
-
-          console.log("[Startup] Loading stock master data in background...");
-          await fetchTop200Stocks();
 
           console.log("[Startup] Logging into Angel One in background...");
           const loginData = await login();
