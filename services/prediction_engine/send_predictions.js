@@ -1,0 +1,224 @@
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
+const postgresDb = require("./db");
+const csv = require("csv-parser");
+
+// Use the folder the user specified for JSON payloads
+const JSON_FOLDER = path.join(__dirname, '..', '..', 'prediction', "extractJson");
+const PREDICT_URL = "http://43.205.133.183:8000/predict";
+let LOG_FILE = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", "predictions_response.log");
+let PAYLOAD_LOG = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", "prediction_payloads.log");
+
+function logPayload(msg) {
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(PAYLOAD_LOG, `[${timestamp}] ${msg}\n`);
+}
+
+// Promise wrapper for postgres
+function getLatestTick(symbol) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const query = `
+        SELECT open, high, low, close, volume, timestamp 
+        FROM candles_5m 
+        WHERE symbol = $1 
+          AND EXTRACT(HOUR FROM timestamp) = 9 
+          AND EXTRACT(MINUTE FROM timestamp) = 15
+        ORDER BY timestamp DESC LIMIT 1
+      `;
+      const res = await postgresDb.query(query, [symbol]);
+      if (res.rows && res.rows.length > 0) {
+        resolve(res.rows[0]);
+      } else {
+        resolve(null);
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function readJSON(filePath) {
+  return new Promise((resolve, reject) => {
+    fs.readFile(filePath, "utf-8", (err, data) => {
+      if (err) return reject(err);
+      try {
+        resolve(JSON.parse(data));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+}
+
+async function processSymbol(symbol, historic_data) {
+  try {
+    console.log(`Processing ${symbol}...`);
+
+    if (!historic_data || historic_data.length === 0) {
+      console.log(`  Skipping ${symbol}: JSON data is empty.`);
+      return;
+    }
+
+    if (historic_data.length > 300) {
+      historic_data = historic_data.slice(-300);
+    }
+
+    // 2. Fetch live tick from Postgres for 09:15
+    const latestTick = await getLatestTick(symbol);
+
+    let tickObj;
+    if (latestTick) {
+      // If we have an OHLCV candle from the DB, map it perfectly
+      tickObj = {
+        datetime: postgresDb.formatTimestamp(new Date(latestTick.timestamp)),
+        open: latestTick.open,
+        high: latestTick.high,
+        low: latestTick.low,
+        close: latestTick.close,
+        volume: latestTick.volume,
+      };
+    } else {
+      // Fallback to last candle in history
+      console.log(
+        `  No live tick found for ${symbol} in DB. Using last historical candle.`,
+      );
+      const lastCandle = historic_data[historic_data.length - 1];
+      tickObj = {
+        datetime: lastCandle.datetime,
+        open: lastCandle.open,
+        high: lastCandle.high,
+        low: lastCandle.low,
+        close: lastCandle.close,
+        volume: lastCandle.volume,
+      };
+    }
+
+    // 3. Construct Payload
+    const payload = {
+      historic_data: historic_data,
+      tick: tickObj,
+    };
+
+    // Log retrieved tick and payload
+    logPayload(
+      `[${symbol}] Retrieved tick from DB: ${JSON.stringify(latestTick || "None")}`,
+    );
+    logPayload(
+      `[${symbol}] Sending payload with tickObj: ${JSON.stringify(tickObj)}`,
+    );
+    
+    console.log(`  [${symbol}] Payload being sent (historic_data length: ${historic_data.length}, tick: ${JSON.stringify(tickObj)})`);
+    logPayload(`[${symbol}] Full payload being sent: ${JSON.stringify(payload)}`);
+
+    // 4. Send to Predict API with retry
+    const maxRetries = 3;
+    let response = null;
+    let attempt = 0;
+    while (attempt < maxRetries) {
+      try {
+        response = await axios.post(PREDICT_URL, payload, {
+          headers: { "Content-Type": "application/json" },
+          timeout: 30000,
+        });
+        break; // Success
+      } catch (err) {
+        attempt++;
+        const errorMsg = err.response ? JSON.stringify(err.response.data) : err.message;
+        if (attempt >= maxRetries) {
+          throw new Error(`Failed after ${maxRetries} attempts: ${errorMsg}`);
+        }
+        console.warn(`  [${symbol}] Error sending payload (${errorMsg}), retrying attempt ${attempt}/${maxRetries}...`);
+        await new Promise(res => setTimeout(res, 2000)); // wait 2s before retry
+      }
+    }
+
+    // 5. Log response to Database
+    const pool = postgresDb.getDB();
+    await pool.query(`
+      INSERT INTO prediction_logs (symbol, tick_data, response_data, created_at)
+      VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+    `, [symbol, tickObj, response.data]);
+    
+    // Fallback file log
+    const logMsg = `[${symbol}] Payload sent. Tick: ${JSON.stringify(tickObj)} Response: ${JSON.stringify(response.data)}\n`;
+    fs.appendFileSync(LOG_FILE, logMsg);
+    
+    console.log(`  Success. Signal: ${JSON.stringify(response.data)}`);
+  } catch (err) {
+    const errorMsg = err.response
+      ? JSON.stringify(err.response.data)
+      : err.message;
+    const logErr = `[${symbol}] Error sending payload: ${errorMsg}\n`;
+    fs.appendFileSync(LOG_FILE, logErr);
+    console.error(`  Error: ${errorMsg}`);
+  }
+}
+
+async function main() {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const timeStr = `${hours}${minutes.toString().padStart(2, '0')}`;
+  
+  LOG_FILE = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", `prediction${timeStr}.log`);
+  PAYLOAD_LOG = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", `prediction_payloads${timeStr}.log`);
+
+  console.log("Starting prediction job...");
+
+  // Fetch data from symbol_payloads table instead of JSON files
+  const pool = postgresDb.getDB();
+  const res = await pool.query('SELECT symbol, historic_data FROM symbol_payloads');
+  const payloadRecords = res.rows;
+
+  console.log(`Found ${payloadRecords.length} payload records in DB.`);
+
+  // Initialize log file
+  fs.writeFileSync(
+    LOG_FILE,
+    `--- Prediction Run at ${new Date().toISOString()} ---\n`,
+  );
+
+  // Batch process files for faster execution
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < payloadRecords.length; i += BATCH_SIZE) {
+    const batch = payloadRecords.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(record => processSymbol(record.symbol, record.historic_data.historic_data || record.historic_data)));
+  }
+
+  console.log("Finished prediction job iteration.");
+}
+
+let lastRunDate = null;
+async function loop() {
+  while (true) {
+    const now = new Date();
+    const h = now.getHours();
+    const m = now.getMinutes();
+    const dateStr = now.toDateString();
+
+    // Run at or after 09:20, once per day
+    if ((h > 9 || (h === 9 && m >= 20)) && lastRunDate !== dateStr) {
+      console.log(`Time is ${h}:${m}, >= 09:20. Running prediction cycle for today...`);
+      try {
+        await main();
+        lastRunDate = dateStr;
+      } catch (err) {
+        console.error("Error in prediction cycle:", err);
+      }
+    } else {
+      console.log(`Time is ${h}:${m}. Not time yet or already run today. Skipping execution.`);
+    }
+
+    // Sleep for 1 minute
+    await new Promise((r) => setTimeout(r, 60000));
+  }
+}
+
+function startPredictionEngine() {
+  console.log("Starting Background Prediction Engine. Waiting for 09:20 every day...");
+  loop().catch(console.error);
+}
+
+module.exports = { startPredictionEngine, main };

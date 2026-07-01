@@ -35,6 +35,7 @@ const indicatorRoutes = require("./routes/indicatorRoutes");
 const backtestRoutes = require("./routes/backtestRoutes");
 const tradeRoutes = require("./routes/tradeRoutes");
 const strategyRoutes = require("./routes/strategyRoutes");
+const { predictionRouter, startPredictionServices } = require("./controllers/predictionController");
 
 const app = express();
 const server = http.createServer(app);
@@ -105,6 +106,7 @@ app.use("/api/indicator", indicatorRoutes);
 app.use("/api/backtest", backtestRoutes);
 app.use("/api/trades", tradeRoutes);
 app.use("/api/strategy", strategyRoutes);
+app.use("/api", predictionRouter);
 
 app.get("/", (req, res) => {
   res.send("Klypto backend is running");
@@ -162,6 +164,7 @@ async function bootstrap() {
 
           await manageWebSocket(loginData, io);
           startSchedulers();
+          startPredictionServices(); // Start prediction polling and cron jobs
           startupState.marketFeedsReady = true;
 
           // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One
