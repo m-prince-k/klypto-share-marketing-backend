@@ -130,6 +130,7 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
 
         // 1. Check local DB first
         const dbCandles = await ModelToUse.findAll({
+            attributes: ['timestamp', 'open', 'high', 'low', 'close', 'volume'],
             where: {
                 symbol: symbol.toUpperCase(),
                 exchange: exchange,

@@ -3,6 +3,8 @@ const store = require('./marketStore');
 const { getHistoricalCandle } = require('./angelOne');
 const { formatDate, getCandlesWithCache } = require('./dbService');
 
+const apiCache = new Map();
+
 async function fetchManualHistoricalData(payload) {
     let extraInfo = null;
     try {
@@ -187,6 +189,17 @@ async function fetchManualHistoricalData(payload) {
             console.log(`[HistoricalService] Force-subscribed ${uSym} (${finalToken}) on ${mappedExchange} (Mode: 3)`);
         }
 
+        const cacheKey = `${uSym}_${finalInterval}_${formattedFromDate}_${formattedToDate}`;
+        if (!forceApi && apiCache.has(cacheKey)) {
+            const cached = apiCache.get(cacheKey);
+            if (Date.now() - cached.timestamp < 10000) {
+                console.log(`[HistoricalService] Returning CACHED response for ${cacheKey}`);
+                return cached.data;
+            } else {
+                apiCache.delete(cacheKey);
+            }
+        }
+
         const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate, extraInfo, forceApi);
         // OPTIMIZATION: Map to lightweight objects. Stripping redundant strings (symbol, token, exchange, timestamp) 
         // reduces payload size by ~60%, making JSON encoding and WebSocket transfer much faster.
@@ -199,13 +212,19 @@ async function fetchManualHistoricalData(payload) {
             volume: c.volume
         }));
         
-        return {
+        const finalResponse = {
             success: true,
             symbol: uSym,
             source: result.source,
             count: optimizedData.length,
             data: optimizedData
         };
+
+        if (!forceApi) {
+            apiCache.set(cacheKey, { timestamp: Date.now(), data: finalResponse });
+        }
+
+        return finalResponse;
     } catch (err) {
         console.error("[HistoricalService] Error:", err.message);
         throw err;

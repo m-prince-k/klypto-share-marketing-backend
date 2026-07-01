@@ -1,0 +1,12 @@
+{
+  "ignore": [
+    "data/*",
+    "vikas/*",
+    "scripts/*",
+    "node_modules/*",
+    "signal/*",
+    "cache/*",
+    "angel_token.json",
+    ".git"
+  ]
+}
