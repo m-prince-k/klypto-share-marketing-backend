@@ -406,7 +406,8 @@ const connectSocket = (server) => {
 
                 if (!finalToken) throw new Error(`Token not found for ${symbol}`);
 
-                const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, dynamicFrom, tD, extraInfo);
+                const trueExchange = store.tokenToExchange[finalToken] || mappedExchange;
+                const result = await getCandlesWithCache(uSym, finalToken, trueExchange, finalInterval, dynamicFrom, tD, extraInfo);
                 const candles = result?.data || [];
 
                 const configPayload = { ...payload, ...(payload.body || {}) };
@@ -424,8 +425,20 @@ const connectSocket = (server) => {
                     });
                 }
 
-                socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: filteredResults });
-                console.log(`[Socket] ${type} calc with warmup: ${Date.now() - start}ms | Candles: ${candles.length} | Returned: ${filteredResults.length}`);
+                // Strip redundant strings to drastically reduce payload size for faster network transfer
+                const optimizedResults = filteredResults.map(r => {
+                    const obj = { ...r };
+                    delete obj.symbol;
+                    delete obj.token;
+                    delete obj.exchange;
+                    delete obj.interval;
+                    delete obj.createdAt;
+                    delete obj.updatedAt;
+                    return obj;
+                });
+
+                socket.emit(EVENTS.INDICATOR_DETAILS_RESPONSE, { success: true, message: `fetched by ${type}`, data: optimizedResults });
+                console.log(`[Socket] ${type} calc with warmup: ${Date.now() - start}ms | Candles: ${candles.length} | Returned: ${optimizedResults.length}`);
             } catch (err) {
                 console.error("[Socket Indicator] Error:", err.message);
                 socket.emit(EVENTS.INDICATOR_DETAILS_ERROR, { success: false, error: err.message });

@@ -200,7 +200,8 @@ async function fetchManualHistoricalData(payload) {
             }
         }
 
-        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate, extraInfo, forceApi);
+        const trueExchange = store.tokenToExchange[finalToken] || mappedExchange;
+        const result = await getCandlesWithCache(uSym, finalToken, trueExchange, finalInterval, formattedFromDate, formattedToDate, extraInfo, forceApi);
         // OPTIMIZATION: Map to lightweight objects. Stripping redundant strings (symbol, token, exchange, timestamp) 
         // reduces payload size by ~60%, making JSON encoding and WebSocket transfer much faster.
         const optimizedData = result.data.map(c => ({

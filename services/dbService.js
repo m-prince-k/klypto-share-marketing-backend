@@ -111,8 +111,9 @@ const formatDate = (date, time, interval) => {
     return `${year}-${month}-${day}`;
 };
 
+const inFlightRequests = new Map();
 
-async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null, forceApi = false) {
+async function getCandlesWithCacheCore(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null, forceApi = false) {
     try {
         const isOption = extraInfo !== null || exchange === "NFO" || exchange === "BFO";
         const ModelToUse = (isOption && extraInfo) ? OptionChain : Candle;
@@ -137,7 +138,8 @@ async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, 
                 interval: interval,
                 timestamp: { [Op.between]: [new Date(fromDate), new Date(toDate)] }
             },
-            order: [['timestamp', 'ASC']]
+            order: [['timestamp', 'ASC']],
+            raw: true
         });
 
         // Self-healing: if the DB has premature candles (where open === close === high for all checked candles),
@@ -547,6 +549,24 @@ function fillIntradayGaps(candles, interval, exchange, fromDate, toDate) {
     }
 
     return filtered;
+}
+
+async function getCandlesWithCache(symbol, token, exchange, interval, fromDate, toDate, extraInfo = null, forceApi = false) {
+    const cacheKey = `${symbol}_${interval}_${fromDate}_${toDate}_${exchange}_${Boolean(extraInfo)}_${forceApi}`;
+    if (inFlightRequests.has(cacheKey)) {
+        console.log(`[dbService] Coalescing concurrent request for ${cacheKey}`);
+        return inFlightRequests.get(cacheKey);
+    }
+    const promise = getCandlesWithCacheCore(symbol, token, exchange, interval, fromDate, toDate, extraInfo, forceApi);
+    inFlightRequests.set(cacheKey, promise);
+    try {
+        const result = await promise;
+        setTimeout(() => inFlightRequests.delete(cacheKey), 5000); // 5-second cache
+        return result;
+    } catch (e) {
+        inFlightRequests.delete(cacheKey);
+        throw e;
+    }
 }
 
 module.exports = {
