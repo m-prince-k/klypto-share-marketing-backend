@@ -35,9 +35,11 @@ const indicatorRoutes = require("./routes/indicatorRoutes");
 const backtestRoutes = require("./routes/backtestRoutes");
 const tradeRoutes = require("./routes/tradeRoutes");
 const strategyRoutes = require("./routes/strategyRoutes");
+const optionChainUiRoutes = require("./routes/optionChainUiRoutes");
 const { predictionRouter, startPredictionServices } = require("./controllers/predictionController");
 
 const app = express();
+app.use(express.static('public'));
 const server = http.createServer(app);
 
 //init socket
@@ -105,8 +107,17 @@ app.use("/alerts", alertRoutes);
 app.use("/api/indicator", indicatorRoutes);
 app.use("/api/backtest", backtestRoutes);
 app.use("/api/trades", tradeRoutes);
-app.use("/api/strategy", strategyRoutes);app.use("/api", predictionRouter);
+app.use("/api/strategies", strategyRoutes);
+app.use("/api/ui-option-chain", optionChainUiRoutes);
+app.use("/api", predictionRouter);
 
+app.get("/option-chain-ui", (req, res) => {
+  res.sendFile(__dirname + "/public/index.html");
+});
+
+app.get("/historical-ui", (req, res) => {
+  res.sendFile(__dirname + "/public/historical.html");
+});
 
 app.get("/", (req, res) => {
   res.send("Klypto backend is running");
