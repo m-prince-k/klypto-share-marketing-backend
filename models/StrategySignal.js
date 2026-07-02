@@ -26,7 +26,6 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'strategy_signals',
     indexes: [
       {
-        unique: true,
         fields: ['symbol', 'userId']
       }
     ]

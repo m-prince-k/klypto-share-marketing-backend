@@ -1,0 +1,14 @@
+{
+  "ignore": [
+    "data/*",
+    "vikas/*",
+    "scripts/*",
+    "node_modules/*",
+    "signal/*",
+    "cache/*",
+    "angel_token.json",
+    "prediction/*",
+    "services/prediction_engine/*",
+    ".git"
+  ]
+}

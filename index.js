@@ -35,8 +35,11 @@ const indicatorRoutes = require("./routes/indicatorRoutes");
 const backtestRoutes = require("./routes/backtestRoutes");
 const tradeRoutes = require("./routes/tradeRoutes");
 const strategyRoutes = require("./routes/strategyRoutes");
+const optionChainUiRoutes = require("./routes/optionChainUiRoutes");
+const { predictionRouter, startPredictionServices } = require("./controllers/predictionController");
 
 const app = express();
+app.use(express.static('public'));
 const server = http.createServer(app);
 
 //init socket
@@ -74,7 +77,10 @@ const corsOptions = {
     // Allow requests with no origin (mobile apps, Postman, curl)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    // Allow development/local network origins dynamically
+    const isLocalOrigin = /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(origin);
+
+    if (allowedOrigins.includes(origin) || isLocalOrigin) {
       callback(null, true);
     } else {
       callback(new Error(`CORS blocked: ${origin}`));
@@ -101,7 +107,17 @@ app.use("/alerts", alertRoutes);
 app.use("/api/indicator", indicatorRoutes);
 app.use("/api/backtest", backtestRoutes);
 app.use("/api/trades", tradeRoutes);
-app.use("/api/strategy", strategyRoutes);
+app.use("/api/strategies", strategyRoutes);
+app.use("/api/ui-option-chain", optionChainUiRoutes);
+app.use("/api", predictionRouter);
+
+app.get("/option-chain-ui", (req, res) => {
+  res.sendFile(__dirname + "/public/index.html");
+});
+
+app.get("/historical-ui", (req, res) => {
+  res.sendFile(__dirname + "/public/historical.html");
+});
 
 app.get("/", (req, res) => {
   res.send("Klypto backend is running");
@@ -123,6 +139,15 @@ app.get("/health", (req, res) => {
 
 async function bootstrap() {
   try {
+    console.log("[Startup] Loading stock master data...");
+    await fetchTop200Stocks();
+
+    console.log("[Startup] Synchronizing database in background...");
+    sequelize.sync().then(() => {
+        startupState.databaseReady = true;
+        console.log("[Startup] Database synchronized.");
+    }).catch(err => console.error("[Startup] Database sync failed:", err.message));
+
     server.listen(PORT, HOST, () => {
       console.log(`\n=================================================`);
       console.log(`🚀 SERVER RUNNING AT: http://${HOST}:${PORT}`);
@@ -133,16 +158,9 @@ async function bootstrap() {
       console.log(`🔮 FUTURES LIVE:     http://${HOST}:${PORT}/futures/live`);
       console.log(`🩺 HEALTH:   http://${HOST}:${PORT}/health`);
       console.log(`=================================================\n`);
-      // Run slow startup tasks after the HTTP server is already accepting requests.
+      // Run Angel One login tasks after the HTTP server is already accepting requests.
       (async () => {
         try {
-          console.log("[Startup] Synchronizing database in background...");
-          await sequelize.sync();
-          startupState.databaseReady = true;
-          console.log("[Startup] Database synchronized.");
-
-          console.log("[Startup] Loading stock master data in background...");
-          await fetchTop200Stocks();
 
           console.log("[Startup] Logging into Angel One in background...");
           const loginData = await login();
@@ -157,6 +175,8 @@ async function bootstrap() {
 
           await manageWebSocket(loginData, io);
           startSchedulers();
+
+          startPredictionServices(); // Start prediction polling and cron jobs
           startupState.marketFeedsReady = true;
 
           // Non-blocking: sync LTP after startup so server is never stalled waiting for Angel One

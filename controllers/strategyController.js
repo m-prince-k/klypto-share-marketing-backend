@@ -219,7 +219,7 @@ const generateInternalBoslimCache = async (req, res) => {
 
 const forwardToPredict = async (req, res) => {
     try {
-        const targetUrl = req.query.url || 'http://43.205.133.183:8000/predict';
+        const targetUrl = req.query.url || 'http://13.207.78.205:8000/predict';
         const fs = require('fs');
         const path = require('path');
         const axios = require('axios');
@@ -467,6 +467,7 @@ module.exports.getScannerDashboard = getScannerDashboard;
 // POST /api/strategy/run-scanner
 const runDynamicScanner = async (req, res) => {
     try {
+
         const strategy_code = req.body.strategy_code;
         const use_historical_only = req.body.use_historical_only === 'true' || req.body.use_historical_only === true;
         const userId = req.user ? String(req.user.id) : "anonymous";
@@ -475,17 +476,57 @@ const runDynamicScanner = async (req, res) => {
             return res.status(400).json({ success: false, message: "strategy_code is required in body" });
         }
 
+        // --- Validate strategy_code content ---
+        // Must contain at least one meaningful strategy keyword
+        const validKeywords = ['plot_markers', 'markers.append', 'df[', 'df.loc', 'signal', 'plotshape', 'plot('];
+        const hasValidCode = validKeywords.some(kw => strategy_code.includes(kw));
+        if (!hasValidCode || strategy_code.trim().length < 20) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid strategy_code. Your code must contain valid strategy logic (e.g., use plot_markers, df[], signal etc.). Received: "${strategy_code.substring(0, 50)}"`
+            });
+        }
+
         // 1. Dry run validation with python backend before starting background process
         try {
+            const db = require('../models');
+            const dryRunDocs = await db.sequelize.query(
+                "SELECT * FROM historical_candles ORDER BY datetime DESC LIMIT 10",
+                { type: db.sequelize.QueryTypes.SELECT }
+            );
+            const dryRunCandles = dryRunDocs.reverse().map(c => {
+                let dt = new Date(c.datetime);
+                let pad = n => String(n).padStart(2, '0');
+                let localTimeStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
+                return {
+                    datetime: localTimeStr,
+                    open: parseFloat(c.open),
+                    high: parseFloat(c.high),
+                    low: parseFloat(c.low),
+                    close: parseFloat(c.close),
+                    volume: parseInt(c.volume)
+                };
+            });
+
+
             const axios = require('axios');
-            await axios.post('http://127.0.0.1:8000/api/evaluate-strategy', {
-                symbol: "DUMMY",
+            const dryRunPayload = {
+                symbol: "DRY_RUN",
                 interval: "FIVE_MINUTE",
-                strategy: "CUSTOM",
-                params: {},
                 strategy_code: strategy_code,
-                historical_data: []
-            }, { timeout: 5000 });
+                historical_data: dryRunCandles
+            };
+
+            // Hit BOTH servers simultaneously (Increased timeout from 5000 to 15000)
+            const results = await Promise.allSettled([
+                axios.post('http://13.207.78.205:8000/web_api/evaluate-strategy', dryRunPayload, { timeout: 15000 }),
+                axios.post('http://127.0.0.1:8000/api/evaluate-strategy', dryRunPayload, { timeout: 15000 })
+            ]);
+
+            // If both failed, throw the error from the live server
+            if (results[0].status === 'rejected' && results[1].status === 'rejected') {
+                throw results[0].reason;
+            }
         } catch (error) {
             const pythonError = error.response ? error.response.data : error.message;
             let errorMessage = pythonError;
@@ -515,25 +556,6 @@ const runDynamicScanner = async (req, res) => {
             return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         };
 
-        // Helper: read local CSV
-        const readHistoricalCsv = (symbol) => {
-            const filePath = path.join(__dirname, '../historical_csv', `${symbol}.csv`);
-            if (!fs.existsSync(filePath)) return [];
-            const content = fs.readFileSync(filePath, 'utf8');
-            const lines = content.split('\n');
-            const data = [];
-            for (let i = 1; i < lines.length; i++) {
-                const line = lines[i].trim();
-                if (!line) continue;
-                const [datetime, open, high, low, close, volume] = line.split(',');
-                data.push({ datetime, open, high, low, close, volume });
-            }
-
-            // Limit to 1 month of 5-minute candles to speed up processing
-            // 75 candles per day * 22 trading days = approx 1650 candles
-            return data.slice(-1650);
-        };
-
         // 1. Authenticate
         const loginData = await login();
         if (!loginData || !loginData.status) {
@@ -541,185 +563,325 @@ const runDynamicScanner = async (req, res) => {
             return;
         }
 
-        // 2. Fetch Master list
-        await fetchTop200Stocks();
-        const symbols = getScannerSymbols();
-        console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols...`);
+        let totalSignalsGenerated = 0;
 
-        let processedCount = 0;
-        const totalCount = symbols.length;
-
-        for (const symbol of symbols) {
+        setTimeout(async () => {
             try {
-                processedCount++;
-                if (io) {
-                    io.to(userId).emit(EVENTS.SCANNER_PROGRESS, {
-                        processed: processedCount,
-                        total: totalCount,
-                        current_stock: symbol
-                    });
+                // Clear old signals for this user
+                const { StrategySignal } = require('../models');
+                await StrategySignal.destroy({ where: { userId: userId } });
+                console.log(`[Dynamic Scanner] Cleared previous signals for User: ${userId}`);
+
+                // 2. Fetch Master list from DB historical_candles
+                const db = require('../models');
+                const symbolDocs = await db.sequelize.query(
+                    "SELECT DISTINCT symbol FROM historical_candles",
+                    { type: db.sequelize.QueryTypes.SELECT }
+                );
+                const symbols = symbolDocs.map(row => row.symbol);
+                console.log(`[Dynamic Scanner] Scanning ${symbols.length} symbols...`);
+
+                // Initialize CSV File
+                const fs = require('fs');
+                const path = require('path');
+                const csvPath = path.join(__dirname, '..', 'signal', 'latest_scanner_results.csv');
+                try {
+                    const dir = path.dirname(csvPath);
+                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                    fs.writeFileSync(csvPath, "Symbol,Date,EntryTime,ExitTime,SignalType,TradeType,Open,High,Low,Close,Volume\n");
+                    console.log(`[Dynamic Scanner] Re-initialized CSV file.`);
+                } catch (e) {
+                    console.error('Error initializing CSV:', e.message);
                 }
-                console.log(`  - Processing ${symbol}...`);
-                const token = marketStore.symbolToTokenMaster[symbol] || marketStore.symbolToTokenMaster[`${symbol}:NSE`];
-                if (!token) continue;
 
-                let historicalData = readHistoricalCsv(symbol);
+                const marketStore = require('../services/marketStore');
+                const smartApi = require('../services/smartApi');
 
-                // Load latest data ONLY if use_historical_only is false
-                let latestData = [];
-                if (!use_historical_only) {
+                let processedCount = 0;
+                const totalCount = symbols.length;
+
+                for (const symbol of symbols) {
                     try {
-                        const toDate = new Date();
-                        const fromDate = new Date();
-                        fromDate.setDate(fromDate.getDate() - 2);
-
-                        let timeoutId;
-                        const timeoutPromise = new Promise((_, reject) => {
-                            timeoutId = setTimeout(() => reject(new Error('Angel One API timeout after 10s')), 10000);
-                        });
-
-                        const resApi = await Promise.race([
-                            smartApi.getCandleData({
-                                exchange: "NSE",
-                                symboltoken: token,
-                                interval: "FIVE_MINUTE",
-                                fromdate: formatAngelDate(fromDate),
-                                todate: formatAngelDate(toDate)
-                            }),
-                            timeoutPromise
-                        ]);
-                        clearTimeout(timeoutId);
-
-                        if (resApi && resApi.status && resApi.data) {
-                            latestData = resApi.data.map(c => ({
-                                datetime: c[0].replace('T', ' ').substring(0, 19),
-                                open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5]
-                            }));
+                        processedCount++;
+                        if (io) {
+                            io.to(userId).emit(EVENTS.SCANNER_PROGRESS, {
+                                processed: processedCount,
+                                total: totalCount,
+                                current_stock: symbol
+                            });
                         }
-                    } catch (e) {
-                        if (typeof timeoutId !== 'undefined') clearTimeout(timeoutId);
-                        console.error(`Error fetching latest data for token ${token}:`, e.message);
-                    }
+                        console.log(`  - Processing ${symbol}...`);
+                        const token = marketStore.symbolToTokenMaster[symbol] || marketStore.symbolToTokenMaster[`${symbol}:NSE`];
+                        if (!token) continue;
 
-                    await new Promise(resolve => setTimeout(resolve, 500)); // Throttling for Angel API
-                }
-
-                const existingTimes = new Set(historicalData.map(d => d.datetime));
-                for (const c of latestData) {
-                    if (!existingTimes.has(c.datetime)) historicalData.push(c);
-                }
-                historicalData.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
-
-                const payload = {
-                    symbol: symbol,
-                    interval: "FIVE_MINUTE",
-                    strategy: "CUSTOM",
-                    params: {},
-                    strategy_code: strategy_code,
-                    historical_data: historicalData
-                };
-
-                if (historicalData.length === 0) {
-                    console.log(`[Dynamic Scanner] Skipping ${symbol} as historical data is empty.`);
-                    continue;
-                }
-
-                const pythonRes = await axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 120000 });
-
-                const resultData = pythonRes.data;
-                if (Array.isArray(resultData) && resultData.length > 0) {
-                    const signals = resultData.filter(d =>
-                        d.type === 'BUY' || d.type === 'SELL' ||
-                        d.text === 'BUY' || d.text === 'SELL'
-                    );
-                    if (signals.length > 0) {
-                        // Limit to last 5 signals to prevent frontend from freezing! 
-                        const recentSignals = signals.slice(-5);
-
-                        // Emit ALL recent signals to frontend
-                        for (const sig of recentSignals) {
-                            const sigType = sig.type || sig.text;
-                            let cTimeStr = sig.datetime || sig.time;
-                            if (!cTimeStr && sig.index !== undefined && historicalData[sig.index]) {
-                                cTimeStr = historicalData[sig.index].datetime;
+                        const db = require('../models');
+                        const historicalDataDocs = await db.sequelize.query(
+                            "SELECT * FROM historical_candles WHERE symbol = :symbol ORDER BY datetime DESC",
+                            {
+                                replacements: { symbol: symbol },
+                                type: db.sequelize.QueryTypes.SELECT
                             }
-                            let sigTs = new Date();
-                            if (cTimeStr && typeof cTimeStr === 'string') {
-                                sigTs = new Date(cTimeStr.replace(' ', 'T') + "+05:30");
-                            }
-                            const sigData = {
-                                symbol: symbol,
-                                userId: userId,
-                                signalType: sigType,
-                                indicatorValues: sig,
-                                timestamp: sigTs
+                        );
+
+                        let historicalData = historicalDataDocs.reverse().map(d => {
+                            let dt = new Date(d.datetime);
+                            let pad = n => String(n).padStart(2, '0');
+                            let localTimeStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
+
+                            return {
+                                datetime: localTimeStr,
+                                open: parseFloat(d.open),
+                                high: parseFloat(d.high),
+                                low: parseFloat(d.low),
+                                close: parseFloat(d.close),
+                                volume: parseInt(d.volume)
                             };
-                            if (io) {
-                                io.to(userId).emit(EVENTS.NEW_SCANNER_SIGNAL, sigData);
-                            }
-                        }
-
-                        // Save only the LAST signal to DB to respect unique constraints
-                        const latestSignal = signals[signals.length - 1];
-                        const sType = latestSignal.type || latestSignal.text;
-
-                        let candleTimeStr = latestSignal.datetime || latestSignal.time;
-                        if (!candleTimeStr && latestSignal.index !== undefined && historicalData[latestSignal.index]) {
-                            candleTimeStr = historicalData[latestSignal.index].datetime;
-                        }
-
-                        let signalTimestamp = new Date();
-                        if (candleTimeStr) {
-                            signalTimestamp = new Date(candleTimeStr.replace(' ', 'T') + "+05:30");
-                        }
-
-                        let existingSignal = await StrategySignal.findOne({
-                            where: { symbol: symbol, userId: userId }
                         });
 
-                        const dbSignalData = {
+                        // Load latest data ONLY if use_historical_only is false
+                        let latestData = [];
+                        if (!use_historical_only) {
+                            try {
+                                const toDate = new Date();
+                                const fromDate = new Date();
+                                fromDate.setDate(fromDate.getDate() - 2);
+
+                                let timeoutId;
+                                const timeoutPromise = new Promise((_, reject) => {
+                                    timeoutId = setTimeout(() => reject(new Error('Angel One API timeout after 10s')), 10000);
+                                });
+                                timeoutPromise.catch(() => { }); // Prevent unhandled promise rejection
+
+                                const fetchPromise = smartApi.getCandleData({
+                                    exchange: "NSE",
+                                    symboltoken: token,
+                                    interval: "FIVE_MINUTE",
+                                    fromdate: formatAngelDate(fromDate),
+                                    todate: formatAngelDate(toDate)
+                                });
+
+                                // Prevent unhandled promise rejection if fetch fails after timeout
+                                fetchPromise.catch(() => { });
+
+                                const resApi = await Promise.race([
+                                    fetchPromise,
+                                    timeoutPromise
+                                ]);
+                                clearTimeout(timeoutId);
+
+                                if (resApi && resApi.status && resApi.data) {
+                                    latestData = resApi.data.map(c => ({
+                                        datetime: c[0].replace('T', ' ').substring(0, 19),
+                                        open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5]
+                                    }));
+                                }
+                            } catch (e) {
+                                if (typeof timeoutId !== 'undefined') clearTimeout(timeoutId);
+                                console.error(`Error fetching latest data for token ${token}:`, e.message);
+                            }
+
+                            await new Promise(resolve => setTimeout(resolve, 500)); // Throttling for Angel API
+                        }
+
+                        const existingTimes = new Set(historicalData.map(d => d.datetime));
+                        for (const c of latestData) {
+                            if (!existingTimes.has(c.datetime)) historicalData.push(c);
+                        }
+                        historicalData.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+
+                        // Filter data from 1st Jan 2025 as requested
+                        const cutoffDate = new Date('2025-01-01T00:00:00');
+                        historicalData = historicalData.filter(c => new Date(c.datetime) >= cutoffDate);
+
+                        const payload = {
                             symbol: symbol,
-                            userId: userId,
-                            signalType: sType,
-                            indicatorValues: latestSignal,
-                            timestamp: signalTimestamp
+                            interval: "FIVE_MINUTE",
+                            strategy: "CUSTOM",
+                            params: {},
+                            strategy_code: strategy_code,
+                            historical_data: historicalData
                         };
 
-                        if (existingSignal) {
-                            await existingSignal.update(dbSignalData);
-                        } else {
-                            await StrategySignal.create(dbSignalData);
+                        if (historicalData.length === 0) {
+                            console.log(`[Dynamic Scanner] Skipping ${symbol} as historical data is empty.`);
+                            continue;
                         }
 
-                        console.log(`    => Stored ${sType} signal for ${symbol} at ${candleTimeStr}`);
-                    } else {
-                        console.log(`    => No BUY/SELL signals generated for ${symbol}`);
+                        // Hit BOTH servers simultaneously (Increased timeout to 60 seconds for large data)
+                        const results = await Promise.allSettled([
+                            axios.post('http://13.207.78.205:8000/web_api/evaluate-strategy', payload, { timeout: 60000 }),
+                            axios.post('http://127.0.0.1:8000/api/evaluate-strategy', payload, { timeout: 60000 })
+                        ]);
+
+                        let pythonRes = null;
+
+                        // Prefer the result from the Live server, otherwise use Local server
+                        if (results[0].status === 'fulfilled') {
+                            pythonRes = results[0].value;
+                        } else if (results[1].status === 'fulfilled') {
+                            console.log(`[Dynamic Scanner] Live server failed for ${symbol}, using Local server result.`);
+                            pythonRes = results[1].value;
+                        } else {
+                            console.error(`[Dynamic Scanner] BOTH servers failed for ${symbol}. Skipping.`);
+                            continue;
+                        }
+
+                        const resultData = pythonRes.data;
+                        if (Array.isArray(resultData) && resultData.length > 0) {
+                            const signals = resultData.filter(d => {
+                                const sigType = String(d.type || d.Type || d.text || d.Text || d.signal || d.Signal || '').toUpperCase();
+                                return sigType === 'BUY' || sigType === 'SELL';
+                            });
+                            if (signals.length > 0) {
+                                totalSignalsGenerated++;
+                                // Limit to last 5 signals to prevent frontend from freezing! 
+                                const recentSignals = signals.slice(-5);
+
+                                // Emit ALL recent signals to frontend
+                                for (const sig of recentSignals) {
+                                    const sigType = sig.type || sig.text || sig.signal;
+                                    let cTimeStr = sig.datetime || sig.time;
+                                    if (!cTimeStr && sig.index !== undefined && historicalData[sig.index]) {
+                                        cTimeStr = historicalData[sig.index].datetime;
+                                    }
+                                    let sigTs = new Date();
+                                    if (cTimeStr && typeof cTimeStr === 'string') {
+                                        sigTs = new Date(cTimeStr.replace(' ', 'T') + "+05:30");
+                                    }
+                                    const sigData = {
+                                        symbol: symbol,
+                                        userId: userId,
+                                        signalType: sigType,
+                                        indicatorValues: sig,
+                                        timestamp: sigTs
+                                    };
+                                    if (io) {
+                                        io.to(userId).emit(EVENTS.NEW_SCANNER_SIGNAL, sigData);
+                                    }
+                                }
+
+                                // Save distinct 9:15 Trades (Entry + Exit) to DB and CSV
+                                const fs = require('fs');
+                                const path = require('path');
+                                const csvPath = path.join(__dirname, '..', 'signal', 'latest_scanner_results.csv');
+
+                                const processed915Times = new Set();
+
+                                for (let i = 0; i < signals.length; i++) {
+                                    const sig = signals[i];
+                                    const sigType = String(sig.type || sig.text || sig.signal || '').toUpperCase();
+
+                                    let cTimeStr = sig.datetime || sig.time;
+                                    if (!cTimeStr && sig.index !== undefined && historicalData[sig.index]) {
+                                        cTimeStr = historicalData[sig.index].datetime;
+                                    }
+
+                                    // Check if this is a 9:15 Entry (BUY) signal
+                                    if (sigType === 'BUY' && cTimeStr && cTimeStr.includes('09:15')) {
+                                        if (processed915Times.has(cTimeStr)) continue; // Prevent duplicates!
+                                        processed915Times.add(cTimeStr);
+
+                                        const tradeType = String(sig.text || sig.tradeType || 'CALL').toUpperCase(); // Python should send text: CALL or PUT
+                                        let exitSig = null;
+
+                                        // Look ahead for the corresponding SELL signal
+                                        for (let j = i + 1; j < signals.length; j++) {
+                                            const nextSig = signals[j];
+                                            const nextSigType = String(nextSig.type || nextSig.text || nextSig.signal || '').toUpperCase();
+                                            if (nextSigType === 'SELL') {
+                                                exitSig = nextSig;
+                                                break;
+                                            }
+                                        }
+
+                                        let exitTimeStr = '';
+                                        if (exitSig) {
+                                            exitTimeStr = exitSig.datetime || exitSig.time;
+                                            if (!exitTimeStr && exitSig.index !== undefined && historicalData[exitSig.index]) {
+                                                exitTimeStr = historicalData[exitSig.index].datetime;
+                                            }
+                                        }
+
+                                        // Database Storage (Store distinct trades by timestamp)
+                                        let signalTimestamp = new Date(cTimeStr.replace(' ', 'T') + "+05:30");
+                                        const dbSignalData = {
+                                            symbol: symbol,
+                                            userId: userId,
+                                            signalType: sigType, // 'BUY'
+                                            indicatorValues: { ...sig, exitTime: exitTimeStr, tradeType: tradeType },
+                                            timestamp: signalTimestamp
+                                        };
+
+                                        let existingSignal = await StrategySignal.findOne({
+                                            where: {
+                                                symbol: symbol,
+                                                userId: userId,
+                                                timestamp: signalTimestamp // Ensures we don't overwrite other days' trades
+                                            }
+                                        });
+
+                                        if (existingSignal) {
+                                            await existingSignal.update(dbSignalData);
+                                        } else {
+                                            await StrategySignal.create(dbSignalData);
+                                        }
+                                        console.log(`    => Stored Trade for ${symbol}: ${tradeType} Entry at ${cTimeStr}, Exit at ${exitTimeStr}`);
+
+                                        // CSV Logging
+                                        const dateOnly = cTimeStr.split(' ')[0] || '';
+                                        const timeOnly = cTimeStr.split(' ')[1] || '09:15:00';
+                                        const exitTimeOnly = exitTimeStr ? exitTimeStr.split(' ')[1] || exitTimeStr : '';
+
+                                        let candle915 = null;
+                                        if (sig.index !== undefined && historicalData[sig.index]) {
+                                            candle915 = historicalData[sig.index];
+                                        } else {
+                                            candle915 = historicalData.find(c => c.datetime.replace(' ', 'T') === cTimeStr.replace(' ', 'T')) || {};
+                                        }
+
+                                        const row = `${symbol},${dateOnly},${timeOnly},${exitTimeOnly},${sigType},${tradeType},${candle915.open || ''},${candle915.high || ''},${candle915.low || ''},${candle915.close || ''},${candle915.volume || ''}\n`;
+                                        try {
+                                            fs.appendFileSync(csvPath, row);
+                                        } catch (e) {
+                                            console.error('Error writing to CSV:', e.message);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // console.log(`    => No BUY/SELL signals generated for ${symbol}`);
+                            }
+                        }
+                    } catch (err) {
+                        const pythonError = err.response ? err.response.data : err.message;
+                        const errString = typeof pythonError === 'object' ? JSON.stringify(pythonError) : String(pythonError);
+                        console.error(`[Dynamic Scanner] Error processing ${symbol}:`, errString);
+                        if (io) {
+                            io.to(userId).emit(EVENTS.SCANNER_ERROR, {
+                                symbol: symbol,
+                                error: errString
+                            });
+                        }
                     }
                 }
-            } catch (err) {
-                const pythonError = err.response ? err.response.data : err.message;
-                const errString = typeof pythonError === 'object' ? JSON.stringify(pythonError) : String(pythonError);
-                console.error(`[Dynamic Scanner] Error processing ${symbol}:`, errString);
+                console.log(`[Dynamic Scanner] Scan cycle complete for user ${userId}. Total signals: ${totalSignalsGenerated}`);
+
                 if (io) {
-                    io.to(userId).emit(EVENTS.SCANNER_ERROR, {
-                        symbol: symbol,
-                        error: errString
-                    });
+                    const finalMessage = totalSignalsGenerated > 0
+                        ? `Scan Complete. Generated ${totalSignalsGenerated} signals.`
+                        : "Scan Complete. No BUY/SELL signals generated.";
+                    io.to(userId).emit(EVENTS.SCANNER_COMPLETE, { success: true, message: finalMessage });
                 }
+
+                // Notify Python console that scan is complete
+                try {
+                    await axios.post('http://127.0.0.1:8000/api/scan-complete');
+                } catch (e) {
+                    // Ignore error if python is down
+                }
+            } catch (err) {
+                console.error('[Dynamic Scanner] Background scan failed:', err.message);
             }
-        }
-        console.log(`[Dynamic Scanner] Scan cycle complete for user ${userId}.`);
-
-        if (io) {
-            io.to(userId).emit(EVENTS.SCANNER_COMPLETE, { success: true, message: "Scan Complete" });
-        }
-
-        // Notify Python console that scan is complete
-        try {
-            await axios.post('http://127.0.0.1:8000/api/scan-complete');
-        } catch (e) {
-            // Ignore error if python is down
-        }
+        }); // End of setTimeout
 
     } catch (err) {
         console.error('[Strategy.runDynamicScanner] Fatal Error:', err.message);

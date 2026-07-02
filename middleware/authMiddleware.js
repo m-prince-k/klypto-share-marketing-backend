@@ -12,6 +12,7 @@ const authMiddleware = (req, res, next) => {
 
         const token = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
+        console.log(decoded, "_______--0890");
 
         req.user = decoded; // { id, email }
         next();

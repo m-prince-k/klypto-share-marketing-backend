@@ -79,8 +79,10 @@ async function syncFuturesHistory(stockList, expiryDays, interval = "5m") {
                         volume: c[5]
                     }));
 
-                    await Candle.bulkCreate(formatted, { ignoreDuplicates: true });
-                    console.log(`[FuturesSync] Saved ${formatted.length} candles for ${contract.symbol}`);
+                    await Candle.bulkCreate(formatted, { 
+                        updateOnDuplicate: ['open', 'high', 'low', 'close', 'volume'] 
+                    });
+                    console.log(`[FuturesSync] Saved/Updated ${formatted.length} candles in DB for ${contract.symbol}`);
                 }
 
                 // Respect rate limits

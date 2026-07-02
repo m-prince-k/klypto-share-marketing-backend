@@ -35,6 +35,11 @@ const { calculateSupertrend } = require("./Indicators/Supertrend.js");
 const { calculateStdev } = require("./Indicators/Standard_Deviation.js");
 const { calculateClassicPivots } = require("./Indicators/Classic Pivot Points.js");
 const { calculateSSLHybrid } = require("./Indicators/ssl-hybrid.js");
+const { body915DNAOscillator } = require("./Indicators/Body915DNAOscillator.js");
+const { healthyCandleBoxOscillator } = require("./Indicators/HealthyCandleBoxOscillator.js");
+const { hma60BoxDistanceOscillator } = require("./Indicators/HMA60BoxDistanceOscillator.js");
+const { superSmootherMAOscillator } = require("./Indicators/SuperSmootherMAOscillator.js");
+const { volatilityMomentumAngleChannelPro } = require("./Indicators/VolatilityMomentumAngleChannelPro.js");
 
 const { calculatePVO } = require("./Indicators/Percentage_Volume_Oscillator_PVO.js");
 const { calculateKlingerOscillator } = require("./Indicators/Klinger-Oscillator.js");
@@ -180,22 +185,22 @@ async function getLastCandle({
 function getSource(candles, source = "close") {
   return candles?.map(c => {
     function getSourceValue(c, source) {
-        const o = Number(c?.open || c?.o || 0);
-        const h = Number(c?.high || c?.h || 0);
-        const l = Number(c?.low || c?.l || 0);
-        const cl = Number(c?.close || c?.c || 0);
+      const o = Number(c?.open || c?.o || 0);
+      const h = Number(c?.high || c?.h || 0);
+      const l = Number(c?.low || c?.l || 0);
+      const cl = Number(c?.close || c?.c || 0);
 
-        switch (source) {
-            case "hl2": return (h + l) / 2;
-            case "hlc3": return (h + l + cl) / 3;
-            case "ohlc4": return (o + h + l + cl) / 4;
-            case "hlcc4": return (h + l + cl + cl) / 4;
-            case "open": return o;
-            case "high": return h;
-            case "low": return l;
-            case "close": return cl;
-            default: return Number(c[source] || cl);
-        }
+      switch (source) {
+        case "hl2": return (h + l) / 2;
+        case "hlc3": return (h + l + cl) / 3;
+        case "ohlc4": return (o + h + l + cl) / 4;
+        case "hlcc4": return (h + l + cl + cl) / 4;
+        case "open": return o;
+        case "high": return h;
+        case "low": return l;
+        case "close": return cl;
+        default: return Number(c[source] || cl);
+      }
     };
     switch (source) {
       case "open": return c.open;
@@ -219,7 +224,7 @@ async function smoothing(values, type, length) {
 
 
 async function indicatorEngine(candles, config) {
-  
+
 
   // const closes = await candles.map(c => c[config.sourceKey])
 
@@ -229,7 +234,7 @@ async function indicatorEngine(candles, config) {
     let output;
     const type = (config.type || "").toUpperCase();
     output = await prepareCandlesWithIndicators(type, candles, null, config);
-    
+
     if (config.smoothing) {
       // console.log(await config.smoothing, "----------------------------89898");
 
@@ -238,7 +243,8 @@ async function indicatorEngine(candles, config) {
 
     return output;
   } catch (error) {
-    console.log(error, "----------------------------89898")
+    console.error("Error in prepareCandlesWithIndicators:", error);
+    return [];
   }
 }
 
@@ -442,6 +448,38 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
         case "VO":
           return await calculateVolumeOscillator(candle, config);
 
+        case "BODY915DNA":
+          return body915DNAOscillator(candle, config);
+
+        case "VOLATILITY_MOMENTUM_PRO":
+          return volatilityMomentumAngleChannelPro(candle, config);
+
+        case "HEALTHY_BOX": {
+          const { calculateATR } = require("./Indicators/Average_True_Range_ATR.js");
+          const atrDataHCB = await calculateATR(candle, { length: config.atrLength || 14, smoothing: config.smoothing || "RMA" });
+          return candle.map((c, i) => {
+            const atrValue = atrDataHCB[i] ? atrDataHCB[i].atr : 0;
+            const res = healthyCandleBoxOscillator(c, atrValue, config);
+            return { ...c, ...res };
+          });
+        }
+
+        case "HMA60_BOX_DISTANCE": {
+          const { calculateATR: calcATR } = require("./Indicators/Average_True_Range_ATR.js");
+          const { calculateHMA: calcHMA } = require("./Indicators/HMA.js");
+          const atrDataHMA = await calcATR(candle, { length: config.atrLength || 14, smoothing: config.smoothing || "RMA" });
+          const hmaData = await calcHMA(candle, { length: config.hmaLength || 60, source: config.source || "close" });
+          return candle.map((c, i) => {
+            const atrValue = atrDataHMA[i] ? atrDataHMA[i].atr : 0;
+            const hmaValue = hmaData[i] ? hmaData[i].hma : 0;
+            const res = hma60BoxDistanceOscillator(c, hmaValue, atrValue, config);
+            return { ...c, ...res };
+          });
+        }
+
+        case "SUPERSMOOTHER":
+          return superSmootherMAOscillator(candle, config);
+
         case "ALL":
           {
             const indicators = [
@@ -463,7 +501,11 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
               { type: "BBPERB", name: "bbperb" },
               { type: "VO", name: "vo" },
               { type: "SVP", name: "svp" },
-              { type: "FRVP", name: "frvp" }
+              { type: "FRVP", name: "frvp" },
+              { type: "BODY915DNA", name: "body915dna" },
+              { type: "HEALTHY_BOX", name: "healthy_box" },
+              { type: "HMA60_BOX_DISTANCE", name: "hma60_box_distance" },
+              { type: "SUPERSMOOTHER", name: "supersmoother" }
             ];
 
             const resultsMap = new Map();
@@ -521,7 +563,7 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
       }
     })();
 
-        return results;
+    return results;
   } catch (error) {
     console.log(error, "-----------_____________________________________________________")
     return res ? await res.json({ error: error?.message }) : { error: error?.message };
@@ -1206,22 +1248,22 @@ async function runAllMergeCandleWisthIndicator(req, interval, rules, day, res) {
           case "pivot":
             allIndicatorData = await applyIndicatorToCandleData(fetchCandles, async (candles, opts) => {
               function getSourceValue(c, source) {
-        const o = Number(c?.open || c?.o || 0);
-        const h = Number(c?.high || c?.h || 0);
-        const l = Number(c?.low || c?.l || 0);
-        const cl = Number(c?.close || c?.c || 0);
+                const o = Number(c?.open || c?.o || 0);
+                const h = Number(c?.high || c?.h || 0);
+                const l = Number(c?.low || c?.l || 0);
+                const cl = Number(c?.close || c?.c || 0);
 
-        switch (source) {
-            case "hl2": return (h + l) / 2;
-            case "hlc3": return (h + l + cl) / 3;
-            case "ohlc4": return (o + h + l + cl) / 4;
-            case "open": return o;
-            case "high": return h;
-            case "low": return l;
-            case "close": return cl;
-            default: return Number(c[source] || cl);
-        }
-    }          const pivotResult = await calculateClassicPivots(candles, opts || { timeframe: "Daily" });
+                switch (source) {
+                  case "hl2": return (h + l) / 2;
+                  case "hlc3": return (h + l + cl) / 3;
+                  case "ohlc4": return (o + h + l + cl) / 4;
+                  case "open": return o;
+                  case "high": return h;
+                  case "low": return l;
+                  case "close": return cl;
+                  default: return Number(c[source] || cl);
+                }
+              } const pivotResult = await calculateClassicPivots(candles, opts || { timeframe: "Daily" });
               return candles.map(c => {
                 let activePivot = null;
                 for (let p of pivotResult) {

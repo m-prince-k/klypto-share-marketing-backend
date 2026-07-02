@@ -32,7 +32,9 @@ function startSchedulers() {
         }).filter(c => c.exchange !== "MCX"); // Do not save MCX data to DB as per user request
 
         try {
-            await Candle.bulkCreate(candleData, { ignoreDuplicates: true });
+            await Candle.bulkCreate(candleData, { 
+                updateOnDuplicate: ['open', 'high', 'low', 'close', 'volume'] 
+            });
         } catch (err) {
             console.error("[Aggregator] DB Save Error:", err.message);
         }
@@ -315,6 +317,16 @@ function startSchedulers() {
         runOptionSnapshot();
         setInterval(runOptionSnapshot, 3600000);
     }, 120000);
+
+    // Intraday Snapshot (Every 5 minutes)
+    setInterval(async () => {
+        const { isAnyMarketOpen } = require('./webSocketService');
+        if (isAnyMarketOpen()) {
+            const { saveIntradaySnapshot } = require('./historicalDataScheduler');
+            await saveIntradaySnapshot();
+        }
+    }, 300000);
+
     // 6. Background LTP Sync (Every 10 minutes) to ensure watchlist stays accurate
     setInterval(async () => {
         const { syncLivePrices } = require('./stockService');

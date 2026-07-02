@@ -3,6 +3,10 @@ const store = require("./marketStore");
 const { Stock, LivePrice, Candle, Future } = require('../models');
 const smartApi = require('./smartApi');
 const { formatDate } = require('./dbService');
+const fs = require('fs');
+const path = require('path');
+const CACHE_FILE = path.join(__dirname, '../data/scrip_master_cache.json');
+
 
 const userSymbols = [
     "ABB", "ABBPOW", "ADAENT", "ADAGRE", "ADAPOR", "ADATRA", "ADICAP", "ALKLAB", "AMBCE", "AMBEN",
@@ -41,7 +45,7 @@ const userSymbols = [
 ];
 
 const manualMap = {
-    "ABB": "ABB", "ABBPOW": "ABBINDIA", "ADAENT": "ADANIENT", "ADAGRE": "ADANIGREEN", "ADAPOR": "ADANIPORTS",
+    "ABB": "ABB", "ABBPOW": "POWERINDIA", "ADAENT": "ADANIENT", "ADAGRE": "ADANIGREEN", "ADAPOR": "ADANIPORTS",
     "ADATRA": "ADANIENSOL", "ADICAP": "ABCAPITAL", "ALKLAB": "ALKEM", "AMBCE": "AMBUJACEM", "AMBEN": "AMBER",
     "ANGBRO": "ANGELONE", "APLAPO": "APLAPOLLO", "APOHOS": "APOLLOHOSP", "ASHLEY": "ASHOKLEY",
     "ASIPAI": "ASIANPAINT", "ASTPOL": "ASTRAL", "AURPHA": "AUROPHARMA", "AUBANK": "AUBANK", "AXIBAN": "AXISBANK",
@@ -64,7 +68,7 @@ const manualMap = {
     "INDUSINDBK": "INDUSINDBK", "INDEN": "INDIGO", "INDHO": "INDIANHOSP", "INDHOT": "INDHOTEL", "INDIBA": "INDIABULLS",
     "INDOIL": "IOC", "INDREN": "IREDA", "INFEDG": "NAUKRI", "INFTEC": "INFY",
     "INOWIN": "INOXWIND", "INTAVI": "INDIGO", "IRFC": "IRFC", "ITC": "ITC", "JINSP": "JSL",
-    "JIOFIN": "JIOFIN", "JSWENE": "JSWENERGY", "JSWSTE": "JSWSTEEL", "JUBFOO": "JUBILANT", "JUBLFOOD": "JUBLFOOD",
+    "JIOFIN": "JIOFIN", "JSWENE": "JSWENERGY", "JSWSTE": "JSWSTEEL", "JUBFOO": "JUBLFOOD", "JUBLFOOD": "JUBLFOOD",
     "KALJEW": "KALYANKJIL", "KALYANKJIL": "KALYANKJIL", "KAYTEC": "KAYNES", "KEIIND": "KEI", "KFITEC": "KFINTECH",
     "KOTMAH": "KOTAKBANK", "KPITE": "KPITTECH", "LARTOU": "LT", "LAULAB": "LAURUSLABS",
     "LIC": "LICI", "LICHF": "LICHSGFIN", "LTFINA": "LTF", "LTINFO": "LTM", "LTF": "LTF", "LTM": "LTM",
@@ -73,7 +77,7 @@ const manualMap = {
     "MAXHEA": "MAXHEALTH", "MAXHEALTH": "MAXHEALTH", "MAZDOC": "MAZDOCK", "MAZDOCK": "MAZDOCK", "MCX": "MCX", "MININD": "COALINDIA",
     "MOTSUM": "MOTHERSON", "MPHLIM": "MPHASIS", "MUTFIN": "MUTHOOTFIN", "NATALU": "NATIONALUM",
     "NATMIN": "NMDC", "NBCC": "NBCC", "NESIND": "NESTLEIND", "NHPC": "NHPC",
-    "NIFFIN": "NIFTY FINANCIAL SERVICES", "NIITEC": "COFORGE", "NTPC": "NTPC",
+    "NIFFIN": "FINNIFTY", "NIITEC": "COFORGE", "NTPC": "NTPC",
     "NUVWEA": "NUVAMA", "OBEREA": "OBEROIRLTY", "OBEROIRLTY": "OBEROIRLTY", "ODICEM": "ULTRACEMCO", "OILIND": "OIL",
     "ONE97": "PAYTM", "PAYTM": "PAYTM", "ONGC": "ONGC", "ORAFIN": "OFSS", "PAGIND": "PAGEIND",
     "PBFINT": "PBフィンテック", "PERSYS": "PERSISTENT", "PETLNG": "PETRONET", "PGEL": "PGEL", "PGELEC": "POWERGRID",
@@ -100,9 +104,30 @@ const manualMap = {
 
 async function fetchTop200Stocks() {
     try {
-        console.log("Fetching Master Scrip list...");
-        const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
-        const allScrips = response.data;
+        let allScrips = [];
+        try {
+            if (fs.existsSync(CACHE_FILE)) {
+                console.log("[MasterScrip] Loading from local cache for instant startup...");
+                allScrips = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+                // Trigger background update to keep cache fresh for new expiries
+                axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json").then(res => {
+                    fs.writeFileSync(CACHE_FILE, JSON.stringify(res.data));
+                    console.log("[MasterScrip] Background cache updated successfully.");
+                }).catch(e => console.error("[MasterScrip] Background update failed:", e.message));
+            } else {
+                console.log("Fetching Master Scrip list from API (first time)...");
+                const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
+                allScrips = response.data;
+                const dir = path.dirname(CACHE_FILE);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(CACHE_FILE, JSON.stringify(allScrips));
+            }
+        } catch (err) {
+            console.error("[MasterScrip] Cache/Fetch Error:", err.message);
+            console.log("Falling back to direct API fetch...");
+            const response = await axios.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
+            allScrips = response.data;
+        }
 
         const nseEquity = allScrips.filter(s => s.exch_seg === "NSE" && s.instrumenttype === "");
         const bseEquity = allScrips.filter(s => s.exch_seg === "BSE" && s.instrumenttype === "");

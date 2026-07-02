@@ -5,8 +5,32 @@ const alertService = require("./alertService");
 const optionChainService = require("./optionChainService");
 const { handleIndicatorBroadcast } = require('./socket');
 const ENABLE_MARKET_DEBUG_LOGS = process.env.ENABLE_MARKET_DEBUG_LOGS === "true";
+const MARKET_HOLIDAYS = [
+    '2026-01-26', // Republic Day
+    '2026-03-03', // Mahashivratri
+    '2026-03-24', // Holi
+    '2026-04-03', // Good Friday
+    '2026-04-14', // Ambedkar Jayanti
+    '2026-05-01', // Maharashtra Day
+    '2026-06-26', // Muharram
+    '2026-08-15', // Independence Day
+    '2026-10-02', // Gandhi Jayanti
+    '2026-11-08', // Diwali (Approx)
+    '2026-12-25'  // Christmas
+];
+
+function formatLocalYYYYMMDD(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 function isNSEOpen() {
     const now = new Date();
+    const dateStr = formatLocalYYYYMMDD(now);
+    if (MARKET_HOLIDAYS.includes(dateStr)) return false;
+
     const day = now.getDay();
     const currentMinute = now.getHours() * 100 + now.getMinutes();
     // Monday to Friday, 09:15 AM to 03:30 PM (NSE/BSE)
@@ -15,6 +39,9 @@ function isNSEOpen() {
 
 function isMCXOpen() {
     const now = new Date();
+    const dateStr = formatLocalYYYYMMDD(now);
+    if (MARKET_HOLIDAYS.includes(dateStr)) return false;
+
     const day = now.getDay();
     const currentTime = now.getHours() * 100 + now.getMinutes();
     // Monday to Friday, 09:00 AM to 03:30 PM (Restricted by user)
@@ -110,6 +137,7 @@ function formatTickData(data) {
 function subscribeNSE(wsClient) {
     if (!wsClient) return;
     console.log(`[WebSocket] Subscribing to NSE & BSE Equity and NFO/BFO Near-Month Futures...`);
+    if (!store.subscribedTokens) store.subscribedTokens = new Set();
 
     // 1. Subscribe to Equity & Indices (NSE)
     const nseTokens = [
@@ -123,6 +151,7 @@ function subscribeNSE(wsClient) {
             action: 1, mode: 2, exchangeType: 1,
             tokens: nseTokens
         });
+        nseTokens.forEach(t => store.subscribedTokens.add(t));
     }
 
     // 1.1 Subscribe to Equity (BSE)
@@ -134,6 +163,7 @@ function subscribeNSE(wsClient) {
             action: 1, mode: 2, exchangeType: 3, // 3 is BSE
             tokens: bseTokens
         });
+        bseTokens.forEach(t => store.subscribedTokens.add(t));
     }
 
     // 2. Subscribe to Near-Month Futures (NFO)
@@ -165,6 +195,7 @@ function subscribeNSE(wsClient) {
                 action: 1, mode: 2, exchangeType: 2,
                 tokens: batch
             });
+            batch.forEach(t => store.subscribedTokens.add(t));
         }
 
         // BFO Sub
@@ -175,6 +206,7 @@ function subscribeNSE(wsClient) {
                 action: 1, mode: 2, exchangeType: 4, // 4 is BFO
                 tokens: batch
             });
+            batch.forEach(t => store.subscribedTokens.add(t));
         }
     }
 }
@@ -182,6 +214,7 @@ function subscribeNSE(wsClient) {
 function subscribeMCX(wsClient) {
     if (!wsClient) return;
     console.log(`[WebSocket] Subscribing to MCX Gold Futures...`);
+    if (!store.subscribedTokens) store.subscribedTokens = new Set();
 
     const goldContracts = (store.mcxMasterData || []).filter(s => 
         (s.name === 'GOLD' || s.name === 'GOLDM' || s.name === 'GOLDPETAL' || s.name === 'GOLDGUINEA') &&
@@ -206,6 +239,7 @@ function subscribeMCX(wsClient) {
             action: 1, mode: 2, exchangeType: 5, // 5 is MCX
             tokens: mcxTokens
         });
+        mcxTokens.forEach(t => store.subscribedTokens.add(t));
     }
 }
 
@@ -231,6 +265,7 @@ async function startWebSocketConnection(loginData, io) {
 
     // Reset subscription state
     store.subscriptions = { nse: false, mcx: false };
+    store.subscribedTokens = new Set(); // Track subscribed tokens to prevent re-subscription
 
     // 1. Subscribe to Equity & Indices (NSE/BSE/NFO/BFO)
     if (isNSEOpen()) {
@@ -247,6 +282,9 @@ async function startWebSocketConnection(loginData, io) {
     store.wsClient.on("tick", (data) => {
         const formatted = formatTickData(data);
         if (!formatted) return;
+        
+        // Update last tick time for dead connection detection
+        store.lastTickTime = Date.now();
 
         // DIAGNOSTIC LOG FOR TCS
         if (ENABLE_MARKET_DEBUG_LOGS && formatted.symbol === 'TCS') {
@@ -399,11 +437,43 @@ async function startWebSocketConnection(loginData, io) {
                     overview: fullOverview
                 });
 
-                // BROADCAST to 'liveticks' for plural event support
-                io.emit('liveticks', tickPayload);
+                // Plural event payload (watchlist / table) using daily OHLCV values to ensure they don't have same values
+                const tickOpen = parseFloat(formatted.open_price_day || 0) || candle.open;
+                const tickHigh = parseFloat(formatted.high_price_day || 0) || candle.high;
+                const tickLow = parseFloat(formatted.low_price_day || 0) || candle.low;
+                const tickClose = parseFloat(formatted.close_price || 0) || candle.close;
+                const tickVolume = parseInt(formatted.v || formatted.vol || formatted.volume || formatted.total_traded_quantity || 0) || candle.volume;
 
-                // BROADCAST to 'live-options-list' globally as requested by user
-                io.emit('live-options-list', tickPayload);
+                const liveTicksPayload = {
+                    token: cleanToken,
+                    symbol: formatted.symbol,
+                    symbolWithEq: formatted.symbol + "-EQ", // For the frontend if it expects -EQ
+                    exchange: formatted.exchange,
+                    receivedAt: new Date().toISOString(),
+                    data: {
+                        time: Math.floor(candle.minute / 1000),
+                        tickTime: formatted.exchange_timestamp,
+                        readableTickTime: formatted.readable_timestamp,
+                        open: tickOpen,
+                        high: tickHigh,
+                        low: tickLow,
+                        close: tickClose,
+                        last_traded_price: formatted.last_traded_price,
+                        volume: tickVolume
+                    },
+                    tick: {
+                        open: tickOpen,
+                        high: tickHigh,
+                        low: tickLow,
+                        close: tickClose,
+                        datetime: formatted.exchange_timestamp || new Date().toISOString()
+                    },
+                    raw: formatted
+                };
+
+                // BROADCAST to 'liveticks' for plural event support
+                io.emit('liveticks', liveTicksPayload);
+
 
                 // Console log for confirmation
                 // if (formatted.symbol === "NIFTY 19MAY2026 23450 CE") {
@@ -438,7 +508,24 @@ async function startWebSocketConnection(loginData, io) {
             io.emit("marketUpdate", formatted);
     });
 
-    store.wsClient.on("error", (err) => console.log("WS Error:", err));
+    store.wsClient.on("error", (err) => {
+        console.error("[WebSocket] Angel One WS Error:", err?.message || err);
+    });
+
+    // 🔴 CRITICAL: Handle Angel One WebSocket disconnection
+    // When Angel One drops the connection, reset wsClient so manageWebSocket can reconnect
+    const handleWsClose = (code, reason) => {
+        console.warn(`[WebSocket] Angel One WebSocket CLOSED (code: ${code}, reason: ${reason || 'none'}). Resetting for reconnect...`);
+        store.wsClient = null;
+        store.subscriptions = { nse: false, mcx: false };
+        store.subscribedTokens = new Set();
+    };
+
+    // Try both possible event names (library may use 'close' or 'disconnect')
+    if (store.wsClient.on) {
+        store.wsClient.on("close", handleWsClose);
+        store.wsClient.on("disconnect", handleWsClose);
+    }
 }
 
 /**
@@ -463,15 +550,37 @@ async function manageWebSocket(loginData, io) {
                 else if (store.wsClient.close) store.wsClient.close();
                 store.wsClient = null;
                 store.subscriptions = { nse: false, mcx: false };
+                store.subscribedTokens = new Set();
             } catch (e) {
                 console.log("[MarketMonitor] Disconnect Error:", e.message);
                 store.wsClient = null;
                 store.subscriptions = { nse: false, mcx: false };
+                store.subscribedTokens = new Set();
             }
         } else if (open && hasClient) {
             // WebSocket is active. Check if any market segment has recently opened and needs subscription.
             if (!store.subscriptions) {
                 store.subscriptions = { nse: false, mcx: false };
+            }
+
+            // 🔴 DEAD CONNECTION DETECTION
+            // If market is open but we haven't received any tick in 90 seconds, the connection is stale.
+            // Reset wsClient so this loop reconnects on the next iteration.
+            const now = Date.now();
+            const lastTick = store.lastTickTime || 0;
+            const tickAgeMs = now - lastTick;
+            const DEAD_CONNECTION_THRESHOLD_MS = 90000; // 90 seconds without a tick = dead
+            
+            if (lastTick > 0 && tickAgeMs > DEAD_CONNECTION_THRESHOLD_MS) {
+                console.warn(`[MarketMonitor] ⚠️ No tick received for ${Math.round(tickAgeMs / 1000)}s. Angel One WebSocket appears DEAD. Forcing reconnect...`);
+                try {
+                    if (store.wsClient.close) store.wsClient.close();
+                } catch (e) { /* ignore */ }
+                store.wsClient = null;
+                store.subscriptions = { nse: false, mcx: false };
+                store.subscribedTokens = new Set();
+                store.lastTickTime = 0; // Reset so we don't spam reconnect
+                return; // Next interval will reconnect
             }
 
             if (isNSEOpen() && !store.subscriptions.nse) {

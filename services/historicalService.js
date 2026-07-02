@@ -3,6 +3,8 @@ const store = require('./marketStore');
 const { getHistoricalCandle } = require('./angelOne');
 const { formatDate, getCandlesWithCache } = require('./dbService');
 
+const apiCache = new Map();
+
 async function fetchManualHistoricalData(payload) {
     let extraInfo = null;
     try {
@@ -62,7 +64,7 @@ async function fetchManualHistoricalData(payload) {
         const mappedExchange = finalExchange; 
 
 
-        // Explicit Token Resolution with Hardcoded Map for Top Stocks
+        // Explicit Token Resolution with Hardcoded Map for Top Stocks (Only for Equity/Cash)
         const topStocksMap = {
             "TCS": "11536", "RELIANCE": "2885", "HDFCBANK": "1333", "ICICIBANK": "4963", "INFY": "1594",
             "SBIN": "3045", "BHARTIARTL": "10604", "HINDUNILVR": "1330", "ITC": "1660", "AXISBANK": "5900",
@@ -71,10 +73,18 @@ async function fetchManualHistoricalData(payload) {
             "GOLD": "234454", "SILVER": "234455"
         };
 
-        let finalToken = topStocksMap[uSym] || 
-                         store.symbolToTokenMaster[uSym] || 
+        let finalToken = null;
+        
+        // Use topStocksMap ONLY if it's not an NFO request
+        if (mappedExchange !== "NFO" && mappedExchange !== "MCX") {
+            finalToken = topStocksMap[uSym];
+        }
+        
+        if (!finalToken) {
+            finalToken = store.symbolToTokenMaster[uSym] || 
                          store.symbolToTokenMaster[`${uSym}-EQ`] ||
                          store.symbolToTokenMaster[`${uSym}_${mappedExchange}`];
+        }
         
         // Manual fallback for Indices
         if (!finalToken) {
@@ -100,6 +110,23 @@ async function fetchManualHistoricalData(payload) {
                     const nearest = active.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
                     finalToken = nearest.token;
                     symbol = nearest.symbol; // Use the actual contract symbol (e.g. GOLD05JUN26FUT)
+                }
+            }
+        }
+
+        // Auto-resolve base symbols to NFO near-month futures if requested exchange is NFO
+        if (!finalToken && mappedExchange === "NFO" && !uSym.endsWith("CE") && !uSym.endsWith("PE") && !uSym.includes("FUT")) {
+            const nfoFutures = (store.nfoMasterData || []).filter(s => 
+                s.name === uSym && s.instrumenttype === 'FUTSTK'
+            );
+            if (nfoFutures.length > 0) {
+                const todayForExpiry = new Date();
+                todayForExpiry.setHours(0, 0, 0, 0);
+                const active = nfoFutures.filter(c => new Date(c.expiry) >= todayForExpiry);
+                if (active.length > 0) {
+                    const nearest = active.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))[0];
+                    finalToken = nearest.token;
+                    symbol = nearest.symbol;
                 }
             }
         }
@@ -131,7 +158,10 @@ async function fetchManualHistoricalData(payload) {
             }
         }
 
-        if (!finalToken) throw new Error(`Token not found for symbol: ${symbol}`);
+        if (!finalToken) {
+            console.warn(`[HistoricalService] 🛑 Note: Token not found for symbol: ${symbol}. Master list might still be loading or symbol is invalid.`);
+            throw new Error(`Token not found for symbol: ${symbol}. Master list might still be loading or symbol is invalid.`);
+        }
             
             // Subscribe via Angel One WebSocket
         // Add to tracked stocks if not present
@@ -159,7 +189,19 @@ async function fetchManualHistoricalData(payload) {
             console.log(`[HistoricalService] Force-subscribed ${uSym} (${finalToken}) on ${mappedExchange} (Mode: 3)`);
         }
 
-        const result = await getCandlesWithCache(uSym, finalToken, mappedExchange, finalInterval, formattedFromDate, formattedToDate, extraInfo, forceApi);
+        const cacheKey = `${uSym}_${finalInterval}_${formattedFromDate}_${formattedToDate}`;
+        if (!forceApi && apiCache.has(cacheKey)) {
+            const cached = apiCache.get(cacheKey);
+            if (Date.now() - cached.timestamp < 10000) {
+                console.log(`[HistoricalService] Returning CACHED response for ${cacheKey}`);
+                return cached.data;
+            } else {
+                apiCache.delete(cacheKey);
+            }
+        }
+
+        const trueExchange = store.tokenToExchange[finalToken] || mappedExchange;
+        const result = await getCandlesWithCache(uSym, finalToken, trueExchange, finalInterval, formattedFromDate, formattedToDate, extraInfo, forceApi);
         // OPTIMIZATION: Map to lightweight objects. Stripping redundant strings (symbol, token, exchange, timestamp) 
         // reduces payload size by ~60%, making JSON encoding and WebSocket transfer much faster.
         const optimizedData = result.data.map(c => ({
@@ -171,13 +213,19 @@ async function fetchManualHistoricalData(payload) {
             volume: c.volume
         }));
         
-        return {
+        const finalResponse = {
             success: true,
             symbol: uSym,
             source: result.source,
             count: optimizedData.length,
             data: optimizedData
         };
+
+        if (!forceApi) {
+            apiCache.set(cacheKey, { timestamp: Date.now(), data: finalResponse });
+        }
+
+        return finalResponse;
     } catch (err) {
         console.error("[HistoricalService] Error:", err.message);
         throw err;
