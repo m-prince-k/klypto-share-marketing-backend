@@ -27,6 +27,7 @@
   "description": "",
   "dependencies": {
     "adm-zip": "^0.5.17",
+    "authenticator": "^1.1.5",
     "axios": "^1.15.2",
     "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.2",
@@ -41,8 +42,10 @@
     "http": "^0.0.1-security",
     "jsonwebtoken": "^9.0.3",
     "mathjs": "^15.2.0",
+    "node-cron": "^4.5.0",
     "nodemailer": "^9.0.1",
     "nodemon": "^3.1.14",
+    "otplib": "^13.4.1",
     "pg": "^8.20.0",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.8",
@@ -50,8 +53,11 @@
     "smartapi-javascript": "^1.0.27",
     "socket.io": "^4.8.3",
     "speakeasy": "^2.0.0",
+    "sqlite3": "^6.0.1",
     "swagger-ui-express": "^5.0.1",
     "technicalindicators": "^3.1.0",
-    "xlsx": "^0.18.5"
+    "totp-generator": "^2.0.1",
+    "xlsx": "^0.18.5",
+    "yahoo-finance2": "^3.15.3"
   }
 }

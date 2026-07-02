@@ -982,6 +982,34 @@ socket.on(EVENTS.GET_INDICATOR_DETAILS, async (payload) => {
         });
 
         // --- 6. BACKTEST DASHBOARD EVENTS ---
+        socket.on("live-options-list", () => {
+            try {
+                const optionStocks = store.stocks.map(stock => {
+                    const cacheKey = `${stock.symbol}:NSE`;
+                    const liveData = store.latestMarketData[cacheKey] || store.latestMarketData[`${stock.token}:NSE`] || {};
+                    return {
+                        token: stock.token,
+                        symbol: stock.symbol,
+                        symbolWithEq: stock.symbol + "-EQ",
+                        fullName: stock.fullName,
+                        exchange: stock.exchange || "NSE",
+                        data: {
+                            open: liveData.open || 0,
+                            high: liveData.high || 0,
+                            low: liveData.low || 0,
+                            close: liveData.close || liveData.close_price || 0,
+                            last_traded_price: liveData.last_traded_price || liveData.close || 0,
+                            volume: liveData.volume || 0,
+                            tickTime: liveData.exchange_timestamp || new Date().toISOString()
+                        }
+                    };
+                });
+                socket.emit("option-chain-data", optionStocks);
+            } catch (err) {
+                console.error("[Socket] Error in live-options-list:", err);
+            }
+        });
+
         socket.on(EVENTS.GET_BACKTEST_DASHBOARD, async (payload) => {
             try {
                 const backtestService = require('./backtestService');

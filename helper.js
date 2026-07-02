@@ -39,6 +39,7 @@ const { body915DNAOscillator } = require("./Indicators/Body915DNAOscillator.js")
 const { healthyCandleBoxOscillator } = require("./Indicators/HealthyCandleBoxOscillator.js");
 const { hma60BoxDistanceOscillator } = require("./Indicators/HMA60BoxDistanceOscillator.js");
 const { superSmootherMAOscillator } = require("./Indicators/SuperSmootherMAOscillator.js");
+const { volatilityMomentumAngleChannelPro } = require("./Indicators/VolatilityMomentumAngleChannelPro.js");
 
 const { calculatePVO } = require("./Indicators/Percentage_Volume_Oscillator_PVO.js");
 const { calculateKlingerOscillator } = require("./Indicators/Klinger-Oscillator.js");
@@ -449,6 +450,9 @@ async function prepareCandlesWithIndicators(type, candle, res, config = {}) {
 
         case "BODY915DNA":
           return body915DNAOscillator(candle, config);
+
+        case "VOLATILITY_MOMENTUM_PRO":
+          return volatilityMomentumAngleChannelPro(candle, config);
 
         case "HEALTHY_BOX": {
           const { calculateATR } = require("./Indicators/Average_True_Range_ATR.js");
