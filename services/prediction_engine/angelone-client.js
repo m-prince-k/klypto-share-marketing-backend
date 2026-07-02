@@ -44,7 +44,7 @@ async function ensureLoggedIn() {
   if (loginRes.data.status && loginRes.data.data) {
     jwtToken = loginRes.data.data.jwtToken;
     jwtTokenExpiry = Date.now() + 23 * 60 * 60 * 1000;
-    require('fs').writeFileSync(path.join(__dirname, '..', '..', 'prediction', 'jwt.txt'), jwtToken);
+    require('fs').writeFileSync(path.join(__dirname, 'data', 'jwt.txt'), jwtToken);
     console.log("=> WROTE JWT TOKEN TO jwt.txt");
   } else {
     throw new Error("Angel One Login failed: " + JSON.stringify(loginRes.data));

@@ -5,10 +5,10 @@ const postgresDb = require("./db");
 const csv = require("csv-parser");
 
 // Use the folder the user specified for JSON payloads
-const JSON_FOLDER = path.join(__dirname, '..', '..', 'prediction', "extractJson");
-const PREDICT_URL = "http://43.205.133.183:8000/predict";
-let LOG_FILE = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", "predictions_response.log");
-let PAYLOAD_LOG = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", "prediction_payloads.log");
+const JSON_FOLDER = path.join(__dirname, 'data', "extractJson");
+const PREDICT_URL = "http://13.207.78.205/predict";
+let LOG_FILE = path.join(__dirname, 'data', "prediction_logs", "predictions_response.log");
+let PAYLOAD_LOG = path.join(__dirname, 'data', "prediction_logs", "prediction_payloads.log");
 
 function logPayload(msg) {
   const timestamp = new Date().toISOString();
@@ -108,7 +108,7 @@ async function processSymbol(symbol, historic_data) {
     logPayload(
       `[${symbol}] Sending payload with tickObj: ${JSON.stringify(tickObj)}`,
     );
-    
+
     console.log(`  [${symbol}] Payload being sent (historic_data length: ${historic_data.length}, tick: ${JSON.stringify(tickObj)})`);
     logPayload(`[${symbol}] Full payload being sent: ${JSON.stringify(payload)}`);
 
@@ -140,11 +140,11 @@ async function processSymbol(symbol, historic_data) {
       INSERT INTO prediction_logs (symbol, tick_data, response_data, created_at)
       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
     `, [symbol, tickObj, response.data]);
-    
+
     // Fallback file log
     const logMsg = `[${symbol}] Payload sent. Tick: ${JSON.stringify(tickObj)} Response: ${JSON.stringify(response.data)}\n`;
     fs.appendFileSync(LOG_FILE, logMsg);
-    
+
     console.log(`  Success. Signal: ${JSON.stringify(response.data)}`);
   } catch (err) {
     const errorMsg = err.response
@@ -161,9 +161,9 @@ async function main() {
   const hours = now.getHours();
   const minutes = now.getMinutes();
   const timeStr = `${hours}${minutes.toString().padStart(2, '0')}`;
-  
-  LOG_FILE = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", `prediction${timeStr}.log`);
-  PAYLOAD_LOG = path.join(__dirname, '..', '..', 'prediction', "prediction_logs", `prediction_payloads${timeStr}.log`);
+
+  LOG_FILE = path.join(__dirname, 'data', "prediction_logs", `prediction${timeStr}.log`);
+  PAYLOAD_LOG = path.join(__dirname, 'data', "prediction_logs", `prediction_payloads${timeStr}.log`);
 
   console.log("Starting prediction job...");
 

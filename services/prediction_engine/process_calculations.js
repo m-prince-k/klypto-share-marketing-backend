@@ -5,7 +5,7 @@ const { generate_payload } = require('./calculate_parameters.js');
 const angelone = require('./angelone-client.js');
 const db = require('./db');
 
-const HIST_FOLDER = path.join(__dirname, '..', '..', 'prediction', 'historical_csv');
+const HIST_FOLDER = path.join(__dirname, 'data', 'historical_csv');
 
 function emptyFolder(folderPath) {
     if (fs.existsSync(folderPath)) {
@@ -182,7 +182,7 @@ async function performCalculations() {
 }
 
 async function loop() {
-    const LAST_RUN_FILE = path.join(__dirname, '..', '..', 'prediction', 'last_calculated_date.txt');
+    const LAST_RUN_FILE = path.join(__dirname, 'data', 'last_calculated_date.txt');
     let lastProcessedDate = null;
     if (fs.existsSync(LAST_RUN_FILE)) {
         lastProcessedDate = fs.readFileSync(LAST_RUN_FILE, 'utf8').trim();

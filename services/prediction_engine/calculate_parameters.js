@@ -6,7 +6,7 @@ async function loadBOSLIM() {
   return new Promise((resolve, reject) => {
     const candles = [];
     // resolve boslim.csv relative to this file so requires from elsewhere still work
-    const boslimPath = path.join(__dirname, '..', '..', 'prediction', 'boslim.csv');
+    const boslimPath = path.join(__dirname, 'data', 'boslim.csv');
 
     fs.createReadStream(boslimPath)
       .pipe(csv())

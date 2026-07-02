@@ -13,8 +13,8 @@ const symbols = require("../services/prediction_engine/symbols.js");
 const { startPredictionEngine } = require("../services/prediction_engine/send_predictions.js");
 const { startPostMarketCalculations } = require("../services/prediction_engine/process_calculations.js");
 
-const ANGELONE_LOG = path.join(__dirname, '..', 'prediction', 'angelone_ticks.log');
-const DB_LOG = path.join(__dirname, '..', 'prediction', 'db_ticks.log');
+const ANGELONE_LOG = path.join(__dirname, '..', 'services', 'prediction_engine', 'data', 'angelone_ticks.log');
+const DB_LOG = path.join(__dirname, '..', 'services', 'prediction_engine', 'data', 'db_ticks.log');
 
 function logToFile(file, msg) {
   const timestamp = new Date().toISOString();
@@ -24,7 +24,7 @@ function logToFile(file, msg) {
 }
 
 const router = express.Router();
-const PREDICT_URL = "http://43.205.133.183:8000/predict";
+const PREDICT_URL = "http://13.207.78.205/predict";
 
 const tokenCache = {};
 const ohlcvCache = {};
@@ -146,7 +146,7 @@ router.get("/strategy/predict", async (req, res) => {
     if (!usedAngelOneHistory || formattedHistorical.length === 0) {
       console.log(`[${symbol}] Falling back to CSV for history...`);
       try {
-        const csvPath = path.join(__dirname, '..', "prediction", "historical_csv", `${symbol}.csv`);
+        const csvPath = path.join(__dirname, '..', "services", "prediction_engine", "data", "historical_csv", `${symbol}.csv`);
         if (fs.existsSync(csvPath)) {
           const now = new Date();
           const bucketStart = getFiveMinuteBucketStart(now);
@@ -268,7 +268,7 @@ router.get("/strategy/predict", async (req, res) => {
       // Save payload to file if signal found
       if (response?.data && !response.data.reason) {
         try {
-          const payloadFile = path.join(__dirname, '..', "prediction", `payload_${symbol}.json`);
+          const payloadFile = path.join(__dirname, '..', "services", "prediction_engine", "data", `payload_${symbol}.json`);
           fs.writeFileSync(payloadFile, JSON.stringify(payload, null, 2));
           console.log(`[${symbol}] Signal found! Payload saved to ${payloadFile}`);
         } catch (saveErr) {
@@ -320,7 +320,7 @@ function readCSV(filePath, stock_code) {
 router.all("/predict-ondemand", async (req, res) => {
   try {
     const symbol = (req.query.symbol || (req.body && req.body.symbol) || "BOSCHLTD").toUpperCase();
-    const HIST_FOLDER = path.join(__dirname, '..', "prediction", "historical_csv");
+    const HIST_FOLDER = path.join(__dirname, '..', "services", "prediction_engine", "data", "historical_csv");
     const csvPath = path.join(HIST_FOLDER, `${symbol}.csv`);
 
     if (!fs.existsSync(csvPath)) {
@@ -334,11 +334,11 @@ router.all("/predict-ondemand", async (req, res) => {
       const d = new Date(lastRow.datetime);
       if (!isNaN(d.getTime())) {
         const pad = n => String(n).padStart(2, "0");
-        const fromDateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${d.getHours()}:${pad(d.getMinutes())}`;
-        
+        const fromDateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${d.getHours()}:${pad(d.getMinutes())}`;
+
         const now = new Date();
-        const toDateStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${now.getHours()}:${pad(now.getMinutes())}`;
-        
+        const toDateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${now.getHours()}:${pad(now.getMinutes())}`;
+
         if (fromDateStr < toDateStr) {
           try {
             const token = symbols[symbol];
@@ -347,8 +347,8 @@ router.all("/predict-ondemand", async (req, res) => {
               if (hist && hist.data) {
                 for (const candle of hist.data) {
                   const candleDate = new Date(candle[0]);
-                  const candleDtStr = `${candleDate.getFullYear()}-${pad(candleDate.getMonth()+1)}-${pad(candleDate.getDate())} ${pad(candleDate.getHours())}:${pad(candleDate.getMinutes())}:00`;
-                  
+                  const candleDtStr = `${candleDate.getFullYear()}-${pad(candleDate.getMonth() + 1)}-${pad(candleDate.getDate())} ${pad(candleDate.getHours())}:${pad(candleDate.getMinutes())}:00`;
+
                   if (candleDate > d) {
                     const newRow = {
                       datetime: candleDtStr,
@@ -412,10 +412,10 @@ router.get("/predictResult", async (req, res) => {
       FROM prediction_logs 
       WHERE DATE(created_at) = CURRENT_DATE
     `);
-    
+
     // Filter to only successful signals
     const results = resDB.rows.filter(r => r.response && r.response.signal !== null && r.response.signal !== undefined);
-    
+
     return res.json({ success: true, data: results, source: 'DB' });
   } catch (err) {
     console.error("Error in /api/predictResult:", err);
@@ -482,7 +482,7 @@ async function start() {
       const now = new Date();
       if (now.getHours() === 15 && now.getMinutes() === 45) {
         try {
-          const logsDir = require('path').join(__dirname, '..', "prediction", "prediction_logs");
+          const logsDir = require('path').join(__dirname, '..', "services", "prediction_engine", "data", "prediction_logs");
           if (require('fs').existsSync(logsDir)) {
             const files = require('fs').readdirSync(logsDir);
             let cleared = false;
@@ -510,16 +510,16 @@ async function start() {
 async function startGlobalTickCollector() {
   console.log("[GlobalTickCollector] Initializing tokens for all symbols...");
   const validSymbols = [];
-  
+
   for (const sym of Object.keys(symbols)) {
     try {
       let token = tokenCache[sym] || tokenCache[`${sym}:NSE`];
       if (!token) {
-         token = symbols[sym];
-         if (token) {
-           tokenCache[sym] = token;
-           tokenCache[`${sym}:NSE`] = token;
-         }
+        token = symbols[sym];
+        if (token) {
+          tokenCache[sym] = token;
+          tokenCache[`${sym}:NSE`] = token;
+        }
       }
       if (token) {
         validSymbols.push({ symbol: sym, token });
@@ -547,7 +547,7 @@ async function startGlobalTickCollector() {
     while (true) {
       const now = new Date();
       const timeStr = `${padDate(now.getHours())}:${padDate(now.getMinutes())}:${padDate(now.getSeconds())}`;
-      
+
       if (timeStr > "15:30:00") {
         console.log("[GlobalTickCollector] Market closed (after 15:30). Sleeping for 1 minute...");
         await new Promise(r => setTimeout(r, 60000));
@@ -560,16 +560,16 @@ async function startGlobalTickCollector() {
         try {
           const tokens = chunk.map(item => item.token);
           const response = await angelone.fetchMarketDataBatch(tokens);
-          
+
           if (response && response.status && response.data && response.data.fetched) {
             for (const item of response.data.fetched) {
               const symbolObj = chunk.find(c => c.token === item.symbolToken);
               if (!symbolObj) continue;
               const sym = symbolObj.symbol;
-              
+
               const price = item.ltp;
               const vol = parseInt(item.lastTradeQty, 10) || 0;
-              
+
               if (price == null || isNaN(price)) continue;
 
               global.liveTicksCache = global.liveTicksCache || {};
@@ -584,7 +584,7 @@ async function startGlobalTickCollector() {
                 if (ohlcvCache[sym]) {
                   // A 5-minute bucket has just closed. Write it directly to CSV!
                   const oldBucket = ohlcvCache[sym];
-                  const csvPath = path.join(__dirname, '..', "prediction", "historical_csv", `${sym}.csv`);
+                  const csvPath = path.join(__dirname, '..', "services", "prediction_engine", "data", "historical_csv", `${sym}.csv`);
                   if (fs.existsSync(csvPath)) {
                     const lastWritten = global.lastWrittenTimestamp[sym] || "";
                     if (oldBucket.datetime > lastWritten) {
@@ -597,7 +597,7 @@ async function startGlobalTickCollector() {
                     }
                   }
                 }
-                
+
                 ohlcvCache[sym] = {
                   bucketTime: currentBucketTime,
                   open: price,
@@ -614,7 +614,7 @@ async function startGlobalTickCollector() {
                 c.close = price;
                 c.volume += vol;
               }
-              
+
               // Continuously UPSERT the aggregated OHLCV into SQLite
               await db.upsertCandle(sym, ohlcvCache[sym].open, ohlcvCache[sym].high, ohlcvCache[sym].low, ohlcvCache[sym].close, ohlcvCache[sym].volume, ohlcvCache[sym].datetime);
             }
@@ -622,7 +622,7 @@ async function startGlobalTickCollector() {
         } catch (e) {
           console.warn(`[GlobalTickCollector] Error fetching batch:`, e.message);
         }
-        
+
         // Wait 1000ms between batch requests to reduce Angel One load
         await new Promise(r => setTimeout(r, 1000));
       }
@@ -634,8 +634,8 @@ start();
 
 async function startBackgroundGapFiller() {
   console.log("[BackgroundGapFiller] Initializing Startup Run...");
-  const HIST_FOLDER = path.join(__dirname, '..', "prediction", "historical_csv");
-  
+  const HIST_FOLDER = path.join(__dirname, '..', "services", "prediction_engine", "data", "historical_csv");
+
   async function runGapFillerCycle() {
     console.log(`[BackgroundGapFiller] Starting gap fill cycle at ${new Date().toLocaleTimeString()}`);
     try {
@@ -650,27 +650,27 @@ async function startBackgroundGapFiller() {
       for (const file of files) {
         const symbol = path.basename(file, '.csv');
         const csvPath = path.join(HIST_FOLDER, file);
-        
+
         try {
           let rawData = await readCSV(csvPath, symbol);
           if (rawData.length > 0) {
             const lastRow = rawData[rawData.length - 1];
-            
+
             // Initialize duplicate protection without DOWNGRADING it
             if (!global.lastWrittenTimestamp) global.lastWrittenTimestamp = {};
             if (!global.lastWrittenTimestamp[symbol] || lastRow.datetime > global.lastWrittenTimestamp[symbol]) {
               global.lastWrittenTimestamp[symbol] = lastRow.datetime;
             }
-            
+
             // Use the safest maximum known timestamp
             const safeLastTime = global.lastWrittenTimestamp[symbol];
             const d = new Date(safeLastTime);
             if (!isNaN(d.getTime())) {
               const pad = n => String(n).padStart(2, "0");
-              const fromDateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+              const fromDateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
               const now = new Date();
-              const toDateStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-              
+              const toDateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
               if (fromDateStr < toDateStr) {
                 const token = symbols[symbol];
                 if (token) {
@@ -678,8 +678,8 @@ async function startBackgroundGapFiller() {
                   if (hist && hist.data) {
                     for (const candle of hist.data) {
                       const candleDate = new Date(candle[0]);
-                      const candleDtStr = `${candleDate.getFullYear()}-${pad(candleDate.getMonth()+1)}-${pad(candleDate.getDate())} ${pad(candleDate.getHours())}:${pad(candleDate.getMinutes())}:00`;
-                      
+                      const candleDtStr = `${candleDate.getFullYear()}-${pad(candleDate.getMonth() + 1)}-${pad(candleDate.getDate())} ${pad(candleDate.getHours())}:${pad(candleDate.getMinutes())}:00`;
+
                       if (candleDate > d) {
                         const timePart = candleDtStr.split(' ')[1];
                         if (timePart >= "09:15:00" && timePart <= "15:25:00") {
@@ -712,11 +712,11 @@ async function startBackgroundGapFiller() {
             await new Promise(r => setTimeout(r, 5000));
           }
         }
-        
+
         // Wait 2500ms (2.5 seconds) between stocks to strictly respect Angel One's minute-level limits
         await new Promise(r => setTimeout(r, 2500));
       }
-      
+
       console.log(`[BackgroundGapFiller] Cycle completed. Appended ${addedCount} total candles.`);
     } catch (err) {
       console.error(`[BackgroundGapFiller] Cycle error:`, err.message);
@@ -727,7 +727,7 @@ async function startBackgroundGapFiller() {
   (async function loop() {
     while (true) {
       await runGapFillerCycle();
-      
+
       console.log("[BackgroundGapFiller] Cycle finished. Sleeping for 5 minutes before checking again...");
       // Wait exactly 5 minutes before the next cycle
       await new Promise(r => setTimeout(r, 5 * 60 * 1000));

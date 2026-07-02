@@ -474,8 +474,6 @@ async function startWebSocketConnection(loginData, io) {
                 // BROADCAST to 'liveticks' for plural event support
                 io.emit('liveticks', liveTicksPayload);
 
-                // BROADCAST to 'live-options-list' globally as requested by user
-                io.emit('live-options-list', liveTicksPayload);
 
                 // Console log for confirmation
                 // if (formatted.symbol === "NIFTY 19MAY2026 23450 CE") {
