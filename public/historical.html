@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historical Option Data</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <!-- Babel for in-browser JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+</head>
+<body class="bg-gray-950">
+    <div id="root"></div>
+    <script>
+        async function bootHistoricalUi() {
+            try {
+                const response = await fetch('./HistoricalDataUI.jsx?v=20260619-2', { cache: 'no-store' });
+                const jsxCode = await response.text();
+                const transformed = Babel.transform(jsxCode, {
+                    sourceType: 'unambiguous',
+                    presets: [
+                        ['env', { modules: false }],
+                        ['react', { runtime: 'classic' }],
+                    ],
+                }).code;
+                const script = document.createElement('script');
+                script.text = transformed;
+                document.body.appendChild(script);
+            } catch (error) {
+                console.error('Error loading the historical app:', error);
+                document.getElementById('root').innerHTML =
+                    '<div class="text-white p-5">Failed to load Historical UI. See console.</div>';
+            }
+        }
+
+        bootHistoricalUi();
+    </script>
+</body>
+</html>
