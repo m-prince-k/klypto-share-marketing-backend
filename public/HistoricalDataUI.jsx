@@ -27,7 +27,7 @@ const HistoricalDataUI = () => {
       if (currentFilters.option_type) queryParams.append('option_type', currentFilters.option_type);
       if (currentFilters.date) queryParams.append('date', currentFilters.date);
 
-      const response = await fetch(`/api/historical-data?${queryParams.toString()}`);
+      const response = await fetch(`/api/ui-option-chain/api/historical-data?${queryParams.toString()}`);
       const result = await response.json();
       
       if (result.success) {
@@ -43,7 +43,7 @@ const HistoricalDataUI = () => {
 
   // Fetch metadata on mount to populate dropdowns
   useEffect(() => {
-    fetch('/api/historical-metadata')
+    fetch('/api/ui-option-chain/api/historical-metadata')
       .then(res => res.json())
       .then(res => {
         if (res.success && res.symbols.length > 0) {

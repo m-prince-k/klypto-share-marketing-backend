@@ -29,24 +29,36 @@ router.get('/api/option-chain', async (req, res) => {
       (o.instrumenttype === "OPTSTK" || o.instrumenttype === "OPTIDX" || o.instrumenttype === "OPTCOM")
     );
 
-    // Get underlying LTP
-    let spotLtp = store.latestMarketData[`${uSym}:NSE`]?.last_traded_price || 0;
+    // Get underlying LTP — try multiple key formats for indices
+    let spotLtp = 
+      store.latestMarketData[`${uSym}:NSE`]?.last_traded_price ||
+      store.latestMarketData[`${uSym}:BSE`]?.last_traded_price ||
+      store.latestMarketData[`${uSym}:NSE`]?.ltp ||
+      store.latestMarketData[`${uSym}:BSE`]?.ltp ||
+      // Try any key that starts with the symbol
+      (() => {
+        const key = Object.keys(store.latestMarketData).find(k => k.startsWith(`${uSym}:`));
+        return key ? (store.latestMarketData[key]?.last_traded_price || store.latestMarketData[key]?.ltp || 0) : 0;
+      })() || 0;
     
     allOpts.forEach(opt => {
+      // Determine CE or PE from symbol suffix (e.g., "NIFTY07JUL2026CE24000")
+      const optionType = opt.symbol.endsWith('CE') ? 'CE' : opt.symbol.endsWith('PE') ? 'PE' : null;
+      if (!optionType) return; // skip non-CE/PE entries
+
       // Apply filters
       if (expiry_date && opt.expiry !== expiry_date) return;
       if (strike_price && parseFloat(opt.strike) !== parseFloat(strike_price)) return;
-      if (option_type && opt.optiontype !== option_type) return;
+      if (option_type && optionType !== option_type) return;
 
       const live = store.latestMarketData[`${opt.token}:NFO`];
-      
       const lastTradedPrice = live ? parseFloat(live.last_traded_price || live.ltp || 0) : 0;
-      
+
       filteredData.push({
         symbol: opt.name,
         expiry_date: opt.expiry,
-        strike_price: parseFloat(opt.strike),
-        option_type: opt.optiontype,
+        strike_price: parseFloat(opt.strike), // raw paisa value; UI will divide by 100
+        option_type: optionType,
         token: opt.token,
         ltp: lastTradedPrice,
         open: live ? parseFloat(live.open_price_day || live.open || 0) : 0,
@@ -56,8 +68,8 @@ router.get('/api/option-chain', async (req, res) => {
         volume: live ? parseInt(live.vol_traded || live.v || 0) : 0,
         oi: live ? parseInt(live.open_interest || live.oi || 0) : 0,
         oi_change: live ? parseFloat(live.open_interest_change || live.oiChange || 0) : 0,
-        best_buy: live?.best_5_buy_data?.[0]?.price ? live.best_5_buy_data[0].price : null,
-        best_sell: live?.best_5_sell_data?.[0]?.price ? live.best_5_sell_data[0].price : null,
+        best_buy: live?.best_5_buy_data?.[0]?.price ?? null,
+        best_sell: live?.best_5_sell_data?.[0]?.price ?? null,
         spot_price: parseFloat(spotLtp),
         update_time: new Date()
       });
