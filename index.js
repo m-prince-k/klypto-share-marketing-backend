@@ -105,8 +105,8 @@ app.use("/alerts", alertRoutes);
 app.use("/api/indicator", indicatorRoutes);
 app.use("/api/backtest", backtestRoutes);
 app.use("/api/trades", tradeRoutes);
-app.use("/api/strategy", strategyRoutes);
-app.use("/api", predictionRouter);
+app.use("/api/strategy", strategyRoutes);app.use("/api", predictionRouter);
+
 
 app.get("/", (req, res) => {
   res.send("Klypto backend is running");
@@ -164,6 +164,7 @@ async function bootstrap() {
 
           await manageWebSocket(loginData, io);
           startSchedulers();
+
           startPredictionServices(); // Start prediction polling and cron jobs
           startupState.marketFeedsReady = true;
 
