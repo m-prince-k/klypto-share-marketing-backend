@@ -317,6 +317,16 @@ function startSchedulers() {
         runOptionSnapshot();
         setInterval(runOptionSnapshot, 3600000);
     }, 120000);
+
+    // Intraday Snapshot (Every 5 minutes)
+    setInterval(async () => {
+        const { isAnyMarketOpen } = require('./webSocketService');
+        if (isAnyMarketOpen()) {
+            const { saveIntradaySnapshot } = require('./historicalDataScheduler');
+            await saveIntradaySnapshot();
+        }
+    }, 300000);
+
     // 6. Background LTP Sync (Every 10 minutes) to ensure watchlist stays accurate
     setInterval(async () => {
         const { syncLivePrices } = require('./stockService');
