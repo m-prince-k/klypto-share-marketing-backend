@@ -256,12 +256,9 @@ async function start() {
       }
     }, 60 * 1000);
 
-    app.listen(PORT, () => {
-      console.log(`[Server] Live Predict server running on port ${PORT}`);
-    });
+    // app.listen has been removed since the main index.js server handles listening.
   } catch (err) {
-    console.error("[Server] Failed to start:", err);
-    process.exit(1);
+    console.error("[Prediction Engine] Failed to start:", err);
   }
 }
 

@@ -58,49 +58,43 @@ const OptionChainUI = () => {
       .catch((err) => console.error('Error fetching symbols:', err));
   }, []);
 
-  const [socketInstance, setSocketInstance] = useState(null);
-
   useEffect(() => {
-    const socket = socketClient(undefined, {
-      transports: ['websocket', 'polling'],
-    });
-    setSocketInstance(socket);
+    setIsConnected(true);
 
-    socket.on('connect', () => {
-      setIsConnected(true);
-      console.log('Connected to Option Chain WebSocket');
-    });
-
-    socket.on('disconnect', () => {
-      setIsConnected(false);
-      console.log('Disconnected from WebSocket');
-    });
-
-    socket.on('option-chain-data', (response) => {
-      if (response && response.data) {
-        console.log(`Received ${response.data.length} records for ${response.symbol}`);
-        setLiveData(response.data);
+    const fetchData = async () => {
+      try {
+        const res = await fetch(`/api/ui-option-chain/api/option-chain?symbol=${selectedSymbol}`);
+        const response = await res.json();
+        if (response && response.success && response.data) {
+          setLiveData(response.data);
+        }
+      } catch (err) {
+        console.error("Error fetching option chain data:", err);
       }
-    });
+    };
+
+    fetchData(); // fetch immediately on mount or symbol change
+    const interval = setInterval(fetchData, 2000); // Poll every 2 seconds
 
     return () => {
-      socket.disconnect();
+      clearInterval(interval);
     };
-  }, []);
+  }, [selectedSymbol]);
 
-  useEffect(() => {
-    if (socketInstance && isConnected) {
-      socketInstance.emit('set-filters', { symbol: selectedSymbol });
-    }
-  }, [selectedSymbol, socketInstance, isConnected]);
-
-  const symbolData = useMemo(() => {
-    return liveData.filter((item) => item.symbol === selectedSymbol);
-  }, [liveData, selectedSymbol]);
+  // API already returns data filtered by symbol, so no need to re-filter
+  const symbolData = useMemo(() => liveData, [liveData]);
 
   const expiries = useMemo(() => {
     const uniqueExpiries = [...new Set(symbolData.map((item) => item.expiry_date))];
-    uniqueExpiries.sort((a, b) => new Date(a) - new Date(b));
+    // Handle DDMMMYYYY format like "07JUL2026"
+    const parseExpiry = (str) => {
+      if (!str) return 0;
+      const months = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
+      const m = str.match(/^(\d{2})([A-Z]{3})(\d{4})$/);
+      if (m) return new Date(parseInt(m[3]), months[m[2]], parseInt(m[1]));
+      return new Date(str);
+    };
+    uniqueExpiries.sort((a, b) => parseExpiry(a) - parseExpiry(b));
     return uniqueExpiries;
   }, [symbolData]);
 
@@ -120,15 +114,15 @@ const OptionChainUI = () => {
 
   const optionChain = useMemo(() => {
     const chainMap = {};
-
     expiryData.forEach((item) => {
-      const strike = parseFloat(item.strike_price);
+      // strike_price comes in paisa (x100) from the NFO master, divide to get actual price
+      const rawStrike = parseFloat(item.strike_price);
+      const strike = rawStrike > 10000 ? rawStrike / 100 : rawStrike;
       if (!chainMap[strike]) {
         chainMap[strike] = { strike_price: strike, CE: null, PE: null };
       }
-      chainMap[strike][item.option_type] = item;
+      chainMap[strike][item.option_type] = { ...item, strike_price: strike };
     });
-
     return Object.values(chainMap).sort((a, b) => a.strike_price - b.strike_price);
   }, [expiryData]);
 
@@ -175,7 +169,7 @@ const OptionChainUI = () => {
                 {expiries.length > 0 ? (
                   expiries.map((expiry) => (
                     <option key={expiry} value={expiry}>
-                      {new Date(expiry).toDateString()}
+                      {expiry}
                     </option>
                   ))
                 ) : (
