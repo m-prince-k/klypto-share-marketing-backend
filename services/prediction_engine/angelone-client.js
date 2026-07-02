@@ -8,23 +8,23 @@ async function fetchHistoricalCandles(symbol, token, interval, fromDateStr, toDa
     fromdate: fromDateStr,
     todate: toDateStr
   };
-  
+
   try {
     const response = await smartApi.getCandleData(payload);
     if (!response || !response.status) throw new Error("Fallback to raw");
     return response;
-  } catch(err) {
-     const fs = require('fs');
-     const path = require('path');
-     const axios = require('axios');
-     const tokenPath = path.join(__dirname, '..', '..', 'angel_token.json');
-     let jwtToken = '';
-     if (fs.existsSync(tokenPath)) {
-        const t = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-        jwtToken = t.jwtToken;
-     }
-     
-     const res = await axios.post(
+  } catch (err) {
+    const fs = require('fs');
+    const path = require('path');
+    const axios = require('axios');
+    const tokenPath = path.join(__dirname, '..', '..', 'angel_token.json');
+    let jwtToken = '';
+    if (fs.existsSync(tokenPath)) {
+      const t = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+      jwtToken = t.jwtToken;
+    }
+
+    const res = await axios.post(
       "https://apiconnect.angelbroking.com/rest/secure/angelbroking/historical/v1/getCandleData",
       payload,
       {
@@ -53,25 +53,25 @@ async function fetchMarketDataBatch(tokens) {
       "NSE": tokens
     }
   };
-  
+
   // Assuming smartApi has getMarketData for v1/quote, or we use axios directly with the JWT token
   // Let's use smartApi.getMarketData if it exists, otherwise we can just grab the JWT token from angel_token.json and use axios.
   try {
-     const response = await smartApi.getMarketData(payload);
-     return response;
+    const response = await smartApi.getMarketData(payload);
+    return response;
   } catch (err) {
-     // If getMarketData isn't the right method, fallback to raw axios call using token
-     const fs = require('fs');
-     const path = require('path');
-     const axios = require('axios');
-     const tokenPath = path.join(__dirname, '..', '..', 'angel_token.json');
-     let jwtToken = '';
-     if (fs.existsSync(tokenPath)) {
-        const t = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-        jwtToken = t.jwtToken;
-     }
-     
-     const res = await axios.post(
+    // If getMarketData isn't the right method, fallback to raw axios call using token
+    const fs = require('fs');
+    const path = require('path');
+    const axios = require('axios');
+    const tokenPath = path.join(__dirname, '..', '..', 'angel_token.json');
+    let jwtToken = '';
+    if (fs.existsSync(tokenPath)) {
+      const t = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+      jwtToken = t.jwtToken;
+    }
+
+    const res = await axios.post(
       "https://apiconnect.angelbroking.com/rest/secure/angelbroking/market/v1/quote",
       payload,
       {
